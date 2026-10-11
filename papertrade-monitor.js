@@ -84,7 +84,7 @@ function positionLines(positions) {
       `${i + 1}. <b>${esc(p.market)} ${esc(String(p.side || '—').toUpperCase())}</b> | ${esc(p.leverage)}x` +
       `\nMargin: ${esc(usd(p.marginUsd))} | Notional: ${esc(usd(p.notionalUsd))}` +
       `\nEntry: ${esc(num(p.entryPrice))} | Mark: ${esc(num(p.markPrice))}` +
-      `\nuPnL: <b>${esc(usd(p.estimatedNetPnlUsd))}</b> | Bust: ${esc(num(p.bustPrice)}`
+      `\nuPnL: <b>${esc(usd(p.estimatedNetPnlUsd))}</b> | Bust: ${esc(num(p.bustPrice))}`
     ),
   ];
 }
