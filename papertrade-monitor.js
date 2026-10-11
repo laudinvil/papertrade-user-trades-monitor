@@ -152,9 +152,11 @@ async function poll() {
     }
   }
 
-  // Do not advance stored leaders until every changed-leader alert has been delivered.
+  // Persist each successful alert independently so a later failure does not duplicate it.
   for (const change of changes) {
     await processLeader(change.kind, change.nextLeader, change.previousLeader);
+    state = { leadersInitialized: true, leaders: { ...state.leaders, [change.kind]: change.nextLeader } };
+    saveState(state);
   }
   saveState({ leadersInitialized: true, leaders: nextLeaders });
   console.log(JSON.stringify({
