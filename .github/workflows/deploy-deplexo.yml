@@ -38,7 +38,7 @@ jobs:
             -X POST \
             -H "Authorization: Bearer ${DEPLEXO_TOKEN}" \
             -H "Content-Type: application/json" \
-            --data "{\"commitSha\":\" ${COMMIT_SHA} \"}" \
+            --data "{\"commitSha\":\"${COMMIT_SHA}\"}" \
             "https://deplexo.com/user/api/v1/apps/${DEPLEXO_APP_ID}/restart")"
 
           echo "Deplexo accepted redeploy request for commit ${COMMIT_SHA}."
