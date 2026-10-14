@@ -1,29 +1,28 @@
-# Papertrade uPnL Leader Monitor
+# Papertrade Full-Loss Trade Monitor
 
-Independent, read-only monitor for the two Papertrade accounts at the extremes of current unrealized PnL. It uses the separate entrypoint `papertrade-monitor.js` and must remain separate from the existing Polymarket monitor. It does not place trades or modify the existing Polymarket monitor.
+Independent, read-only Telegram monitor for Papertrade trades that close at approximately -100% of the position margin. It remains separate from the Polymarket monitor and never places or closes trades.
 
-- Tracks one account with the highest positive `currentUnrealizedPnl`.
-- Tracks one account with the lowest (most negative) `currentUnrealizedPnl`.
-- Sends a Telegram alert only when the leader's wallet address changes.
-- Each leader-change alert includes that account's current open positions, side, leverage, margin, notional, entry/mark prices, estimated uPnL and bust price.
-- Does not send repeated alerts for ordinary uPnL fluctuations while the leader address remains the same.
-- Polls the public Papertrade API every 5 seconds by default.
-- Stores the two current leader addresses in `STATE_PATH`; persistent storage is recommended.
+## Behavior
+
+- Polls the public `get_recent_trades` API every 5 seconds by default.
+- Watches `close` and `liquidation` events only.
+- Estimates margin as `notionalUsd / leverage` and loss percentage as `pnlUsd / marginUsd * 100`.
+- Sends an alert when the realized loss is at or below -99.5% of margin (small tolerance for API rounding).
+- Includes trader wallet, market, side, leverage, notional, entry/exit, PnL, loss percentage, position ID and close timestamp when available.
+- Deduplicates by event `seq` (with a fallback composite key) and stores processed event keys in `STATE_PATH`.
+- On first startup, records the current recent-events batch as a baseline without sending historical alerts.
+- Retries an event on the next poll if Telegram delivery fails; no event key is persisted until a matching alert succeeds.
+- Uses only public Papertrade event data and Telegram. No trading actions are performed.
 
 ## Configuration
 
 Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Optional settings:
+
 - `PAPERTRADE_API_BASE_URL` (default: `https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools`)
 - `POLL_MS` (minimum 5000)
 - `STATE_PATH` (default: `./data/state.json`)
 
-Never commit real Telegram credentials.
-
-## Behavior
-
-On first startup, the monitor records both current leaders as a baseline without sending alerts. It then sends an alert when either leader address changes. A missing positive or negative uPnL leader is represented as no account in that category. Account position details are fetched only when a leader changes, to reduce API requests.
-
-The leaderboard is sorted by current unrealized PnL over the 24-hour window, matching the supplied Papertrade leaderboard URLs. The sign of the returned uPnL is checked so the positive and negative categories are not confused.
+Never commit real Telegram credentials. Persistent storage for `data/state.json` is recommended.
 
 ## Run
 
@@ -36,4 +35,4 @@ npm start
 
 ## Hosting
 
-Keep this service separate from the existing monitor. Do not add it to the existing process tree or deployment. Configure persistent storage for `data/state.json` if the host supports it. A repository commit does not deploy or restart Deplexo.
+Keep this service separate from the existing Polymarket monitor. A repository commit does not deploy or restart Deplexo; confirm the runtime version and logs after deployment.
