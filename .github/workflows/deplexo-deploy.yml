@@ -1,4 +1,4 @@
-name: Deploy to Deplexo
+name: Verify Deplexo auto-deploy
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: "Commit SHA to deploy (defaults to this workflow run's commit)"
+        description: "Optional commit SHA for a manual rebuild"
         required: false
         type: string
 
@@ -17,55 +17,74 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Request deployment of Papertrade monitor
+      - name: Inspect Deplexo app and recent deployments
+        id: inspect
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
-          PUSH_SHA: ${{ github.sha }}
-          REQUESTED_SHA: ${{ inputs.commit_sha }}
           APP_SLUG: merry-cascade-8098
           BASE: https://deplexo.com/user/api/v1
         shell: bash
         run: |
           set -euo pipefail
-
           if [[ -z "${DEPLEXO_TOKEN:-}" ]]; then
             echo "::error::DEPLEXO_TOKEN secret is missing."
             exit 1
           fi
 
-          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
-          echo "Target app: $APP_SLUG"
-          echo "Requested commit: $SHA"
-
           APPS_RESPONSE="$(curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" \
-            "$BASE/me")"
-
+            -H "Accept: application/json" "$BASE/me")"
           APP_ID="$(printf '%s' "$APPS_RESPONSE" | jq -r --arg slug "$APP_SLUG" '
             first(.apps[]? |
-              select(
-                ((.name // "") == $slug) or
-                (((.url // .domain // "") | tostring) | contains($slug))
-              ) |
-              (.id // .appId)
-            ) // empty
+              select(((.name // "") == $slug) or
+                (((.url // .domain // "") | tostring) | contains($slug))) |
+              (.id // .appId)) // empty
           ')"
-
           if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
-            echo "::error::Could not find Deplexo app '$APP_SLUG' in /me response. No deployment requested."
-            printf '%s' "$APPS_RESPONSE" | jq '{apps: [.apps[]? | {id, appId, name, url, domain}]}'
+            echo "::error::Could not find target app '$APP_SLUG'."
+            printf '%s' "$APPS_RESPONSE" | jq '{apps: [.apps[]? | {id,appId,name,url,domain,status}]}'
             exit 1
           fi
+          echo "APP_ID=$APP_ID" >> "$GITHUB_OUTPUT"
+          echo "Target app found: $APP_SLUG"
+          HISTORY="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" "$BASE/apps/$APP_ID/deployments?limit=10&offset=0")"
+          echo "Recent deployment history (status and commit only):"
+          printf '%s' "$HISTORY" | jq '{
+            deployments: [(.data // .deployments // .items // [])[]? |
+              {id, status, state, commitSha, commit_sha, createdAt, created_at, startedAt, finishedAt, error}]
+          }'
 
-          echo "Found target app ID."
-          RESPONSE="$(curl --fail-with-body --silent --show-error \
+      - name: Request manual rebuild only
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          BASE: https://deplexo.com/user/api/v1
+          APP_ID: ${{ steps.inspect.outputs.APP_ID }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          PUSH_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
+          echo "Manual rebuild requested for commit $SHA"
+          RESPONSE="$(curl --silent --show-error \
             -X POST \
             -H "Authorization: Bearer $DEPLEXO_TOKEN" \
             -H "Accept: application/json" \
             -H "Content-Type: application/json" \
             --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
-            "$BASE/apps/$APP_ID/restart")"
-
-          echo "Deplexo accepted the deployment request:"
-          printf '%s' "$RESPONSE" | jq .
+            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
+          BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
+          STATUS="${RESPONSE##*HTTP_STATUS:}"
+          printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
+          if [[ "$STATUS" == "409" ]]; then
+            echo "::error::Deplexo reports a deployment already in progress (HTTP 409). Inspect deployment history before retrying."
+            exit 1
+          fi
+          if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
+            echo "::error::Deplexo restart request failed with HTTP $STATUS."
+            exit 1
+          fi
+          echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
