@@ -1,3 +1,8 @@
+if (process.env.RUN_MAPPING_DIAGNOSTIC === "1") {
+  await import("./diagnose-liquidation-mapping.mjs");
+  process.exit(0);
+}
+
 const KEY = process.env.NODEFLARE_API_KEY;
 if (!KEY) {
   console.error(JSON.stringify({ ok: false, check: "env", error: "NODEFLARE_API_KEY is missing" }));
