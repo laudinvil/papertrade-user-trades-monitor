@@ -223,11 +223,9 @@ function eventTimestamp(event) {
 
 function matchApiEvent(chainEvent, apiByPosition) {
   const candidates = apiByPosition.get(String(chainEvent.positionId)) || [];
-  if (!candidates.length) return null;
-  // The on-chain Liquidated log is the proof of liquidation. The API event is used only to enrich it.
-  return candidates.find(e => /liquidat/i.test(String(e.kind || '')))
-    || candidates.find(e => /close|positionclosed/i.test(String(e.kind || '')))
-    || candidates[0];
+  // Never enrich a liquidation log with an arbitrary open/close/trade event.
+  // Only an explicitly identified liquidation can supply instrument and side.
+  return candidates.find(e => /liquidat/i.test(String(e.kind || ''))) || null;
 }
 
 async function enrichChainEvent(chainEvent, apiByPosition) {
@@ -239,6 +237,8 @@ async function enrichChainEvent(chainEvent, apiByPosition) {
 function countLiquidation(chainEvent, apiEvent) {
   const ts = chainEvent.ts;
   if (!Number.isFinite(ts) || ts <= 0) return false;
+  // The API match must explicitly be a liquidation; other trade kinds are not valid enrichment.
+  if (!/liquidat/i.test(String(apiEvent?.kind || ''))) return false;
   const instrument = String(apiEvent?.instrument || apiEvent?.symbol || '').trim().toUpperCase();
   if (!['BTC', 'ETH'].includes(instrument)) return false;
 
@@ -482,14 +482,9 @@ async function poll() {
       ts: null,
     };
     const match = await enrichChainEvent(chainEvent, apiByPosition);
-    // Prefer the API event timestamp when supplied; this avoids one RPC request per log block.
-    // API timestamps may be seconds or milliseconds, so normalize to milliseconds.
-    const apiTsRaw = Number(match?.ts);
-    if (Number.isFinite(apiTsRaw) && apiTsRaw > 0) {
-      chainEvent.ts = apiTsRaw < 1e12 ? apiTsRaw * 1000 : apiTsRaw;
-    } else {
-      chainEvent.ts = await getBlockTimestamp(blockNumber, blockTimestamps);
-    }
+    // The on-chain log's block timestamp is authoritative for the 5-minute bucket.
+    // API timestamps can refer to a position's earlier open/close event and misbucket it.
+    chainEvent.ts = await getBlockTimestamp(blockNumber, blockTimestamps);
 
     // On first boot, avoid replaying old completed periods; only seed the active 5-minute period.
     if (firstScan && periodStart(chainEvent.ts) !== currentStart) {
