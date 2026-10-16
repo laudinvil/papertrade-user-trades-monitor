@@ -93,6 +93,21 @@ try {
 
   const matched = matches.filter(m => m.matchedLiquidationEvent && m.apiEvent);
   const withRequiredFields = matched.filter(m => m.apiEvent.hasRequiredFields);
+  const apiKindSummary = {};
+  for (const event of events) {
+    const kind = event?.kind == null ? "(missing)" : String(event.kind);
+    apiKindSummary[kind] = (apiKindSummary[kind] || 0) + 1;
+  }
+  const apiEventSamples = events.slice(0, 10).map(event => ({
+    seq: event?.seq ?? null,
+    ts: event?.ts ?? null,
+    kind: event?.kind ?? null,
+    instrument: event?.instrument ?? null,
+    instrumentId: event?.instrumentId ?? null,
+    side: event?.side ?? null,
+    positionId: event?.positionId ?? null,
+    keys: event && typeof event === "object" ? Object.keys(event) : [],
+  }));
   console.log(JSON.stringify({
     ok: true,
     diagnostic: "liquidation_position_id_mapping",
@@ -105,6 +120,9 @@ try {
     positionIdMatches: matches.filter(m => m.apiMatchCount > 0).length,
     liquidationKindMatches: matched.length,
     matchesWithInstrumentAndSide: withRequiredFields.length,
+    apiKindSummary,
+    apiEventSamples,
+    positionIdMatchSamples: matches.filter(m => m.apiMatchCount > 0).slice(0, 20),
     samples: matches.slice(0, 10),
     note: "One-shot bounded diagnostic only. It does not change monitor state or send Telegram messages.",
   }, null, 2));
