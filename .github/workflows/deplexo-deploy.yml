@@ -30,15 +30,10 @@ jobs:
             echo "::error::DEPLEXO_TOKEN secret is missing."
             exit 1
           fi
-
           APPS_RESPONSE="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" "$BASE/me")"
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/me")"
           APP_ID="$(printf '%s' "$APPS_RESPONSE" | jq -r --arg slug "$APP_SLUG" '
-            first(.apps[]? |
-              select(((.name // "") == $slug) or
-                (((.url // .domain // "") | tostring) | contains($slug))) |
-              (.id // .appId)) // empty
+            first(.apps[]? | select(((.name // "") == $slug) or ((((.url // .domain // "") | tostring) | contains($slug)))) | (.id // .appId)) // empty
           ')"
           if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
             echo "::error::Could not find target app '$APP_SLUG'."
@@ -46,52 +41,21 @@ jobs:
             exit 1
           fi
           echo "APP_ID=$APP_ID" >> "$GITHUB_OUTPUT"
-          echo "Target app found: $APP_SLUG"
+          echo "Target app found: $APP_SLUG ($APP_ID)"
           HISTORY="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" "$BASE/apps/$APP_ID/deployments?limit=10&offset=0")"
-          echo "Recent deployment history (status and commit only):"
-          printf '%s' "$HISTORY" | jq '{
-            deployments: [(.data // .deployments // .items // [])[]? |
-              {id, status, state, commitSha, commit_sha, createdAt, created_at, startedAt, finishedAt, error}]
-          }'
-
-          DEPLOY_ID="$(printf '%s' "$HISTORY" | jq -r 'first((.data // .deployments // .items // [])[]?) | .id // empty')"
-          if [[ -n "$DEPLOY_ID" ]]; then
-            echo "Latest deployment build log (last 100 lines):"
-            if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/deployments/$DEPLOY_ID/logs" -o /tmp/deplexo-build.json; then
-              jq -r '(.lines // .logs // .data // []) | if type == "array" then .[] else . end | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-build.json | tail -n 100 || true
-            else
-              echo "Build logs unavailable for deployment $DEPLOY_ID."
-            fi
-          fi
-
-          echo "Usage response shape:"
-          if [[ -f /tmp/deplexo-usage.json ]]; then jq '{keys:keys, values:with_entries(select(.key | test("usage|limit|plan|period|credit|compute|request"; "i")))}' /tmp/deplexo-usage.json; fi
-
-          echo "Runtime diagnostics (filtered):"
-          if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/logs/runtime?limit=1000" -o /tmp/deplexo-runtime.json; then
-            jq -r '(.lines // [])[]? | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-runtime.json | grep -Ei 'monitor_started|monitor_summary|liqs_5m_alert_sent|poll_failed|nodeflare_ws|telegram|error|warn|state' | tail -n 80 || true
-          else
-            echo "Runtime logs unavailable; verify DEPLEXO_TOKEN has logs:read scope."
-          fi
-
-          echo "Usage summary:"
-          if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/usage" -o /tmp/deplexo-usage.json; then
-            jq '{plan, period, usage, limits, remaining, data}' /tmp/deplexo-usage.json
-          else
-            echo "Usage endpoint unavailable."
-          fi
-
-          echo "App live stats:"
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/deployments?limit=10&offset=0")"
+          printf '%s' "$HISTORY" | jq '{deployments: [(.data // .deployments // .items // [])[]? | {id,status,state,commitSha,commit_sha,createdAt,created_at,startedAt,finishedAt,error}]}'
           if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/live-stats" -o /tmp/deplexo-live.json; then
-            jq '{status, cpu, memory, restarts, uptime, data}' /tmp/deplexo-live.json
-          else
-            echo "Live stats unavailable."
+            echo "App live stats:"
+            jq '{status,cpu,memory,restarts,uptime,data}' /tmp/deplexo-live.json
+          fi
+          if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/logs/runtime?limit=1000" -o /tmp/deplexo-runtime.json; then
+            echo "Recent monitor diagnostics:"
+            jq -r '(.lines // [])[]? | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-runtime.json | grep -Ei 'monitor_started|monitor_summary|liqs_5m|liquidation|poll_failed|nodeflare_ws|telegram|error|warn' | tail -n 80 || true
           fi
 
-      - name: Request manual rebuild only
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+      - name: Request Deplexo rebuild without cancelling active deployments
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
           BASE: https://deplexo.com/user/api/v1
@@ -101,8 +65,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -z "${APP_ID:-}" ]]; then
+            echo "::error::App ID missing from inspection step."
+            exit 1
+          fi
           SHA="${REQUESTED_SHA:-$PUSH_SHA}"
-          echo "Deplexo rebuild requested for commit $SHA"
+          echo "Requesting Deplexo rebuild for commit $SHA"
           RESPONSE="$(curl --silent --show-error \
             -X POST \
             -H "Authorization: Bearer $DEPLEXO_TOKEN" \
@@ -114,11 +82,11 @@ jobs:
           STATUS="${RESPONSE##*HTTP_STATUS:}"
           printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
           if [[ "$STATUS" == "409" ]]; then
-            echo "::error::Deplexo reports a deployment already in progress (HTTP 409). Inspect deployment history before retrying."
+            echo "::error::A deployment is already running. No cancellation was attempted."
             exit 1
           fi
           if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
-            echo "::error::Deplexo restart request failed with HTTP $STATUS."
+            echo "::error::Deplexo rebuild request failed with HTTP $STATUS."
             exit 1
           fi
-          echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
+          echo "Deplexo accepted the rebuild request (HTTP $STATUS)."
