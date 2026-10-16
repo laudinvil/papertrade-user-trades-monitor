@@ -382,11 +382,6 @@ async function poll() {
       continue;
     }
 
-    if (classified.instrument !== 'BTC') {
-      seen.add(key);
-      continue;
-    }
-
     const bucket = getWindow(periodStart(chainEvent.ts), classified.instrument);
     if (!Array.isArray(bucket.eventKeys)) bucket.eventKeys = [];
     if (!Array.isArray(bucket.positionIds)) bucket.positionIds = [];
@@ -432,7 +427,8 @@ async function poll() {
 
     // Independent flag: older releases set bucket.alerted even for suppressed windows.
     // Do not let that legacy flag block an alert for unclassified liquidation events.
-    if (unknownCount >= 2 && bucket.unclassifiedAlerted !== true) {
+    const unknownThreshold = bucket.instrument === 'ETH' ? 3 : 2;
+    if (unknownCount >= unknownThreshold && bucket.unclassifiedAlerted !== true) {
       await send(alertText(bucket));
       bucket.unclassifiedAlerted = true;
       alerts++;
