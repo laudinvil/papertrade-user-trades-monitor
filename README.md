@@ -4,10 +4,10 @@ Independent, read-only Telegram monitor for Papertrade liquidation events. It is
 
 ## Behavior
 
-- Polls the public `get_recent_trades` API every 5 seconds by default.
+- Polls the public `get_recent_trades` API every 5 seconds by default to collect events throughout each period.
 - Counts only events with `kind: liquidation`.
 - Aggregates liquidation events into fixed 5-minute windows by instrument.
-- Sends one alert for a completed window when total liquidations are at least 18.
+- Sends one alert for a completed window if it contains at least one liquidation; there is no minimum threshold of 18.
 - Splits the alert counts into `LONG` and `SHORT`; events without a recognized side still contribute to the total.
 - Uses newline-separated Telegram alert lines and HTML parse mode.
 - Deduplicates events and alerts; state is stored at `STATE_PATH` (default `./data/state.json`).
