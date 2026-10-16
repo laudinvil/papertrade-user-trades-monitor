@@ -90,39 +90,38 @@ jobs:
             echo "Live stats unavailable."
           fi
 
-      - name: Request manual rebuild only
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+      - name: Cancel deployment and stop noisy monitor
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
           BASE: https://deplexo.com/user/api/v1
           APP_ID: ${{ steps.inspect.outputs.APP_ID }}
-          REQUESTED_SHA: ${{ inputs.commit_sha }}
-          PUSH_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
-          echo "Deplexo rebuild requested for commit $SHA"
-          for attempt in $(seq 1 10); do
-            RESPONSE="$(curl --silent --show-error \
-              -X POST \
-              -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-              -H "Accept: application/json" \
-              -H "Content-Type: application/json" \
-              --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
-              -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
-            BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
-            STATUS="${RESPONSE##*HTTP_STATUS:}"
-            printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
-            if [[ "$STATUS" == "409" && "$attempt" -lt 10 ]]; then
-              echo "Deployment is already in progress; retrying in 15 seconds ($attempt/10)."
-              sleep 15
-              continue
-            fi
-            if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
-              echo "::error::Deplexo restart request failed with HTTP $STATUS."
-              exit 1
-            fi
-            echo "Deplexo accepted the rebuild request (HTTP $STATUS)."
-            exit 0
-          done
+          echo "Cancelling any active deployment for $APP_ID"
+          CANCEL_STATUS="$(curl --silent --show-error -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            --data '{}' \
+            -o /tmp/deplexo-cancel.json -w '%{http_code}' "$BASE/apps/$APP_ID/cancel")"
+          cat /tmp/deplexo-cancel.json | jq . || cat /tmp/deplexo-cancel.json
+          if [[ "$CANCEL_STATUS" -ge 200 && "$CANCEL_STATUS" -lt 300 ]]; then
+            echo "Cancellation requested (HTTP $CANCEL_STATUS)."
+          else
+            echo "Cancel returned HTTP $CANCEL_STATUS; continuing to stop the app."
+          fi
+
+          echo "Stopping app $APP_ID to prevent further Telegram spam"
+          STOP_STATUS="$(curl --silent --show-error -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            --data '{}' \
+            -o /tmp/deplexo-stop.json -w '%{http_code}' "$BASE/apps/$APP_ID/stop")"
+          cat /tmp/deplexo-stop.json | jq . || cat /tmp/deplexo-stop.json
+          if [[ "$STOP_STATUS" -lt 200 || "$STOP_STATUS" -ge 300 ]]; then
+            echo "::error::Failed to stop Deplexo app (HTTP $STOP_STATUS). Check app:stop permission."
+            exit 1
+          fi
+          echo "Deplexo accepted the stop request (HTTP $STOP_STATUS)."
