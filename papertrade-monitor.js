@@ -171,7 +171,8 @@ function alertText(bucket) {
   return [
     `<b>${esc(instrument)} 5m</b>`,
     `LIQS: ${Number(bucket.total || 0)}`,
-    `LONG: ${Number(bucket.long || 0)} | SHORT: ${Number(bucket.short || 0)}`,
+    `LONG: ${Number(bucket.long || 0)}`,
+    `SHORT: ${Number(bucket.short || 0)}`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
 }
