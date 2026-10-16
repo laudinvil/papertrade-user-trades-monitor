@@ -161,25 +161,18 @@ function eventTimestamp(event) {
   return Number.isFinite(ts) && ts > 0 ? ts : null;
 }
 
-function alertText(periodStartMs, buckets) {
-  const byInstrument = new Map(buckets.map(bucket => [String(bucket.instrument || '').toUpperCase(), bucket]));
-  const btc = byInstrument.get('BTC') || { total: 0, long: 0, short: 0 };
-  const eth = byInstrument.get('ETH') || { total: 0, long: 0, short: 0 };
-  const total = Number(btc.total || 0) + Number(eth.total || 0);
-  const long = Number(btc.long || 0) + Number(eth.long || 0);
-  const short = Number(btc.short || 0) + Number(eth.short || 0);
-  const nextPeriodStartSeconds = Math.floor(Number(periodStartMs) / 1000) + (WINDOW_MS / 1000);
-  const symbols = ['btc', 'eth', 'sol', 'xrp', 'hype', 'doge', 'bnb'];
-  const links = symbols.map(symbol =>
-    `https://polymarket.com/event/${symbol}-updown-5m-${nextPeriodStartSeconds}`
-  );
+function alertText(bucket) {
+  const instrument = String(bucket.instrument || '').toUpperCase();
+  if (instrument !== 'BTC' && instrument !== 'ETH') {
+    throw new Error(`Unsupported liquidation instrument: ${instrument}`);
+  }
+  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
+  const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   return [
-    '<b>BTC + ETH 5m LIQUIDATIONS</b>',
-    `TOTAL LIQS: ${total}`,
-    `BTC: ${Number(btc.total || 0)} | LONG: ${Number(btc.long || 0)} | SHORT: ${Number(btc.short || 0)}`,
-    `ETH: ${Number(eth.total || 0)} | LONG: ${Number(eth.long || 0)} | SHORT: ${Number(eth.short || 0)}`,
-    `COMBINED LONG: ${long} | SHORT: ${short}`,
-    ...links,
+    `<b>${esc(instrument)} 5m</b>`,
+    `LIQS: ${Number(bucket.total || 0)}`,
+    `LONG: ${Number(bucket.long || 0)} | SHORT: ${Number(bucket.short || 0)}`,
+    polymarketUrl,
   ].join(String.fromCharCode(10));
 }
 
@@ -423,38 +416,34 @@ async function poll() {
   saveState();
 
   let alerts = 0;
-  const periods = new Map();
   for (const bucket of Object.values(windows)) {
-    const start = Number(bucket.start);
-    if (!periods.has(start)) periods.set(start, []);
-    periods.get(start).push(bucket);
-  }
-
-  for (const [start, buckets] of periods) {
-    if (start + WINDOW_MS > now || buckets.every(bucket => bucket.alerted)) continue;
-    const eligible = buckets.filter(bucket => ['BTC', 'ETH'].includes(String(bucket.instrument || '').toUpperCase()));
-    const total = eligible.reduce((sum, bucket) => sum + Number(bucket.total || 0), 0);
-    if (total > 0) {
-      await send(alertText(start, eligible));
+    if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
+    const longCount = Number(bucket.long || 0);
+    const shortCount = Number(bucket.short || 0);
+    if (longCount > 0 && shortCount > 0) {
+      await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_combined_alert_sent',
-        periodStart: new Date(start).toISOString(),
-        btcLiqs: eligible.filter(b => String(b.instrument).toUpperCase() === 'BTC').reduce((n, b) => n + Number(b.total || 0), 0),
-        ethLiqs: eligible.filter(b => String(b.instrument).toUpperCase() === 'ETH').reduce((n, b) => n + Number(b.total || 0), 0),
-        totalLiqs: total,
-        long: eligible.reduce((n, b) => n + Number(b.long || 0), 0),
-        short: eligible.reduce((n, b) => n + Number(b.short || 0), 0),
-        uniquePositions: eligible.reduce((n, b) => n + (Array.isArray(b.positionKeys) ? b.positionKeys.length : 0), 0),
-        eventKeys: eligible.reduce((n, b) => n + (Array.isArray(b.eventKeys) ? b.eventKeys.length : 0), 0),
+        level: 'info', event: 'liqs_5m_alert_sent',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: Number(bucket.total),
+        long: longCount,
+        short: shortCount,
+        uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+        eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_combined_alert_suppressed_empty',
-        periodStart: new Date(start).toISOString(),
+        level: 'info', event: 'liqs_5m_alert_suppressed_one_sided',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: Number(bucket.total || 0),
+        long: longCount,
+        short: shortCount,
       }));
     }
-    for (const bucket of buckets) bucket.alerted = true;
+    bucket.alerted = true;
     saveState();
   }
 
