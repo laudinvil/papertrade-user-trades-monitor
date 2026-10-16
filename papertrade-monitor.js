@@ -27,10 +27,10 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     return {
       initialized: s.initialized === true,
-      seenKeys: s.eventFilterVersion === 2 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
-      windows: s.eventFilterVersion === 2 && s.windows && typeof s.windows === 'object' ? s.windows : {},
-      lastScannedBlock: s.eventFilterVersion === 2 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      eventFilterVersion: 2,
+      seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
+      windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
+      lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
+      eventFilterVersion: 3,
       pending: [],
     };
   } catch (err) {
@@ -124,7 +124,7 @@ function periodStart(ts) {
 function getWindow(start, instrument) {
   const key = `${start}:${instrument}`;
   if (!windows[key]) {
-    windows[key] = { start, instrument, total: 0, long: 0, short: 0, eventKeys: [], positionIds: [], alerted: false };
+    windows[key] = { start, instrument, total: 0, long: 0, short: 0, eventKeys: [], positionIds: [], positionKeys: [], alerted: false };
   }
   return windows[key];
 }
@@ -382,14 +382,20 @@ async function poll() {
     }
 
     const bucket = getWindow(periodStart(chainEvent.ts), classified.instrument);
-    if (bucket.eventKeys.includes(key)) {
+    if (!Array.isArray(bucket.eventKeys)) bucket.eventKeys = [];
+    if (!Array.isArray(bucket.positionIds)) bucket.positionIds = [];
+    if (!Array.isArray(bucket.positionKeys)) bucket.positionKeys = [];
+    const positionId = chainEvent.positionId == null ? null : String(chainEvent.positionId);
+    const positionKey = positionId && chainEvent.user
+      ? `${String(chainEvent.user).toLowerCase()}:${positionId}`
+      : positionId;
+    if (bucket.eventKeys.includes(key) || (positionKey && bucket.positionKeys.includes(positionKey))) {
       seen.add(key);
       continue;
     }
     bucket.eventKeys.push(key);
-    const positionId = chainEvent.positionId == null ? null : String(chainEvent.positionId);
-    if (positionId && !Array.isArray(bucket.positionIds)) bucket.positionIds = [];
-    if (positionId && !bucket.positionIds.includes(positionId)) bucket.positionIds.push(positionId);
+    if (positionKey) bucket.positionKeys.push(positionKey);
+    if (positionId) bucket.positionIds.push(positionId);
     bucket.total++;
     if (classified.side === 'LONG') bucket.long++;
     else if (classified.side === 'SHORT') bucket.short++;
