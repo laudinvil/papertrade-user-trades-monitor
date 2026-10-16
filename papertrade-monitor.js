@@ -340,6 +340,9 @@ async function poll() {
       initialLookbackBlocks: latestBlock - fromBlock,
     }));
     logs = await getLiquidationLogs(fromBlock, latestBlock);
+    // The baseline already covers every block up to latestBlock; discard queued WS copies
+    // from that range so older completed periods are not counted again on the next API poll.
+    liveLogs = liveLogs.filter(log => Number(BigInt(log.blockNumber)) > latestBlock);
     state.lastScannedBlock = latestBlock;
   } else {
     logs = liveLogs.splice(0);
