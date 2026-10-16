@@ -126,6 +126,13 @@ try {
     blockRange: { fromBlock: `0x${fromBlock.toString(16)}`, toBlock: blockHex, blocksRequested: Number(latestBlock - fromBlock + 1n) },
     apiEventsReturned: events.length,
     onchainLiquidationsFound: chainEvents.length,
+    rawLogSamples: logs.slice(0, 8).map(log => ({
+      blockNumber: Number(BigInt(log.blockNumber)),
+      transactionHash: log.transactionHash,
+      logIndex: Number(BigInt(log.logIndex)),
+      topics: log.topics ?? [],
+      data: log.data ?? "0x",
+    })),
     positionIdMatches: matches.filter(m => m.apiMatchCount > 0).length,
     positionIdMatchEvents: matches.filter(m => m.apiMatchCount > 0).length,
     matchedApiCloseEvents: matches.filter(m => m.apiEventIsClose).length,
