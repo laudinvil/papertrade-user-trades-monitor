@@ -418,9 +418,20 @@ async function poll() {
   let alerts = 0;
   for (const bucket of Object.values(windows)) {
     if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
+    const totalLiqs = Number(bucket.total || 0);
     const longCount = Number(bucket.long || 0);
     const shortCount = Number(bucket.short || 0);
-    if (longCount > 0 && shortCount > 0) {
+    if (totalLiqs < 33) {
+      console.log(JSON.stringify({
+        level: 'info', event: 'liqs_5m_alert_suppressed_below_threshold',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        threshold: 33,
+        long: longCount,
+        short: shortCount,
+      }));
+    } else if (longCount > 0 && shortCount > 0) {
       await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
