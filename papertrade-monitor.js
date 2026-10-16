@@ -57,6 +57,9 @@ const ACCOUNT_CACHE_TTL_MS = 5000;
 const ACCOUNT_MAX_PAGES = 4;
 const blockTimestampCache = new Map();
 const WS_CURSOR_SAFETY_BLOCKS = 10;
+const SUMMARY_INTERVAL_MS = 60_000;
+let lastSummaryAt = 0;
+let lastWsError = null;
 
 function saveState() {
   const next = {
@@ -94,10 +97,6 @@ async function rpc(method, params = []) {
           : Math.min(250 * (2 ** attempt), 2000);
         lastError = new Error(`${method}: HTTP ${response.status}`);
         if (attempt < 4) {
-          console.warn(JSON.stringify({
-            level: 'warn', event: 'rpc_rate_limited_retry',
-            method, status: response.status, attempt: attempt + 1, retryInMs: delay,
-          }));
           await sleep(delay);
           continue;
         }
@@ -113,10 +112,6 @@ async function rpc(method, params = []) {
       const retryable = /HTTP 429|HTTP 5\d\d|fetch failed|timeout|aborted/i.test(message);
       if (!retryable || attempt >= 4) throw err;
       const delay = Math.min(250 * (2 ** attempt), 2000);
-      console.warn(JSON.stringify({
-        level: 'warn', event: 'rpc_transient_retry',
-        method, attempt: attempt + 1, retryInMs: delay, message,
-      }));
       await sleep(delay);
     }
   }
@@ -305,6 +300,7 @@ async function runWebSocketLoop() {
       });
       liveSocketConnected = true;
       liveSocketStatus = 'connected';
+      lastWsError = null;
       console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_connected' }));
 
       let requestId = 1;
@@ -371,7 +367,10 @@ async function runWebSocketLoop() {
       await new Promise(resolve => socket.once('close', resolve));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(JSON.stringify({ level: 'warn', event: 'nodeflare_ws_disconnected', message }));
+      if (message !== lastWsError) {
+        console.error(JSON.stringify({ level: 'warn', event: 'nodeflare_ws_disconnected', message }));
+        lastWsError = message;
+      }
     } finally {
       liveSocketConnected = false;
       liveSocketStatus = 'disconnected';
@@ -446,6 +445,7 @@ async function poll() {
   let enriched = 0;
   let unmatched = 0;
   let skippedOldBaseline = 0;
+  let expiredUnmatched = 0;
 
   for (const log of logs) {
     const key = eventKey(log);
@@ -499,12 +499,7 @@ async function poll() {
     // already-sent alert. Drop it instead of carrying an ever-growing historical queue.
     if ((eventPeriodEnd != null && eventPeriodEnd <= now) ||
         now - Number(chainEvent.createdAt || now) > PENDING_MAX_AGE_MS) {
-      console.warn(JSON.stringify({
-        level: 'warn', event: 'liquidation_unmatched_expired',
-        positionId: chainEvent.positionId, blockNumber: chainEvent.blockNumber,
-        periodEnd: eventPeriodEnd == null ? null : new Date(eventPeriodEnd).toISOString(),
-        reason: eventPeriodEnd != null && eventPeriodEnd <= now ? 'period_closed' : 'max_age',
-      }));
+      expiredUnmatched++;
       seen.add(chainEvent.key);
       continue;
     }
@@ -557,21 +552,26 @@ async function poll() {
   }
   saveState();
 
-  console.log(JSON.stringify({
-    level: 'info',
-    event: 'onchain_poll_completed',
-    latestBlock,
-    source: firstScan ? 'initial_rpc_baseline' : 'websocket_logs',
-    scannedFromBlock: fromBlock,
-    scannedToBlock: latestBlock,
-    onchainLiquidationsFound: logs.length,
-    apiEventsReturned: apiEvents.length,
-    enrichedThisPoll: enriched,
-    pendingUnmatched: pending.length,
-    unmatchedNewThisPoll: unmatched,
-    skippedOldBaseline,
-    alertsSent: alerts,
-  }));
+  const summaryNow = Date.now();
+  if (summaryNow - lastSummaryAt >= SUMMARY_INTERVAL_MS || alerts > 0 || expiredUnmatched > 0) {
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'monitor_summary',
+      intervalMs: SUMMARY_INTERVAL_MS,
+      latestBlock: highestObservedBlock ?? latestBlock,
+      source: firstScan ? 'initial_rpc_baseline' : 'websocket_logs',
+      onchainLiquidationsFound: logs.length,
+      apiEventsReturned: apiEvents.length,
+      enrichedThisPoll: enriched,
+      pendingUnmatched: pending.length,
+      unmatchedNewThisPoll: unmatched,
+      expiredUnmatched,
+      skippedOldBaseline,
+      alertsSent: alerts,
+      websocket: liveSocketStatus,
+    }));
+    lastSummaryAt = summaryNow;
+  }
 }
 
 console.log(JSON.stringify({
