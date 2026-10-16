@@ -56,6 +56,19 @@ jobs:
               {id, status, state, commitSha, commit_sha, createdAt, created_at, startedAt, finishedAt, error}]
           }'
 
+          DEPLOY_ID="$(printf '%s' "$HISTORY" | jq -r 'first((.data // .deployments // .items // [])[]?) | .id // empty')"
+          if [[ -n "$DEPLOY_ID" ]]; then
+            echo "Latest deployment build log (last 100 lines):"
+            if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/deployments/$DEPLOY_ID/logs" -o /tmp/deplexo-build.json; then
+              jq -r '(.lines // .logs // .data // []) | if type == "array" then .[] else . end | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-build.json | tail -n 100 || true
+            else
+              echo "Build logs unavailable for deployment $DEPLOY_ID."
+            fi
+          fi
+
+          echo "Usage response shape:"
+          if [[ -f /tmp/deplexo-usage.json ]]; then jq '{keys:keys, values:with_entries(select(.key | test("usage|limit|plan|period|credit|compute|request"; "i")))}' /tmp/deplexo-usage.json; fi
+
           echo "Runtime diagnostics (filtered):"
           if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/logs/runtime?limit=1000" -o /tmp/deplexo-runtime.json; then
             jq -r '(.lines // [])[]? | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-runtime.json | grep -Ei 'monitor_started|monitor_summary|liqs_5m_alert_sent|poll_failed|nodeflare_ws|telegram|error|warn|state' | tail -n 80 || true
