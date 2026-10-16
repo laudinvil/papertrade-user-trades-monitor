@@ -1,0 +1,71 @@
+name: Deploy to Deplexo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to deploy (defaults to this workflow run's commit)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request deployment of Papertrade monitor
+        env:
+          DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          PUSH_SHA: ${{ github.sha }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          APP_SLUG: merry-cascade-8098
+          BASE: https://deplexo.com/user/api/v1
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DEPLEXO_TOKEN:-}" ]]; then
+            echo "::error::DEPLEXO_TOKEN secret is missing."
+            exit 1
+          fi
+
+          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
+          echo "Target app: $APP_SLUG"
+          echo "Requested commit: $SHA"
+
+          APPS_RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            "$BASE/me")"
+
+          APP_ID="$(printf '%s' "$APPS_RESPONSE" | jq -r --arg slug "$APP_SLUG" '
+            first(.apps[]? |
+              select(
+                ((.name // "") == $slug) or
+                (((.url // .domain // "") | tostring) | contains($slug))
+              ) |
+              (.id // .appId)
+            ) // empty
+          ')"
+
+          if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
+            echo "::error::Could not find Deplexo app '$APP_SLUG' in /me response. No deployment requested."
+            printf '%s' "$APPS_RESPONSE" | jq '{apps: [.apps[]? | {id, appId, name, url, domain}]}'
+            exit 1
+          fi
+
+          echo "Found target app ID."
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
+            "$BASE/apps/$APP_ID/restart")"
+
+          echo "Deplexo accepted the deployment request:"
+          printf '%s' "$RESPONSE" | jq .
