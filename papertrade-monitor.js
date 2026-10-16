@@ -135,7 +135,7 @@ function alertText(event) {
     `WALLET: ${esc(event.user || 'UNKNOWN')}`,
     `BLOCK: ${Number(event.blockNumber)}`,
     `TX: ${esc(event.transactionHash || 'UNKNOWN')}`,
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function send(message) {
