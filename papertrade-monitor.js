@@ -158,17 +158,20 @@ function eventTimestamp(event) {
   return Number.isFinite(ts) && ts > 0 ? ts : null;
 }
 
-function alertText(bucket) {
-  const instrument = String(bucket.instrument || 'UNKNOWN').trim().toLowerCase();
-  // Alert is sent after the bucket closes; link to the market that starts next.
-  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
-  const polymarketUrl = `https://polymarket.com/event/${instrument}-updown-5m-${nextPeriodStartSeconds}`;
+function alertText(buckets, start) {
+  const byInstrument = new Map(buckets.map(bucket => [String(bucket.instrument).toUpperCase(), bucket]));
+  const count = instrument => Number(byInstrument.get(instrument)?.total || 0);
+  const long = instrument => Number(byInstrument.get(instrument)?.long || 0);
+  const short = instrument => Number(byInstrument.get(instrument)?.short || 0);
+  // Alert is sent after the 5-minute bucket closes; links target the next 5-minute markets.
+  const nextPeriodStartSeconds = Math.floor(Number(start) / 1000) + (WINDOW_MS / 1000);
+  const markets = ['BTC', 'ETH', 'SOL', 'XRP', 'HYPE', 'DOGE', 'BNB'];
   return [
-    `<b>${esc(bucket.instrument)} 5m</b>`,
-    `LIQS: ${Number(bucket.total ?? (bucket.long + bucket.short))}`,
-    // Include side counts in every closed-window alert.
-    `LONG: ${Number(bucket.long || 0)} | SHORT: ${Number(bucket.short || 0)}`,
-    polymarketUrl,
+    '<b>BTC + ETH LIQUIDATIONS 5m</b>',
+    `BTC LIQS: ${count('BTC')} | LONG: ${long('BTC')} | SHORT: ${short('BTC')}`,
+    `ETH LIQS: ${count('ETH')} | LONG: ${long('ETH')} | SHORT: ${short('ETH')}`,
+    '',
+    ...markets.map(symbol => `https://polymarket.com/event/${symbol.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`),
   ].join('\n');
 }
 
@@ -405,22 +408,28 @@ async function poll() {
   saveState();
 
   let alerts = 0;
+  const closedWindows = new Map();
   for (const bucket of Object.values(windows)) {
-    if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
-    if (Number(bucket.total) > 0) {
-      await send(alertText(bucket));
+    if (Number(bucket.start) + WINDOW_MS > now) continue;
+    if (!closedWindows.has(Number(bucket.start))) closedWindows.set(Number(bucket.start), []);
+    closedWindows.get(Number(bucket.start)).push(bucket);
+  }
+  for (const [start, buckets] of closedWindows) {
+    if (buckets.every(bucket => bucket.alerted)) continue;
+    const total = buckets.reduce((sum, bucket) => sum + Number(bucket.total || 0), 0);
+    if (total > 0) {
+      await send(alertText(buckets, start));
       alerts++;
       console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_sent',
-        instrument: bucket.instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: bucket.total, long: bucket.long, short: bucket.short,
-        unknownSide: Number(bucket.unknownSide || 0),
-        uniquePositions: Array.isArray(bucket.positionIds) ? bucket.positionIds.length : null,
-        eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+        level: 'info', event: 'liqs_5m_combined_alert_sent',
+        periodStart: new Date(start).toISOString(),
+        btcLiqs: buckets.filter(b => b.instrument === 'BTC').reduce((sum, b) => sum + Number(b.total || 0), 0),
+        ethLiqs: buckets.filter(b => b.instrument === 'ETH').reduce((sum, b) => sum + Number(b.total || 0), 0),
+        totalLiqs: total,
+        marketLinks: 7,
       }));
     }
-    bucket.alerted = true;
+    for (const bucket of buckets) bucket.alerted = true;
     saveState();
   }
 
