@@ -419,13 +419,17 @@ async function poll() {
 
   let alerts = 0;
   for (const bucket of Object.values(windows)) {
-    if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
+    if (Number(bucket.start) + WINDOW_MS > now) continue;
     const totalLiqs = Number(bucket.total || 0);
     const longCount = Number(bucket.long || 0);
     const shortCount = Number(bucket.short || 0);
     const unknownCount = Number(bucket.unknownSide || 0);
-    if (unknownCount >= 1) {
+
+    // Independent flag: older releases set bucket.alerted even for suppressed windows.
+    // Do not let that legacy flag block an alert for unclassified liquidation events.
+    if (unknownCount >= 1 && bucket.unclassifiedAlerted !== true) {
       await send(alertText(bucket));
+      bucket.unclassifiedAlerted = true;
       alerts++;
       console.log(JSON.stringify({
         level: 'info', event: 'liqs_5m_alert_sent_unclassified',
@@ -438,7 +442,8 @@ async function poll() {
         uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
         eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
       }));
-    } else {
+      saveState();
+    } else if (bucket.alerted !== true) {
       console.log(JSON.stringify({
         level: 'info', event: 'liqs_5m_alert_suppressed_no_unclassified',
         instrument: bucket.instrument,
@@ -448,9 +453,9 @@ async function poll() {
         short: shortCount,
         unknown: unknownCount,
       }));
+      bucket.alerted = true;
+      saveState();
     }
-    bucket.alerted = true;
-    saveState();
   }
 
   for (const [key, bucket] of Object.entries(windows)) {
