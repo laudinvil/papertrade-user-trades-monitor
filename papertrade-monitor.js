@@ -248,6 +248,7 @@ function alertText(bucket) {
   return [
     `<b>${esc(bucket.instrument)} 5m</b>`,
     `LIQS: ${Number(bucket.total ?? (bucket.long + bucket.short))}`,
+    // Include side counts in every closed-window alert.
     `LONG: ${Number(bucket.long || 0)} | SHORT: ${Number(bucket.short || 0)}`,
     polymarketUrl,
   ].join('\n');
