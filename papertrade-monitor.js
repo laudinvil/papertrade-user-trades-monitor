@@ -341,7 +341,6 @@ async function getBlockTimestamp(blockNumber, cache) {
 }
 
 async function poll() {
-  const apiEvents = await getRecentTrades();
   const firstScan = state.lastScannedBlock == null;
   let latestBlock = null;
   let logs;
@@ -360,6 +359,10 @@ async function poll() {
   } else {
     logs = liveLogs.splice(0);
   }
+
+  // Papertrade is enrichment only, not the liquidation source. Query it only when
+  // there are fresh chain logs to enrich or pending chain events awaiting a match.
+  const apiEvents = (logs.length || pending.length) ? await getRecentTrades() : [];
   const apiByPosition = new Map();
   for (const event of apiEvents) {
     if (event?.positionId == null) continue;
