@@ -436,8 +436,19 @@ async function poll() {
   // Retry API enrichment for recently observed on-chain liquidations that were not in the latest API page.
   const stillPending = [];
   for (const chainEvent of pending) {
-    if (now - Number(chainEvent.createdAt || now) > PENDING_MAX_AGE_MS) {
-      console.warn(JSON.stringify({ level: 'warn', event: 'liquidation_unmatched_expired', positionId: chainEvent.positionId, blockNumber: chainEvent.blockNumber }));
+    const eventPeriodEnd = Number.isFinite(Number(chainEvent.ts)) && Number(chainEvent.ts) > 0
+      ? periodStart(Number(chainEvent.ts)) + WINDOW_MS
+      : null;
+    // Once the 5-minute period is closed, an unmatched event cannot safely change an
+    // already-sent alert. Drop it instead of carrying an ever-growing historical queue.
+    if ((eventPeriodEnd != null && eventPeriodEnd <= now) ||
+        now - Number(chainEvent.createdAt || now) > PENDING_MAX_AGE_MS) {
+      console.warn(JSON.stringify({
+        level: 'warn', event: 'liquidation_unmatched_expired',
+        positionId: chainEvent.positionId, blockNumber: chainEvent.blockNumber,
+        periodEnd: eventPeriodEnd == null ? null : new Date(eventPeriodEnd).toISOString(),
+        reason: eventPeriodEnd != null && eventPeriodEnd <= now ? 'period_closed' : 'max_age',
+      }));
       seen.add(chainEvent.key);
       continue;
     }
