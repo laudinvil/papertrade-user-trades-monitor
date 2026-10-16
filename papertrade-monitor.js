@@ -422,54 +422,14 @@ async function poll() {
     const totalLiqs = Number(bucket.total || 0);
     const longCount = Number(bucket.long || 0);
     const shortCount = Number(bucket.short || 0);
-    if (totalLiqs < 33) {
-      console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_suppressed_below_threshold',
-        instrument: bucket.instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        threshold: 33,
-        long: longCount,
-        short: shortCount,
-      }));
-    } else if (String(bucket.instrument).toUpperCase() === 'BTC' && shortCount < 2) {
-      console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_suppressed_btc_short_below_threshold',
-        instrument: bucket.instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longCount,
-        short: shortCount,
-        minimumShort: 2,
-      }));
-    } else if (String(bucket.instrument).toUpperCase() === 'BTC' && longCount < 2) {
-      console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_suppressed_btc_long_below_minimum',
-        instrument: bucket.instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longCount,
-        short: shortCount,
-        minimumLong: 2,
-      }));
-    } else if (String(bucket.instrument).toUpperCase() === 'BTC' && longCount > 84) {
-      console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_suppressed_btc_long_above_maximum',
-        instrument: bucket.instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longCount,
-        short: shortCount,
-        maximumLong: 84,
-      }));
-    } else if (longCount > 0 && shortCount > 0) {
+    if (totalLiqs >= 70) {
       await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
         level: 'info', event: 'liqs_5m_alert_sent',
         instrument: bucket.instrument,
         periodStart: new Date(bucket.start).toISOString(),
-        liqs: Number(bucket.total),
+        liqs: totalLiqs,
         long: longCount,
         short: shortCount,
         uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
@@ -477,10 +437,11 @@ async function poll() {
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_suppressed_one_sided',
+        level: 'info', event: 'liqs_5m_alert_suppressed_below_threshold',
         instrument: bucket.instrument,
         periodStart: new Date(bucket.start).toISOString(),
-        liqs: Number(bucket.total || 0),
+        liqs: totalLiqs,
+        threshold: 70,
         long: longCount,
         short: shortCount,
       }));
