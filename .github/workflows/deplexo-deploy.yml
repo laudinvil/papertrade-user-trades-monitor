@@ -56,6 +56,146 @@ jobs:
               {id, status, state, commitSha, commit_sha, createdAt, created_at, startedAt, finishedAt, error}]
           }'
 
+          echo "Runtime diagnostics (filtered; secrets are not printed):"
+          RUNTIME_RESPONSE="$(curl --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/logs/runtime?limit=1000" || true)"
+          RUNTIME_BODY="${RUNTIME_RESPONSE%
+      - name: Request manual rebuild only
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          BASE: https://deplexo.com/user/api/v1
+          APP_ID: ${{ steps.inspect.outputs.APP_ID }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          PUSH_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
+          echo "Manual rebuild requested for commit $SHA"
+          RESPONSE="$(curl --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
+            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
+          BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
+          STATUS="${RESPONSE##*HTTP_STATUS:}"
+          printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
+          if [[ "$STATUS" == "409" ]]; then
+            echo "::error::Deplexo reports a deployment already in progress (HTTP 409). Inspect deployment history before retrying."
+            exit 1
+          fi
+          if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
+            echo "::error::Deplexo restart request failed with HTTP $STATUS."
+            exit 1
+          fi
+          echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
+\n'HTTP_STATUS:*}"
+          RUNTIME_STATUS="${RUNTIME_RESPONSE##*HTTP_STATUS:}"
+          if [[ "$RUNTIME_STATUS" == "200" ]]; then
+            printf '%s' "$RUNTIME_BODY" | jq -r '
+              (.lines // [])[]? |
+              if type == "string" then . else (.message // .line // .text // tostring) end
+            ' | grep -Ei 'monitor_started|monitor_summary|liqs_5m_alert_sent|poll_failed|nodeflare_ws|telegram|error|warn|state' | tail -n 80 || true
+          else
+            echo "Runtime logs unavailable (HTTP ${RUNTIME_STATUS:-unknown}); check DEPLEXO_TOKEN logs:read scope."
+          fi
+
+          echo "Deplexo usage snapshot (summary only):"
+          USAGE_RESPONSE="$(curl --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -w '\nHTTP_STATUS:%{http_code}' "$BASE/usage" || true)"
+          USAGE_BODY="${USAGE_RESPONSE%
+      - name: Request manual rebuild only
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          BASE: https://deplexo.com/user/api/v1
+          APP_ID: ${{ steps.inspect.outputs.APP_ID }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          PUSH_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
+          echo "Manual rebuild requested for commit $SHA"
+          RESPONSE="$(curl --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
+            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
+          BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
+          STATUS="${RESPONSE##*HTTP_STATUS:}"
+          printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
+          if [[ "$STATUS" == "409" ]]; then
+            echo "::error::Deplexo reports a deployment already in progress (HTTP 409). Inspect deployment history before retrying."
+            exit 1
+          fi
+          if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
+            echo "::error::Deplexo restart request failed with HTTP $STATUS."
+            exit 1
+          fi
+          echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
+\n'HTTP_STATUS:*}"
+          USAGE_STATUS="${USAGE_RESPONSE##*HTTP_STATUS:}"
+          if [[ "$USAGE_STATUS" == "200" ]]; then
+            printf '%s' "$USAGE_BODY" | jq '{plan, period, usage, limits, remaining, data}'
+          else
+            echo "Usage endpoint unavailable (HTTP ${USAGE_STATUS:-unknown})."
+          fi
+
+          LIVE_RESPONSE="$(curl --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/live-stats" || true)"
+          LIVE_BODY="${LIVE_RESPONSE%
+      - name: Request manual rebuild only
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          BASE: https://deplexo.com/user/api/v1
+          APP_ID: ${{ steps.inspect.outputs.APP_ID }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          PUSH_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
+          echo "Manual rebuild requested for commit $SHA"
+          RESPONSE="$(curl --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
+            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
+          BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
+          STATUS="${RESPONSE##*HTTP_STATUS:}"
+          printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
+          if [[ "$STATUS" == "409" ]]; then
+            echo "::error::Deplexo reports a deployment already in progress (HTTP 409). Inspect deployment history before retrying."
+            exit 1
+          fi
+          if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
+            echo "::error::Deplexo restart request failed with HTTP $STATUS."
+            exit 1
+          fi
+          echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
+\n'HTTP_STATUS:*}"
+          LIVE_STATUS="${LIVE_RESPONSE##*HTTP_STATUS:}"
+          if [[ "$LIVE_STATUS" == "200" ]]; then
+            printf '%s' "$LIVE_BODY" | jq '{status, cpu, memory, restarts, uptime, data}'
+          else
+            echo "App live stats unavailable (HTTP ${LIVE_STATUS:-unknown})."
+          fi
+
       - name: Request manual rebuild only
         if: github.event_name == 'workflow_dispatch'
         env:

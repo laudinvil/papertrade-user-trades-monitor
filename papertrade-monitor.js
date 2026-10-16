@@ -8,11 +8,10 @@ const RPC_KEY = process.env.NODEFLARE_API_KEY || '';
 const RPC_URL = RPC_KEY ? `https://rpc.nodeflare.app/hl/v1/${RPC_KEY}` : '';
 const WS_URL = RPC_KEY ? `wss://rpc.nodeflare.app/hl/ws/v1/${RPC_KEY}` : '';
 const POLL_MS = Math.max(2000, Number(process.env.POLL_MS || 2000));
-const STATE_PATH = process.env.STATE_PATH || './data/state.json';
+const STATE_PATH = process.env.STATE_PATH || '/data/state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const SEEN_LIMIT = 10000;
-const PENDING_LIMIT = 5000;
 const WINDOW_MS = 5 * 60 * 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
@@ -37,8 +36,12 @@ function loadState() {
       lastScannedBlock: Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
       pending: Array.isArray(s.pending) ? s.pending : [],
     };
-  } catch {
-    return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, pending: [] };
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, pending: [] };
+    }
+    // Never silently reset deduplication or unsent alerts when persisted state is unreadable.
+    throw new Error(`Cannot load persisted monitor state at ${STATE_PATH}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -67,7 +70,7 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
-    pending: pending.slice(-PENDING_LIMIT),
+    pending,
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
   const tmp = `${STATE_PATH}.tmp`;
@@ -331,7 +334,6 @@ async function runWebSocketLoop() {
         }
         if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber) {
           liveLogs.push(result);
-          if (liveLogs.length > PENDING_LIMIT) liveLogs = liveLogs.slice(-PENDING_LIMIT);
         }
         if (message.error) {
           console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_error', message: message.error.message || 'subscription error' }));
@@ -361,7 +363,6 @@ async function runWebSocketLoop() {
         if (from <= latest) {
           const recovered = await getLiquidationLogs(from, latest);
           liveLogs.push(...recovered);
-          if (liveLogs.length > PENDING_LIMIT) liveLogs = liveLogs.slice(-PENDING_LIMIT);
           console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_gap_recovered', fromBlock: from, toBlock: latest, logs: recovered.length }));
         }
       }
@@ -494,13 +495,9 @@ async function poll() {
   // Retry API enrichment for recently observed on-chain liquidations that were not in the latest API page.
   const stillPending = [];
   for (const chainEvent of pending) {
-    const eventPeriodEnd = Number.isFinite(Number(chainEvent.ts)) && Number(chainEvent.ts) > 0
-      ? periodStart(Number(chainEvent.ts)) + WINDOW_MS
-      : null;
-    // Once the 5-minute period is closed, an unmatched event cannot safely change an
-    // already-sent alert. Drop it instead of carrying an ever-growing historical queue.
-    if ((eventPeriodEnd != null && eventPeriodEnd <= now) ||
-        now - Number(chainEvent.createdAt || now) > PENDING_MAX_AGE_MS) {
+    // Keep unmatched events across the period boundary so transient API lag does not
+    // silently erase a liquidation. Expire only after the bounded recovery horizon.
+    if (now - Number(chainEvent.createdAt || now) > PENDING_MAX_AGE_MS) {
       expiredUnmatched++;
       seen.add(chainEvent.key);
       continue;
@@ -512,7 +509,7 @@ async function poll() {
       stillPending.push(chainEvent);
     }
   }
-  pending = [...stillPending, ...newPending].slice(-PENDING_LIMIT);
+  pending = [...stillPending, ...newPending];
 
   if (logs.length) {
     const highestLogBlock = Math.max(...logs.map(log => Number(BigInt(log.blockNumber))));
@@ -550,7 +547,7 @@ async function poll() {
   }
 
   for (const [key, bucket] of Object.entries(windows)) {
-    if (Number(bucket.start) + WINDOW_MS < now - 60 * 60 * 1000) delete windows[key];
+    if (bucket.alerted && Number(bucket.start) + WINDOW_MS < now - 60 * 60 * 1000) delete windows[key];
   }
   saveState();
 
