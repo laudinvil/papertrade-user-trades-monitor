@@ -225,25 +225,6 @@ async function poll() {
 
   const currentWindowBuckets = Object.values(windows).filter(bucket => bucket.start === currentStart);
   const responseTimestamps = ordered.map(eventTimestamp).filter(ts => ts !== null);
-  console.log(JSON.stringify({
-    level: 'info',
-    event: 'poll_complete',
-    recentEvents: ordered.length,
-    responseAtCapacity: ordered.length >= 50,
-    responseOldestTs: responseTimestamps.length ? new Date(Math.min(...responseTimestamps)).toISOString() : null,
-    responseNewestTs: responseTimestamps.length ? new Date(Math.max(...responseTimestamps)).toISOString() : null,
-    newlyProcessed: processed,
-    alertsSent: alerts,
-    currentPeriodStart: new Date(currentStart).toISOString(),
-    currentWindow: currentWindowBuckets.map(bucket => ({
-      instrument: bucket.instrument,
-      liqs: Number(bucket.total ?? (bucket.long + bucket.short)),
-      long: bucket.long,
-      short: bucket.short,
-      alerted: bucket.alerted,
-    })),
-    trackedEventKeys: seen.size,
-  }));
   saveState();
 }
 
