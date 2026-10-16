@@ -264,8 +264,9 @@ function countLiquidation(chainEvent, apiEvent) {
 
 function alertText(bucket) {
   const instrument = String(bucket.instrument || 'UNKNOWN').trim().toLowerCase();
-  const periodStartSeconds = Math.floor(Number(bucket.start) / 1000);
-  const polymarketUrl = `https://polymarket.com/event/${instrument}-updown-5m-${periodStartSeconds}`;
+  // Alert is sent after the bucket closes; link to the market that starts next.
+  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
+  const polymarketUrl = `https://polymarket.com/event/${instrument}-updown-5m-${nextPeriodStartSeconds}`;
   return [
     `<b>${esc(bucket.instrument)} 5m</b>`,
     `LIQS: ${Number(bucket.total ?? (bucket.long + bucket.short))}`,
