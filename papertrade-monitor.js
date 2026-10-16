@@ -223,7 +223,6 @@ async function poll() {
     if (bucket.start + WINDOW_MS < now - 60 * 60 * 1000) delete windows[key];
   }
 
-  const currentBucket = windows[`${currentStart}:BTC`] || windows[`${currentStart}:ETH`];
   const currentWindowBuckets = Object.values(windows).filter(bucket => bucket.start === currentStart);
   const responseTimestamps = ordered.map(eventTimestamp).filter(ts => ts !== null);
   console.log(JSON.stringify({
