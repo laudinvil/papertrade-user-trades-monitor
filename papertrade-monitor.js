@@ -418,7 +418,9 @@ async function poll() {
   let alerts = 0;
   for (const bucket of Object.values(windows)) {
     if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
-    if (Number(bucket.total) > 0) {
+    const longCount = Number(bucket.long || 0);
+    const shortCount = Number(bucket.short || 0);
+    if (longCount > 0 && shortCount > 0) {
       await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
@@ -426,10 +428,19 @@ async function poll() {
         instrument: bucket.instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: Number(bucket.total),
-        long: Number(bucket.long || 0),
-        short: Number(bucket.short || 0),
+        long: longCount,
+        short: shortCount,
         uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
         eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+      }));
+    } else {
+      console.log(JSON.stringify({
+        level: 'info', event: 'liqs_5m_alert_suppressed_one_sided',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: Number(bucket.total || 0),
+        long: longCount,
+        short: shortCount,
       }));
     }
     bucket.alerted = true;
