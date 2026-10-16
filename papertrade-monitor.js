@@ -150,9 +150,9 @@ function decodeLiquidation(log) {
   // currently separated around 500,000 (BTC ~830,000; ETH ~250,000).
   // Keep this threshold explicit so a future price-regime change is visible.
   const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
-  // Longs bust below their liquidation price; shorts bust above it.
-  // Long liquidation threshold is below markPrice; short threshold is above it.
-  const side = markPrice > bustPrice ? 'LONG' : markPrice < bustPrice ? 'SHORT' : null;
+  // The event's markPrice is the observed mark and bustPrice is the liquidation threshold.
+  // A LONG is liquidated when markPrice falls below bustPrice; a SHORT when it rises above.
+  const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
   return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
 }
 
