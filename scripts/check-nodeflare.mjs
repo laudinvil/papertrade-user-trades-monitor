@@ -36,6 +36,24 @@ try {
     fromBlock: `0x${fromBlock.toString(16)}`,
     toBlock: blockHex,
   }]);
+  if (!Array.isArray(logs)) throw new Error("eth_getLogs returned a non-array result");
+
+  const byTopic = new Map();
+  for (const log of logs) {
+    const topic = log.topics?.[0] || "NO_TOPIC";
+    if (!byTopic.has(topic)) byTopic.set(topic, { count: 0, sample: null });
+    const item = byTopic.get(topic);
+    item.count++;
+    if (!item.sample) {
+      item.sample = {
+        blockNumber: log.blockNumber,
+        transactionHash: log.transactionHash,
+        logIndex: log.logIndex,
+        topics: log.topics,
+        data: log.data,
+      };
+    }
+  }
 
   console.log(JSON.stringify({
     ok: true,
@@ -44,8 +62,8 @@ try {
     contract: CONTRACT,
     contractCodeBytes: Math.max(0, (code.length - 2) / 2),
     logRange: { fromBlock: `0x${fromBlock.toString(16)}`, toBlock: blockHex },
-    logsReturned: Array.isArray(logs) ? logs.length : null,
-    observedTopics: [...new Set((Array.isArray(logs) ? logs : []).map(log => log.topics?.[0]).filter(Boolean))],
+    logsReturned: logs.length,
+    topicSummary: Object.fromEntries([...byTopic.entries()].map(([topic, value]) => [topic, value])),
   }));
 } catch (error) {
   console.error(JSON.stringify({
