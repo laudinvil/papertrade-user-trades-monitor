@@ -4,3 +4,6 @@ type: worker
 build:
   framework: dockerfile
   dockerfile: Dockerfile
+
+run:
+  command: "node check-nodeflare.mjs"
