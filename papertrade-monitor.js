@@ -127,7 +127,7 @@ function alertText(bucket) {
     `LIQS: ${bucket.long + bucket.short}`,
     `LONG: ${bucket.long} | SHORT: ${bucket.short}`,
     `Period: ${esc(start)} — ${esc(end)}`,
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function send(message) {
