@@ -2,8 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
 
-const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/$/, '');
-const EXCHANGE_API_BASE = (process.env.PAPERTRADE_EXCHANGE_API_BASE_URL || 'https://exchange.papertrade.xyz').replace(/\/$/, '');
 const RPC_KEY = process.env.NODEFLARE_API_KEY || '';
 const RPC_URL = RPC_KEY ? `https://rpc.nodeflare.app/hl/v1/${RPC_KEY}` : '';
 const WS_URL = RPC_KEY ? `wss://rpc.nodeflare.app/hl/ws/v1/${RPC_KEY}` : '';
@@ -16,9 +14,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
 const INITIAL_LOOKBACK_BLOCKS = 400;
-const API_ENRICHMENT_MIN_INTERVAL_MS = 5000;
 const BLOCK_CHUNK = 100;
-const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
 
 if (!RPC_KEY) throw new Error('Set NODEFLARE_API_KEY.');
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
@@ -34,7 +30,7 @@ function loadState() {
       seenKeys: Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      pending: Array.isArray(s.pending) ? s.pending : [],
+      pending: [],
     };
   } catch (err) {
     if (err?.code === 'ENOENT') {
@@ -48,27 +44,16 @@ function loadState() {
 let state = loadState();
 const seen = new Set(state.seenKeys);
 const windows = state.windows;
-let pending = state.pending;
+let pending = [];
 let liveLogs = [];
 let liveSocketConnected = false;
 let liveSocketStatus = 'starting';
 let highestObservedBlock = null;
-let lastApiFetchAt = 0;
-let cachedApiEvents = [];
-const accountTradeCache = new Map();
-const ACCOUNT_CACHE_TTL_MS = 60_000;
-const ACCOUNT_MAX_PAGES = 2;
-const ACCOUNT_LOOKUP_MIN_INTERVAL_MS = 10_000;
 const blockTimestampCache = new Map();
 const WS_CURSOR_SAFETY_BLOCKS = 10;
 const SUMMARY_INTERVAL_MS = 60_000;
 let lastSummaryAt = 0;
 let lastWsError = null;
-let accountApiRequests = 0;
-let accountApiPages = 0;
-let accountApiCooldownSkips = 0;
-let accountCacheHits = 0;
-let lastAccountLookupAt = 0;
 
 function saveState() {
   const next = {
@@ -127,71 +112,6 @@ async function rpc(method, params = []) {
   throw lastError || new Error(`${method}: RPC failed after retries`);
 }
 
-async function getRecentTrades() {
-  const response = await fetch(`${API_BASE}/get_recent_trades`, {
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!response.ok) throw new Error(`get_recent_trades HTTP ${response.status}`);
-  const body = await response.json();
-  if (body?.ok !== true || !Array.isArray(body?.data?.events)) {
-    throw new Error('get_recent_trades returned an unexpected response');
-  }
-  return body.data.events;
-}
-
-async function getAccountTradeByPosition(wallet, positionId) {
-  if (!wallet || positionId == null) return null;
-  const address = String(wallet).toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(address)) return null;
-  const now = Date.now();
-  const cached = accountTradeCache.get(address);
-  if (cached && now - cached.fetchedAt < ACCOUNT_CACHE_TTL_MS) {
-    accountCacheHits++;
-    return cached.items.find(item => String(item.positionId) === String(positionId)) || null;
-  }
-  // Bound account-history traffic globally. A throttled lookup stays pending and is retried later.
-  if (now - lastAccountLookupAt < ACCOUNT_LOOKUP_MIN_INTERVAL_MS) {
-    accountApiCooldownSkips++;
-    return null;
-  }
-  lastAccountLookupAt = now;
-
-  const items = [];
-  let cursor = null;
-  for (let page = 0; page < ACCOUNT_MAX_PAGES; page++) {
-    const url = new URL(`${EXCHANGE_API_BASE}/query/accounts/${address}/trades`);
-    url.searchParams.set('filter', 'all');
-    url.searchParams.set('limit', '75');
-    if (cursor) url.searchParams.set('cursor', cursor);
-    accountApiRequests++;
-    accountApiPages++;
-    const response = await fetch(url, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!response.ok) throw new Error(`account trades HTTP ${response.status} for ${address}`);
-    const body = await response.json();
-    if (!Array.isArray(body?.items)) {
-      throw new Error(`account trades returned an unexpected response for ${address}`);
-    }
-    items.push(...body.items);
-    const match = items.find(item => String(item.positionId) === String(positionId));
-    if (match) {
-      accountTradeCache.set(address, { fetchedAt: now, items });
-      return match;
-    }
-    if (!body.nextCursor) break;
-    cursor = String(body.nextCursor);
-  }
-  accountTradeCache.set(address, { fetchedAt: now, items });
-  if (accountTradeCache.size > 500) {
-    const oldest = accountTradeCache.keys().next().value;
-    if (oldest) accountTradeCache.delete(oldest);
-  }
-  return null;
-}
-
 function eventKey(log) {
   return `${String(log.transactionHash).toLowerCase()}:${Number(log.logIndex)}`;
 }
@@ -208,58 +128,34 @@ function getWindow(start, instrument) {
   return windows[key];
 }
 
-function sideName(event) {
-  if (typeof event?.isLong === 'boolean') return event.isLong ? 'LONG' : 'SHORT';
-  const side = String(event?.side || event?.positionSide || '').trim().toUpperCase();
-  if (side === 'LONG' || side.includes('LONG')) return 'LONG';
-  if (side === 'SHORT' || side.includes('SHORT')) return 'SHORT';
-  return null;
+function decodeLiquidation(log) {
+  // Liquidated(uint256 indexed positionId, address indexed user,
+  // uint64 markPrice, uint64 bustPrice, bool fromQueuedBalance,
+  // uint256 stakerFee, uint256 devFee). The two prices are the first ABI words.
+  const data = String(log.data || '').replace(/^0x/, '');
+  if (data.length < 5 * 64 || data.length % 64 !== 0) return null;
+  let markPrice;
+  let bustPrice;
+  try {
+    markPrice = BigInt('0x' + data.slice(0, 64));
+    bustPrice = BigInt('0x' + data.slice(64, 128));
+  } catch {
+    return null;
+  }
+  if (markPrice <= 0n || bustPrice <= 0n) return null;
+
+  // Current protocol scales: BTC=10, ETH=100. Their raw mark-price ranges are
+  // currently separated around 500,000 (BTC ~830,000; ETH ~250,000).
+  // Keep this threshold explicit so a future price-regime change is visible.
+  const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
+  // Longs bust below their liquidation price; shorts bust above it.
+  const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
+  return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
 }
 
 function eventTimestamp(event) {
   const ts = Number(event?.ts);
   return Number.isFinite(ts) && ts > 0 ? ts : null;
-}
-
-function matchApiEvent(chainEvent, apiByPosition) {
-  const candidates = apiByPosition.get(String(chainEvent.positionId)) || [];
-  // Never enrich a liquidation log with an arbitrary open/close/trade event.
-  // Only an explicitly identified liquidation can supply instrument and side.
-  return candidates.find(e => /liquidat/i.test(String(e.kind || ''))) || null;
-}
-
-async function enrichChainEvent(chainEvent, apiByPosition) {
-  const recentMatch = matchApiEvent(chainEvent, apiByPosition);
-  if (recentMatch) return recentMatch;
-  return getAccountTradeByPosition(chainEvent.user, chainEvent.positionId);
-}
-
-function countLiquidation(chainEvent, apiEvent) {
-  const ts = chainEvent.ts;
-  if (!Number.isFinite(ts) || ts <= 0) return false;
-  // The API match must explicitly be a liquidation; other trade kinds are not valid enrichment.
-  if (!/liquidat/i.test(String(apiEvent?.kind || ''))) return false;
-  const instrument = String(apiEvent?.instrument || apiEvent?.symbol || '').trim().toUpperCase();
-  if (!['BTC', 'ETH'].includes(instrument)) return false;
-
-  const key = chainEvent.key;
-  if (seen.has(key)) return true;
-  const start = periodStart(ts);
-  const bucket = getWindow(start, instrument);
-  if (bucket.eventKeys.includes(key)) {
-    seen.add(key);
-    return true;
-  }
-  bucket.eventKeys.push(key);
-  const positionId = chainEvent.positionId == null ? null : String(chainEvent.positionId);
-  if (positionId && !Array.isArray(bucket.positionIds)) bucket.positionIds = [];
-  if (positionId && !bucket.positionIds.includes(positionId)) bucket.positionIds.push(positionId);
-  bucket.total++;
-  const side = sideName(apiEvent);
-  if (side === 'LONG') bucket.long++;
-  else if (side === 'SHORT') bucket.short++;
-  seen.add(key);
-  return true;
 }
 
 function alertText(bucket) {
@@ -425,8 +321,6 @@ async function poll() {
   let latestBlock = null;
   let logs;
   if (firstScan) {
-    // Start from the current chain head instead of scanning hundreds of historical blocks.
-    // Historical backfill caused hundreds of per-block timestamp RPC calls and HTTP 429s.
     latestBlock = await getBlockNumber();
     state.lastScannedBlock = latestBlock;
     saveState();
@@ -434,44 +328,22 @@ async function poll() {
     console.log(JSON.stringify({
       level: 'info', event: 'chain_baseline_initialized',
       latestBlock, historicalScan: false,
-      note: 'Counting begins with live WebSocket events; reconnect recovery uses a small overlap.',
+      note: 'Counting starts with live on-chain Liquidated logs.',
     }));
   } else {
     logs = liveLogs.slice();
   }
 
-  // Papertrade is enrichment only. Rate-limit enrichment calls to at most once every
-  // five seconds even if new chain events arrive on every two-second monitor cycle.
-  let apiEvents = [];
-  const needsEnrichment = logs.length > 0 || pending.length > 0;
-  if (needsEnrichment && (Date.now() - lastApiFetchAt >= API_ENRICHMENT_MIN_INTERVAL_MS)) {
-    cachedApiEvents = await getRecentTrades();
-    lastApiFetchAt = Date.now();
-    apiEvents = cachedApiEvents;
-  } else if (needsEnrichment) {
-    apiEvents = cachedApiEvents;
-  }
-  const apiByPosition = new Map();
-  for (const event of apiEvents) {
-    if (event?.positionId == null) continue;
-    const id = String(event.positionId);
-    if (!apiByPosition.has(id)) apiByPosition.set(id, []);
-    apiByPosition.get(id).push(event);
-  }
-
-  const fromBlock = null;
   const blockTimestamps = new Map();
   const now = Date.now();
   const currentStart = periodStart(now);
-  const newPending = [];
-  let enriched = 0;
-  let unmatched = 0;
+  let decoded = 0;
   let skippedOldBaseline = 0;
-  let expiredUnmatched = 0;
+  let invalidLogs = 0;
 
   for (const log of logs) {
     const key = eventKey(log);
-    if (seen.has(key) || pending.some(p => p.key === key)) continue;
+    if (seen.has(key)) continue;
     const blockNumber = Number(BigInt(log.blockNumber));
     const chainEvent = {
       key,
@@ -479,63 +351,55 @@ async function poll() {
       transactionHash: log.transactionHash,
       logIndex: Number(BigInt(log.logIndex)),
       positionId: log.topics?.[1] ? BigInt(log.topics[1]).toString() : null,
-      user: log.topics?.[2] ? `0x${log.topics[2].slice(-40)}` : null,
+      user: log.topics?.[2] ? '0x' + log.topics[2].slice(-40) : null,
       ts: null,
     };
-    const match = await enrichChainEvent(chainEvent, apiByPosition);
-    // The on-chain log's block timestamp is authoritative for the 5-minute bucket.
-    // API timestamps can refer to a position's earlier open/close event and misbucket it.
     chainEvent.ts = await getBlockTimestamp(blockNumber, blockTimestamps);
 
-    // On first boot, avoid replaying old completed periods; only seed the active 5-minute period.
+    // Do not replay old completed windows on first startup.
     if (firstScan && periodStart(chainEvent.ts) !== currentStart) {
       skippedOldBaseline++;
       seen.add(key);
       continue;
     }
 
-    if (match) {
-      if (countLiquidation(chainEvent, match)) enriched++;
-      else {
-        newPending.push({ ...chainEvent, createdAt: now });
-        unmatched++;
-      }
-    } else {
-      newPending.push({ ...chainEvent, createdAt: now });
-      unmatched++;
-    }
-  }
-
-  // Retry API enrichment for recently observed on-chain liquidations that were not in the latest API page.
-  const stillPending = [];
-  for (const chainEvent of pending) {
-    // Keep unmatched events across the period boundary so transient API lag does not
-    // silently erase a liquidation. Expire only after the bounded recovery horizon.
-    if (now - Number(chainEvent.createdAt || now) > PENDING_MAX_AGE_MS) {
-      expiredUnmatched++;
-      seen.add(chainEvent.key);
+    const classified = decodeLiquidation(log);
+    if (!classified) {
+      invalidLogs++;
+      seen.add(key);
+      console.warn(JSON.stringify({
+        level: 'warn', event: 'onchain_liquidation_decode_failed',
+        positionId: chainEvent.positionId, blockNumber,
+        dataLength: String(log.data || '').length,
+      }));
       continue;
     }
-    const match = await enrichChainEvent(chainEvent, apiByPosition);
-    if (match && countLiquidation(chainEvent, match)) {
-      enriched++;
-    } else {
-      stillPending.push(chainEvent);
+
+    const bucket = getWindow(periodStart(chainEvent.ts), classified.instrument);
+    if (bucket.eventKeys.includes(key)) {
+      seen.add(key);
+      continue;
     }
+    bucket.eventKeys.push(key);
+    const positionId = chainEvent.positionId == null ? null : String(chainEvent.positionId);
+    if (positionId && !Array.isArray(bucket.positionIds)) bucket.positionIds = [];
+    if (positionId && !bucket.positionIds.includes(positionId)) bucket.positionIds.push(positionId);
+    bucket.total++;
+    if (classified.side === 'LONG') bucket.long++;
+    else if (classified.side === 'SHORT') bucket.short++;
+    else bucket.unknownSide = Number(bucket.unknownSide || 0) + 1;
+    seen.add(key);
+    decoded++;
   }
-  pending = [...stillPending, ...newPending];
 
   if (logs.length) {
     const highestLogBlock = Math.max(...logs.map(log => Number(BigInt(log.blockNumber))));
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestLogBlock);
   }
-  // Advance the recovery cursor behind the observed head, leaving a safety overlap
-  // so log notifications that arrive slightly after newHeads are recovered on reconnect.
   if (highestObservedBlock != null) {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
-  // Remove queued notifications only after processing and persistence succeed; API/RPC failures
-  // must not silently discard live liquidation events.
+
   const processedLogKeys = new Set(logs.map(eventKey));
   liveLogs = liveLogs.filter(log => !processedLogKeys.has(eventKey(log)));
   saveState();
@@ -547,13 +411,11 @@ async function poll() {
       await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
-        level: 'info',
-        event: 'liqs_5m_alert_sent',
+        level: 'info', event: 'liqs_5m_alert_sent',
         instrument: bucket.instrument,
         periodStart: new Date(bucket.start).toISOString(),
-        liqs: bucket.total,
-        long: bucket.long,
-        short: bucket.short,
+        liqs: bucket.total, long: bucket.long, short: bucket.short,
+        unknownSide: Number(bucket.unknownSide || 0),
         uniquePositions: Array.isArray(bucket.positionIds) ? bucket.positionIds.length : null,
         eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
       }));
@@ -570,46 +432,31 @@ async function poll() {
   const summaryNow = Date.now();
   if (summaryNow - lastSummaryAt >= SUMMARY_INTERVAL_MS) {
     console.log(JSON.stringify({
-      level: 'info',
-      event: 'monitor_summary',
+      level: 'info', event: 'monitor_summary',
       intervalMs: SUMMARY_INTERVAL_MS,
       latestBlock: highestObservedBlock ?? latestBlock,
       source: firstScan ? 'initial_rpc_baseline' : 'websocket_logs',
       onchainLiquidationsFound: logs.length,
-      apiEventsReturned: apiEvents.length,
-      enrichedThisPoll: enriched,
-      pendingUnmatched: pending.length,
-      unmatchedNewThisPoll: unmatched,
-      expiredUnmatched,
+      decodedOnchainLiquidations: decoded,
+      invalidOnchainLogs: invalidLogs,
       skippedOldBaseline,
-      accountApiRequests,
-      accountApiPages,
-      accountApiCooldownSkips,
-      accountCacheHits,
       alertsSent: alerts,
       websocket: liveSocketStatus,
     }));
     lastSummaryAt = summaryNow;
-    accountApiRequests = 0;
-    accountApiPages = 0;
-    accountApiCooldownSkips = 0;
-    accountCacheHits = 0;
   }
 }
 
 console.log(JSON.stringify({
   level: 'info',
   event: 'monitor_started',
-  mode: 'onchain_liquidations_enriched_by_papertrade_api',
+  mode: 'onchain_liquidations_only',
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
   chainId: '0x3e7',
-  endpoint: 'websocket eth_subscribe logs + reconnect-only eth_getLogs + throttled Papertrade enrichment',
+  endpoint: 'NodeFlare WebSocket Liquidated logs + reconnect gap recovery; no Papertrade API',
   statePath: STATE_PATH,
-  accountLookupMinIntervalMs: ACCOUNT_LOOKUP_MIN_INTERVAL_MS,
-  accountCacheTtlMs: ACCOUNT_CACHE_TTL_MS,
-  accountMaxPages: ACCOUNT_MAX_PAGES,
 }));
 
 runWebSocketLoop().catch(err => console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_loop_failed', message: String(err) })));
