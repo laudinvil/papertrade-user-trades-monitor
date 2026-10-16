@@ -4,7 +4,7 @@ import path from 'node:path';
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/$/, '');
 const RPC_KEY = process.env.NODEFLARE_API_KEY || '';
 const RPC_URL = RPC_KEY ? `https://rpc.nodeflare.app/hl/v1/${RPC_KEY}` : '';
-const POLL_MS = Math.max(5000, Number(process.env.POLL_MS || 5000));
+const POLL_MS = Math.max(2000, Number(process.env.POLL_MS || 2000));
 const STATE_PATH = process.env.STATE_PATH || './data/state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
@@ -75,8 +75,8 @@ async function rpc(method, params = []) {
       if (response.status === 429 || response.status >= 500) {
         const retryAfter = Number(response.headers.get('retry-after'));
         const delay = Number.isFinite(retryAfter) && retryAfter > 0
-          ? Math.min(retryAfter * 1000, 30000)
-          : Math.min(1000 * (2 ** attempt), 16000);
+          ? Math.min(retryAfter * 1000, 2000)
+          : Math.min(250 * (2 ** attempt), 2000);
         lastError = new Error(`${method}: HTTP ${response.status}`);
         if (attempt < 4) {
           console.warn(JSON.stringify({
@@ -97,7 +97,7 @@ async function rpc(method, params = []) {
       const message = err instanceof Error ? err.message : String(err);
       const retryable = /HTTP 429|HTTP 5\d\d|fetch failed|timeout|aborted/i.test(message);
       if (!retryable || attempt >= 4) throw err;
-      const delay = Math.min(1000 * (2 ** attempt), 16000);
+      const delay = Math.min(250 * (2 ** attempt), 2000);
       console.warn(JSON.stringify({
         level: 'warn', event: 'rpc_transient_retry',
         method, attempt: attempt + 1, retryInMs: delay, message,
@@ -274,7 +274,6 @@ async function poll() {
     const key = eventKey(log);
     if (seen.has(key) || pending.some(p => p.key === key)) continue;
     const blockNumber = Number(BigInt(log.blockNumber));
-    const ts = await getBlockTimestamp(blockNumber, blockTimestamps);
     const chainEvent = {
       key,
       blockNumber,
@@ -282,17 +281,25 @@ async function poll() {
       logIndex: Number(BigInt(log.logIndex)),
       positionId: log.topics?.[1] ? BigInt(log.topics[1]).toString() : null,
       user: log.topics?.[2] ? `0x${log.topics[2].slice(-40)}` : null,
-      ts,
+      ts: null,
     };
+    const match = matchApiEvent(chainEvent, apiByPosition);
+    // Prefer the API event timestamp when supplied; this avoids one RPC request per log block.
+    // API timestamps may be seconds or milliseconds, so normalize to milliseconds.
+    const apiTsRaw = Number(match?.ts);
+    if (Number.isFinite(apiTsRaw) && apiTsRaw > 0) {
+      chainEvent.ts = apiTsRaw < 1e12 ? apiTsRaw * 1000 : apiTsRaw;
+    } else {
+      chainEvent.ts = await getBlockTimestamp(blockNumber, blockTimestamps);
+    }
 
     // On first boot, avoid replaying old completed periods; only seed the active 5-minute period.
-    if (firstScan && periodStart(ts) !== currentStart) {
+    if (firstScan && periodStart(chainEvent.ts) !== currentStart) {
       skippedOldBaseline++;
       seen.add(key);
       continue;
     }
 
-    const match = matchApiEvent(chainEvent, apiByPosition);
     if (match) {
       if (countLiquidation(chainEvent, match)) enriched++;
       else {
@@ -378,21 +385,18 @@ console.log(JSON.stringify({
 }));
 
 let lastPollError = null;
-let consecutivePollFailures = 0;
 while (true) {
   let delay = POLL_MS;
   try {
     await poll();
     lastPollError = null;
-    consecutivePollFailures = 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    consecutivePollFailures++;
-    delay = Math.min(POLL_MS * (2 ** Math.min(consecutivePollFailures, 6)), 60000);
+    // Keep recovery responsive; individual RPC calls already retry transient errors.
+    delay = /HTTP 429|HTTP 5\d\d|timeout|fetch failed/i.test(message) ? 2000 : POLL_MS;
     if (message !== lastPollError) {
       console.error(JSON.stringify({
-        level: 'error', event: 'poll_failed', message,
-        consecutiveFailures: consecutivePollFailures, retryInMs: delay,
+        level: 'error', event: 'poll_failed', message, retryInMs: delay,
       }));
       lastPollError = message;
     }
