@@ -382,6 +382,11 @@ async function poll() {
       continue;
     }
 
+    if (classified.instrument !== 'BTC') {
+      seen.add(key);
+      continue;
+    }
+
     const bucket = getWindow(periodStart(chainEvent.ts), classified.instrument);
     if (!Array.isArray(bucket.eventKeys)) bucket.eventKeys = [];
     if (!Array.isArray(bucket.positionIds)) bucket.positionIds = [];
