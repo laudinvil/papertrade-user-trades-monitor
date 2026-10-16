@@ -111,8 +111,7 @@ jobs:
               -H "Content-Type: application/json" \
               --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
               -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
-            BODY="${RESPONSE%
-\n'HTTP_STATUS:*}"
+            BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
             STATUS="${RESPONSE##*HTTP_STATUS:}"
             printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
             if [[ "$STATUS" == "409" && "$attempt" -lt 10 ]]; then
