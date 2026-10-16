@@ -13,6 +13,7 @@ const SEEN_LIMIT = 10000;
 const WINDOW_MS = 5 * 60 * 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
+const ENABLE_ALERTS = process.env.ENABLE_LIQUIDATION_ALERTS === 'true';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -214,7 +215,9 @@ async function runWebSocketLoop() {
           }
         }
         if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber) {
-          liveLogs.push(result);
+          const topic0 = String(result.topics?.[0] || '').toLowerCase();
+          if (topic0 === LIQUIDATED_TOPIC) liveLogs.push(result);
+          else console.warn(JSON.stringify({ level: 'warn', event: 'non_liquidation_log_ignored', topic0 }));
         }
         if (message.error) {
           console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_error', message: message.error.message || 'subscription error' }));
@@ -328,6 +331,12 @@ async function poll() {
     };
 
     try {
+      if (!ENABLE_ALERTS) {
+        seen.add(key);
+        console.log(JSON.stringify({ level: 'warn', event: 'liquidation_alert_suppressed_until_enabled', positionId: event.positionId, blockNumber }));
+        saveState();
+        continue;
+      }
       await send(alertText(event));
       seen.add(key);
       sent++;
@@ -387,10 +396,11 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   mode: 'onchain_liquidations_only',
   pollMs: POLL_MS,
-  alertMode: 'per_liquidation_realtime',
+  alertMode: ENABLE_ALERTS ? 'per_liquidation_realtime' : 'disabled_pending_verified_liquidation_decoder',
   contract: CONTRACT,
   chainId: '0x3e7',
-  endpoint: 'NodeFlare WebSocket Liquidated logs + reconnect gap recovery; per-event Telegram alerts; no Papertrade API',
+  alertsEnabled: ENABLE_ALERTS,
+  endpoint: 'NodeFlare WebSocket logs strictly filtered by Liquidated topic; alerts require ENABLE_LIQUIDATION_ALERTS=true',
   statePath: STATE_PATH,
 }));
 
