@@ -173,6 +173,7 @@ function alertText(bucket) {
     `LIQS: ${Number(bucket.total || 0)}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
+    `UNKNOWN: ${Number(bucket.unknownSide || 0)}`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
 }
@@ -422,28 +423,30 @@ async function poll() {
     const totalLiqs = Number(bucket.total || 0);
     const longCount = Number(bucket.long || 0);
     const shortCount = Number(bucket.short || 0);
-    if (totalLiqs >= 70) {
+    const unknownCount = Number(bucket.unknownSide || 0);
+    if (unknownCount >= 1) {
       await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_sent',
+        level: 'info', event: 'liqs_5m_alert_sent_unclassified',
         instrument: bucket.instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
         long: longCount,
         short: shortCount,
+        unknown: unknownCount,
         uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
         eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_suppressed_below_threshold',
+        level: 'info', event: 'liqs_5m_alert_suppressed_no_unclassified',
         instrument: bucket.instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        threshold: 70,
         long: longCount,
         short: shortCount,
+        unknown: unknownCount,
       }));
     }
     bucket.alerted = true;
