@@ -16,6 +16,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
 const INITIAL_LOOKBACK_BLOCKS = 400;
+const API_ENRICHMENT_MIN_INTERVAL_MS = 5000;
 const BLOCK_CHUNK = 100;
 const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -48,6 +49,8 @@ let liveLogs = [];
 let liveSocketConnected = false;
 let liveSocketStatus = 'starting';
 let highestObservedBlock = null;
+let lastApiFetchAt = 0;
+let cachedApiEvents = [];
 const blockTimestampCache = new Map();
 const WS_CURSOR_SAFETY_BLOCKS = 10;
 
@@ -345,24 +348,32 @@ async function poll() {
   let latestBlock = null;
   let logs;
   if (firstScan) {
+    // Start from the current chain head instead of scanning hundreds of historical blocks.
+    // Historical backfill caused hundreds of per-block timestamp RPC calls and HTTP 429s.
     latestBlock = await getBlockNumber();
-    const fromBlock = Math.max(0, latestBlock - INITIAL_LOOKBACK_BLOCKS);
-    console.log(JSON.stringify({
-      level: 'info', event: 'chain_baseline_start', latestBlock, fromBlock,
-      initialLookbackBlocks: latestBlock - fromBlock,
-    }));
-    logs = await getLiquidationLogs(fromBlock, latestBlock);
-    // The baseline already covers every block up to latestBlock; discard queued WS copies
-    // from that range so older completed periods are not counted again on the next API poll.
-    liveLogs = liveLogs.filter(log => Number(BigInt(log.blockNumber)) > latestBlock);
     state.lastScannedBlock = latestBlock;
+    saveState();
+    logs = [];
+    console.log(JSON.stringify({
+      level: 'info', event: 'chain_baseline_initialized',
+      latestBlock, historicalScan: false,
+      note: 'Counting begins with live WebSocket events; reconnect recovery uses a small overlap.',
+    }));
   } else {
     logs = liveLogs.slice();
   }
 
-  // Papertrade is enrichment only, not the liquidation source. Query it only when
-  // there are fresh chain logs to enrich or pending chain events awaiting a match.
-  const apiEvents = (logs.length || pending.length) ? await getRecentTrades() : [];
+  // Papertrade is enrichment only. Rate-limit enrichment calls to at most once every
+  // five seconds even if new chain events arrive on every two-second monitor cycle.
+  let apiEvents = [];
+  const needsEnrichment = logs.length > 0 || pending.length > 0;
+  if (needsEnrichment && (Date.now() - lastApiFetchAt >= API_ENRICHMENT_MIN_INTERVAL_MS)) {
+    cachedApiEvents = await getRecentTrades();
+    lastApiFetchAt = Date.now();
+    apiEvents = cachedApiEvents;
+  } else if (needsEnrichment) {
+    apiEvents = cachedApiEvents;
+  }
   const apiByPosition = new Map();
   for (const event of apiEvents) {
     if (event?.positionId == null) continue;
@@ -371,7 +382,7 @@ async function poll() {
     apiByPosition.get(id).push(event);
   }
 
-  const fromBlock = firstScan ? Math.max(0, latestBlock - INITIAL_LOOKBACK_BLOCKS) : null;
+  const fromBlock = null;
   const blockTimestamps = new Map();
   const now = Date.now();
   const currentStart = periodStart(now);
@@ -504,7 +515,7 @@ console.log(JSON.stringify({
   periodMs: WINDOW_MS,
   contract: CONTRACT,
   chainId: '0x3e7',
-  endpoint: 'websocket eth_subscribe logs + startup/reconnect eth_getLogs + get_recent_trades',
+  endpoint: 'websocket eth_subscribe logs + reconnect-only eth_getLogs + throttled Papertrade enrichment',
 }));
 
 runWebSocketLoop().catch(err => console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_loop_failed', message: String(err) })));
