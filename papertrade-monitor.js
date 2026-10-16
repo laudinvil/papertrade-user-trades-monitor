@@ -236,15 +236,22 @@ console.log(JSON.stringify({
   endpoint: 'get_recent_trades',
 }));
 
+let lastPollError = null;
+
 while (true) {
   try {
     await poll();
+    lastPollError = null;
   } catch (err) {
-    console.error(JSON.stringify({
-      level: 'error',
-      event: 'poll_failed',
-      message: err instanceof Error ? err.message : String(err),
-    }));
+    const message = err instanceof Error ? err.message : String(err);
+    if (message !== lastPollError) {
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'poll_failed',
+        message,
+      }));
+      lastPollError = message;
+    }
   }
   await sleep(POLL_MS);
 }
