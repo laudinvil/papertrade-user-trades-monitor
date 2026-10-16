@@ -47,6 +47,8 @@ let pending = state.pending;
 let liveLogs = [];
 let liveSocketConnected = false;
 let liveSocketStatus = 'starting';
+let highestObservedBlock = null;
+const WS_CURSOR_SAFETY_BLOCKS = 10;
 
 function saveState() {
   const next = {
@@ -246,17 +248,23 @@ async function runWebSocketLoop() {
       console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_connected' }));
 
       let requestId = 1;
-      let subscriptionReady = false;
+      const readySubscriptions = new Set();
       const onMessage = raw => {
         let message;
         try { message = JSON.parse(String(raw)); } catch { return; }
-        if (message.id === requestId && message.result) {
-          subscriptionReady = true;
-          liveSocketStatus = 'subscribed';
-          console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_subscribed' }));
+        if ((message.id === requestId || message.id === requestId + 1) && message.result) {
+          readySubscriptions.add(message.id);
+          if (readySubscriptions.size === 2) {
+            liveSocketStatus = 'subscribed';
+            console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_subscribed', subscriptions: 2 }));
+          }
           return;
         }
         const result = message?.params?.result;
+        if (message.method === 'eth_subscription' && result?.number) {
+          const block = Number(BigInt(result.number));
+          if (Number.isSafeInteger(block)) highestObservedBlock = Math.max(highestObservedBlock ?? 0, block);
+        }
         if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber) {
           liveLogs.push(result);
           if (liveLogs.length > PENDING_LIMIT) liveLogs = liveLogs.slice(-PENDING_LIMIT);
@@ -267,24 +275,25 @@ async function runWebSocketLoop() {
       };
       socket.on('message', onMessage);
       socket.send(JSON.stringify({
-        jsonrpc: '2.0',
-        id: requestId,
-        method: 'eth_subscribe',
+        jsonrpc: '2.0', id: requestId, method: 'eth_subscribe',
         params: ['logs', { address: CONTRACT, topics: [LIQUIDATED_TOPIC] }],
       }));
+      socket.send(JSON.stringify({
+        jsonrpc: '2.0', id: requestId + 1, method: 'eth_subscribe', params: ['newHeads'],
+      }));
 
-      // Recover only the gap since the last confirmed liquidation block after reconnect.
+      // Recover only the gap since the last confirmed cursor after reconnect.
       // On first boot, the normal baseline scan initializes the cursor.
       await new Promise((resolve, reject) => {
         const check = setInterval(() => {
-          if (subscriptionReady) { clearInterval(check); resolve(); }
+          if (readySubscriptions.size === 2) { clearInterval(check); resolve(); }
           else if (socket.readyState !== WebSocket.OPEN) { clearInterval(check); reject(new Error('WebSocket closed before subscription confirmation')); }
         }, 100);
         setTimeout(() => { clearInterval(check); reject(new Error('WebSocket subscription timeout')); }, 10000);
       });
       if (state.lastScannedBlock != null) {
         const latest = await getBlockNumber();
-        const from = state.lastScannedBlock + 1;
+        const from = Math.max(0, state.lastScannedBlock - WS_CURSOR_SAFETY_BLOCKS + 1);
         if (from <= latest) {
           const recovered = await getLiquidationLogs(from, latest);
           liveLogs.push(...recovered);
@@ -414,6 +423,11 @@ async function poll() {
   if (logs.length) {
     const highestLogBlock = Math.max(...logs.map(log => Number(BigInt(log.blockNumber))));
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestLogBlock);
+  }
+  // Advance the recovery cursor behind the observed head, leaving a safety overlap
+  // so log notifications that arrive slightly after newHeads are recovered on reconnect.
+  if (highestObservedBlock != null) {
+    state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
   saveState();
 
