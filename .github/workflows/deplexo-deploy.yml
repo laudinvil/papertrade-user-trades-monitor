@@ -53,7 +53,7 @@ jobs:
           fi
 
       - name: Request manual Deplexo rebuild
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
           APP_SLUG: merry-cascade-8098
