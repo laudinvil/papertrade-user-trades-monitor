@@ -223,9 +223,7 @@ async function poll() {
     if (bucket.start + WINDOW_MS < now - 60 * 60 * 1000) delete windows[key];
   }
 
-  const currentWindowBuckets = Object.values(windows).filter(bucket => bucket.start === currentStart);
-  const responseTimestamps = ordered.map(eventTimestamp).filter(ts => ts !== null);
-  saveState();
+    saveState();
 }
 
 console.log(JSON.stringify({
