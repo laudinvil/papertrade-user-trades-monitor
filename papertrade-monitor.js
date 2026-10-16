@@ -427,7 +427,7 @@ async function poll() {
 
     // Independent flag: older releases set bucket.alerted even for suppressed windows.
     // Do not let that legacy flag block an alert for unclassified liquidation events.
-    if (unknownCount >= 1 && bucket.unclassifiedAlerted !== true) {
+    if (unknownCount >= 2 && bucket.unclassifiedAlerted !== true) {
       await send(alertText(bucket));
       bucket.unclassifiedAlerted = true;
       alerts++;
