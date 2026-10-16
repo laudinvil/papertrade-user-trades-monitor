@@ -264,7 +264,7 @@ async function runWebSocketLoop() {
       socket.on('message', onMessage);
       socket.send(JSON.stringify({
         jsonrpc: '2.0', id: requestId, method: 'eth_subscribe',
-        params: ['logs', { address: CONTRACT, topics: [LIQUIDATED_TOPIC] },
+        params: ['logs', { address: CONTRACT, topics: [LIQUIDATED_TOPIC] }],
       }));
       socket.send(JSON.stringify({
         jsonrpc: '2.0', id: requestId + 1, method: 'eth_subscribe', params: ['newHeads'],
