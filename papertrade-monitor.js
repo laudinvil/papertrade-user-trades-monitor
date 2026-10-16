@@ -553,7 +553,7 @@ async function poll() {
   saveState();
 
   const summaryNow = Date.now();
-  if (summaryNow - lastSummaryAt >= SUMMARY_INTERVAL_MS || alerts > 0 || expiredUnmatched > 0) {
+  if (summaryNow - lastSummaryAt >= SUMMARY_INTERVAL_MS) {
     console.log(JSON.stringify({
       level: 'info',
       event: 'monitor_summary',
