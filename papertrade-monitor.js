@@ -3,6 +3,7 @@ import path from 'node:path';
 import WebSocket from 'ws';
 
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/$/, '');
+const EXCHANGE_API_BASE = (process.env.PAPERTRADE_EXCHANGE_API_BASE_URL || 'https://exchange.papertrade.xyz').replace(/\/$/, '');
 const RPC_KEY = process.env.NODEFLARE_API_KEY || '';
 const RPC_URL = RPC_KEY ? `https://rpc.nodeflare.app/hl/v1/${RPC_KEY}` : '';
 const WS_URL = RPC_KEY ? `wss://rpc.nodeflare.app/hl/ws/v1/${RPC_KEY}` : '';
@@ -51,6 +52,9 @@ let liveSocketStatus = 'starting';
 let highestObservedBlock = null;
 let lastApiFetchAt = 0;
 let cachedApiEvents = [];
+const accountTradeCache = new Map();
+const ACCOUNT_CACHE_TTL_MS = 5000;
+const ACCOUNT_MAX_PAGES = 4;
 const blockTimestampCache = new Map();
 const WS_CURSOR_SAFETY_BLOCKS = 10;
 
@@ -132,6 +136,49 @@ async function getRecentTrades() {
   return body.data.events;
 }
 
+async function getAccountTradeByPosition(wallet, positionId) {
+  if (!wallet || positionId == null) return null;
+  const address = String(wallet).toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(address)) return null;
+  const now = Date.now();
+  const cached = accountTradeCache.get(address);
+  if (cached && now - cached.fetchedAt < ACCOUNT_CACHE_TTL_MS) {
+    return cached.items.find(item => String(item.positionId) === String(positionId)) || null;
+  }
+
+  const items = [];
+  let cursor = null;
+  for (let page = 0; page < ACCOUNT_MAX_PAGES; page++) {
+    const url = new URL(`${EXCHANGE_API_BASE}/query/accounts/${address}/trades`);
+    url.searchParams.set('filter', 'all');
+    url.searchParams.set('limit', '75');
+    if (cursor) url.searchParams.set('cursor', cursor);
+    const response = await fetch(url, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!response.ok) throw new Error(`account trades HTTP ${response.status} for ${address}`);
+    const body = await response.json();
+    if (!Array.isArray(body?.items)) {
+      throw new Error(`account trades returned an unexpected response for ${address}`);
+    }
+    items.push(...body.items);
+    const match = items.find(item => String(item.positionId) === String(positionId));
+    if (match) {
+      accountTradeCache.set(address, { fetchedAt: now, items });
+      return match;
+    }
+    if (!body.nextCursor) break;
+    cursor = String(body.nextCursor);
+  }
+  accountTradeCache.set(address, { fetchedAt: now, items });
+  if (accountTradeCache.size > 500) {
+    const oldest = accountTradeCache.keys().next().value;
+    if (oldest) accountTradeCache.delete(oldest);
+  }
+  return null;
+}
+
 function eventKey(log) {
   return `${String(log.transactionHash).toLowerCase()}:${Number(log.logIndex)}`;
 }
@@ -149,6 +196,7 @@ function getWindow(start, instrument) {
 }
 
 function sideName(event) {
+  if (typeof event?.isLong === 'boolean') return event.isLong ? 'LONG' : 'SHORT';
   const side = String(event?.side || event?.positionSide || '').trim().toUpperCase();
   if (side === 'LONG' || side.includes('LONG')) return 'LONG';
   if (side === 'SHORT' || side.includes('SHORT')) return 'SHORT';
@@ -164,13 +212,21 @@ function matchApiEvent(chainEvent, apiByPosition) {
   const candidates = apiByPosition.get(String(chainEvent.positionId)) || [];
   if (!candidates.length) return null;
   // The on-chain Liquidated log is the proof of liquidation. The API event is used only to enrich it.
-  return candidates.find(e => String(e.kind || '').toLowerCase() === 'close') || candidates[0];
+  return candidates.find(e => /liquidat/i.test(String(e.kind || '')))
+    || candidates.find(e => /close|positionclosed/i.test(String(e.kind || '')))
+    || candidates[0];
+}
+
+async function enrichChainEvent(chainEvent, apiByPosition) {
+  const recentMatch = matchApiEvent(chainEvent, apiByPosition);
+  if (recentMatch) return recentMatch;
+  return getAccountTradeByPosition(chainEvent.user, chainEvent.positionId);
 }
 
 function countLiquidation(chainEvent, apiEvent) {
   const ts = chainEvent.ts;
   if (!Number.isFinite(ts) || ts <= 0) return false;
-  const instrument = String(apiEvent?.instrument || '').trim().toUpperCase();
+  const instrument = String(apiEvent?.instrument || apiEvent?.symbol || '').trim().toUpperCase();
   if (!['BTC', 'ETH'].includes(instrument)) return false;
 
   const key = chainEvent.key;
@@ -404,7 +460,7 @@ async function poll() {
       user: log.topics?.[2] ? `0x${log.topics[2].slice(-40)}` : null,
       ts: null,
     };
-    const match = matchApiEvent(chainEvent, apiByPosition);
+    const match = await enrichChainEvent(chainEvent, apiByPosition);
     // Prefer the API event timestamp when supplied; this avoids one RPC request per log block.
     // API timestamps may be seconds or milliseconds, so normalize to milliseconds.
     const apiTsRaw = Number(match?.ts);
