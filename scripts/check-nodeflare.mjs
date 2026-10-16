@@ -61,6 +61,39 @@ try {
       devFeeRaw: wordAt(log.data, 4).toString(),
     }));
 
+  // Inspect the full receipts for up to three liquidation transactions. This keeps
+  // the diagnostic bounded while exposing sibling events that may describe the position.
+  const sampleTxHashes = [...new Set(liquidatedEvents.slice(0, 3).map(event => event.transactionHash))];
+  const relatedTransactionLogs = [];
+  for (const transactionHash of sampleTxHashes) {
+    const receipt = await rpc("eth_getTransactionReceipt", [transactionHash]);
+    if (!receipt) {
+      relatedTransactionLogs.push({ transactionHash, error: "receipt not found" });
+      continue;
+    }
+    relatedTransactionLogs.push({
+      transactionHash,
+      status: receipt.status,
+      blockNumber: receipt.blockNumber,
+      logs: (receipt.logs || []).map(log => {
+        const words = [];
+        for (let i = 0; i < Math.min(8, Math.floor(((log.data || "0x").length - 2) / 64)); i++) {
+          const start = 2 + i * 64;
+          const raw = BigInt("0x" + log.data.slice(start, start + 64));
+          const signed = raw >= (1n << 255n) ? raw - (1n << 256n) : raw;
+          words.push({ index: i, uint256: raw.toString(), int256: signed.toString() });
+        }
+        return {
+          address: log.address,
+          logIndex: log.logIndex,
+          topics: log.topics,
+          data: log.data,
+          dataWords: words,
+        };
+      }),
+    });
+  }
+
   const byTopic = new Map();
   for (const log of logs) {
     const topic = log.topics?.[0] || "NO_TOPIC";
@@ -89,6 +122,7 @@ try {
     liquidatedTopic: LIQUIDATED_TOPIC,
     liquidatedEventsFound: liquidatedEvents.length,
     liquidatedSamples: liquidatedEvents.slice(0, 10),
+    relatedTransactionLogs,
     topicSummary: Object.fromEntries([...byTopic.entries()].map(([topic, value]) => [topic, value])),
   }));
 } catch (error) {
