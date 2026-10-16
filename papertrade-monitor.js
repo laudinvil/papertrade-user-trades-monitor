@@ -63,16 +63,49 @@ function saveState() {
 }
 
 async function rpc(method, params = []) {
-  const response = await fetch(RPC_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!response.ok) throw new Error(`${method}: HTTP ${response.status}`);
-  const body = await response.json();
-  if (body.error) throw new Error(`${method}: ${body.error.message || JSON.stringify(body.error)}`);
-  return body.result;
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const response = await fetch(RPC_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.status === 429 || response.status >= 500) {
+        const retryAfter = Number(response.headers.get('retry-after'));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, 30000)
+          : Math.min(1000 * (2 ** attempt), 16000);
+        lastError = new Error(`${method}: HTTP ${response.status}`);
+        if (attempt < 4) {
+          console.warn(JSON.stringify({
+            level: 'warn', event: 'rpc_rate_limited_retry',
+            method, status: response.status, attempt: attempt + 1, retryInMs: delay,
+          }));
+          await sleep(delay);
+          continue;
+        }
+        throw lastError;
+      }
+      if (!response.ok) throw new Error(`${method}: HTTP ${response.status}`);
+      const body = await response.json();
+      if (body.error) throw new Error(`${method}: ${body.error.message || JSON.stringify(body.error)}`);
+      return body.result;
+    } catch (err) {
+      lastError = err;
+      const message = err instanceof Error ? err.message : String(err);
+      const retryable = /HTTP 429|HTTP 5\d\d|fetch failed|timeout|aborted/i.test(message);
+      if (!retryable || attempt >= 4) throw err;
+      const delay = Math.min(1000 * (2 ** attempt), 16000);
+      console.warn(JSON.stringify({
+        level: 'warn', event: 'rpc_transient_retry',
+        method, attempt: attempt + 1, retryInMs: delay, message,
+      }));
+      await sleep(delay);
+    }
+  }
+  throw lastError || new Error(`${method}: RPC failed after retries`);
 }
 
 async function getRecentTrades() {
@@ -345,16 +378,24 @@ console.log(JSON.stringify({
 }));
 
 let lastPollError = null;
+let consecutivePollFailures = 0;
 while (true) {
+  let delay = POLL_MS;
   try {
     await poll();
     lastPollError = null;
+    consecutivePollFailures = 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    consecutivePollFailures++;
+    delay = Math.min(POLL_MS * (2 ** Math.min(consecutivePollFailures, 6)), 60000);
     if (message !== lastPollError) {
-      console.error(JSON.stringify({ level: 'error', event: 'poll_failed', message }));
+      console.error(JSON.stringify({
+        level: 'error', event: 'poll_failed', message,
+        consecutiveFailures: consecutivePollFailures, retryInMs: delay,
+      }));
       lastPollError = message;
     }
   }
-  await sleep(POLL_MS);
+  await sleep(delay);
 }
