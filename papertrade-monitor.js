@@ -173,7 +173,7 @@ function alertText(bucket) {
     `LIQS: ${Number(bucket.total || 0)}`,
     `LONG: ${Number(bucket.long || 0)} | SHORT: ${Number(bucket.short || 0)}`,
     polymarketUrl,
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function send(message) {
