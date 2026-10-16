@@ -94,6 +94,7 @@ function getWindow(start, instrument) {
     windows[key] = {
       start,
       instrument,
+      total: 0,
       long: 0,
       short: 0,
       eventKeys: [],
@@ -114,6 +115,7 @@ function countLiquidation(event, key, allowSeenCurrentWindow, currentStart) {
   const bucket = getWindow(start, instrument);
   if (bucket.eventKeys.includes(key)) return;
   bucket.eventKeys.push(key);
+  bucket.total = Number(bucket.total || 0) + 1;
   const side = sideName(event);
   if (side === 'LONG') bucket.long++;
   else if (side === 'SHORT') bucket.short++;
@@ -124,7 +126,7 @@ function alertText(bucket) {
   const end = new Date(bucket.start + WINDOW_MS).toISOString();
   return [
     `<b>${esc(bucket.instrument)} 5m</b>`,
-    `LIQS: ${bucket.long + bucket.short}`,
+    `LIQS: ${Number(bucket.total ?? (bucket.long + bucket.short))}`,
     `LONG: ${bucket.long} | SHORT: ${bucket.short}`,
     `Period: ${esc(start)} — ${esc(end)}`,
   ].join('\n');
@@ -198,7 +200,7 @@ async function poll() {
   let alerts = 0;
   for (const [key, bucket] of Object.entries(windows)) {
     if (bucket.alerted || bucket.start + WINDOW_MS > now) continue;
-    const total = bucket.long + bucket.short;
+    const total = Number(bucket.total ?? (bucket.long + bucket.short));
     if (total >= MIN_LIQS) {
       await send(alertText(bucket));
       alerts++;
