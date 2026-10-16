@@ -113,8 +113,18 @@ async function rpc(method, params = []) {
   throw lastError || new Error(`${method}: RPC failed after retries`);
 }
 
-function eventKey(log) {
+function legacyEventKey(log) {
   return `${String(log.transactionHash).toLowerCase()}:${Number(log.logIndex)}`;
+}
+
+function walletFromLog(log) {
+  return log.topics?.[2] ? '0x' + log.topics[2].slice(-40).toLowerCase() : null;
+}
+
+function eventKey(log) {
+  const wallet = walletFromLog(log);
+  if (!wallet) return legacyEventKey(log);
+  return `${Number(BigInt(log.blockNumber))}:${wallet}`;
 }
 
 function periodStart(ts) {
@@ -132,7 +142,6 @@ function getWindow(start, instrument) {
 function alertText(event) {
   return [
     '<b>LIQUIDATION</b>',
-    `POSITION ID: ${esc(event.positionId || 'UNKNOWN')}`,
     `WALLET: ${esc(event.user || 'UNKNOWN')}`,
     `BLOCK: ${Number(event.blockNumber)}`,
     `TX: ${esc(event.transactionHash || 'UNKNOWN')}`,
@@ -309,8 +318,13 @@ async function poll() {
   let duplicate = 0;
   let latestProcessedBlock = state.lastScannedBlock ?? latestBlock ?? 0;
 
-  // Each matching on-chain Liquidated log is a separate event. Do not wait for a 5-minute bucket
-  // and do not infer the instrument or side from mark/bust prices.
+  // Migrate previously sent transaction:logIndex keys into block:wallet groups before
+  // processing, so reconnect recovery cannot resend a group already alerted by the old version.
+  for (const log of logs) {
+    if (seen.has(legacyEventKey(log))) seen.add(eventKey(log));
+  }
+
+  // One alert per block + wallet, regardless of how many position logs that wallet has in the block.
   for (const log of logs) {
     const key = eventKey(log);
     const blockNumber = Number(BigInt(log.blockNumber));
@@ -394,13 +408,13 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info',
   event: 'monitor_started',
-  mode: 'onchain_liquidations_only',
+  mode: 'onchain_liquidations_block_wallet_dedup',
   pollMs: POLL_MS,
-  alertMode: ENABLE_ALERTS ? 'per_liquidation_realtime' : 'disabled_pending_verified_liquidation_decoder',
+  alertMode: ENABLE_ALERTS ? 'one_alert_per_block_wallet' : 'disabled_pending_verified_liquidation_decoder',
   contract: CONTRACT,
   chainId: '0x3e7',
   alertsEnabled: ENABLE_ALERTS,
-  endpoint: 'NodeFlare WebSocket logs strictly filtered by Liquidated topic; alerts require ENABLE_LIQUIDATION_ALERTS=true',
+  endpoint: 'NodeFlare WebSocket logs filtered by Liquidated topic; deduplication key is blockNumber + wallet; alerts require ENABLE_LIQUIDATION_ALERTS=true',
   statePath: STATE_PATH,
 }));
 
