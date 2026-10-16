@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import WebSocket from 'ws';
 
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/$/, '');
 const RPC_KEY = process.env.NODEFLARE_API_KEY || '';
 const RPC_URL = RPC_KEY ? `https://rpc.nodeflare.app/hl/v1/${RPC_KEY}` : '';
+const WS_URL = RPC_KEY ? `wss://rpc.nodeflare.app/hl/ws/v1/${RPC_KEY}` : '';
 const POLL_MS = Math.max(2000, Number(process.env.POLL_MS || 2000));
 const STATE_PATH = process.env.STATE_PATH || './data/state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -42,6 +44,9 @@ let state = loadState();
 const seen = new Set(state.seenKeys);
 const windows = state.windows;
 let pending = state.pending;
+let liveLogs = [];
+let liveSocketConnected = false;
+let liveSocketStatus = 'starting';
 
 function saveState() {
   const next = {
@@ -227,6 +232,83 @@ async function getLiquidationLogs(fromBlock, toBlock) {
   return logs;
 }
 
+async function runWebSocketLoop() {
+  while (true) {
+    let socket;
+    try {
+      socket = new WebSocket(WS_URL);
+      await new Promise((resolve, reject) => {
+        socket.once('open', resolve);
+        socket.once('error', reject);
+      });
+      liveSocketConnected = true;
+      liveSocketStatus = 'connected';
+      console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_connected' }));
+
+      let requestId = 1;
+      let subscriptionReady = false;
+      const onMessage = raw => {
+        let message;
+        try { message = JSON.parse(String(raw)); } catch { return; }
+        if (message.id === requestId && message.result) {
+          subscriptionReady = true;
+          liveSocketStatus = 'subscribed';
+          console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_subscribed' }));
+          return;
+        }
+        const result = message?.params?.result;
+        if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber) {
+          liveLogs.push(result);
+          if (liveLogs.length > PENDING_LIMIT) liveLogs = liveLogs.slice(-PENDING_LIMIT);
+        }
+        if (message.error) {
+          console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_error', message: message.error.message || 'subscription error' }));
+        }
+      };
+      socket.on('message', onMessage);
+      socket.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: requestId,
+        method: 'eth_subscribe',
+        params: ['logs', { address: CONTRACT, topics: [LIQUIDATED_TOPIC] }],
+      }));
+
+      // Recover only the gap since the last confirmed liquidation block after reconnect.
+      // On first boot, the normal baseline scan initializes the cursor.
+      await new Promise((resolve, reject) => {
+        const check = setInterval(() => {
+          if (subscriptionReady) { clearInterval(check); resolve(); }
+          else if (socket.readyState !== WebSocket.OPEN) { clearInterval(check); reject(new Error('WebSocket closed before subscription confirmation')); }
+        }, 100);
+        setTimeout(() => { clearInterval(check); reject(new Error('WebSocket subscription timeout')); }, 10000);
+      });
+      if (state.lastScannedBlock != null) {
+        const latest = await getBlockNumber();
+        const from = state.lastScannedBlock + 1;
+        if (from <= latest) {
+          const recovered = await getLiquidationLogs(from, latest);
+          liveLogs.push(...recovered);
+          if (liveLogs.length > PENDING_LIMIT) liveLogs = liveLogs.slice(-PENDING_LIMIT);
+          console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_gap_recovered', fromBlock: from, toBlock: latest, logs: recovered.length }));
+        }
+      }
+
+      await new Promise(resolve => socket.once('close', resolve));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(JSON.stringify({ level: 'warn', event: 'nodeflare_ws_disconnected', message }));
+    } finally {
+      liveSocketConnected = false;
+      liveSocketStatus = 'disconnected';
+      if (socket) {
+        try { socket.terminate(); } catch {}
+      }
+    }
+    await sleep(2000);
+  }
+}
+
+
 async function getBlockTimestamp(blockNumber, cache) {
   if (!cache.has(blockNumber)) {
     const block = await rpc('eth_getBlockByNumber', [`0x${blockNumber.toString(16)}`, false]);
@@ -237,7 +319,22 @@ async function getBlockTimestamp(blockNumber, cache) {
 }
 
 async function poll() {
-  const [latestBlock, apiEvents] = await Promise.all([getBlockNumber(), getRecentTrades()]);
+  const apiEvents = await getRecentTrades();
+  const firstScan = state.lastScannedBlock == null;
+  let latestBlock = null;
+  let logs;
+  if (firstScan) {
+    latestBlock = await getBlockNumber();
+    const fromBlock = Math.max(0, latestBlock - INITIAL_LOOKBACK_BLOCKS);
+    console.log(JSON.stringify({
+      level: 'info', event: 'chain_baseline_start', latestBlock, fromBlock,
+      initialLookbackBlocks: latestBlock - fromBlock,
+    }));
+    logs = await getLiquidationLogs(fromBlock, latestBlock);
+    state.lastScannedBlock = latestBlock;
+  } else {
+    logs = liveLogs.splice(0);
+  }
   const apiByPosition = new Map();
   for (const event of apiEvents) {
     if (event?.positionId == null) continue;
@@ -246,22 +343,7 @@ async function poll() {
     apiByPosition.get(id).push(event);
   }
 
-  let fromBlock;
-  const firstScan = state.lastScannedBlock == null;
-  if (firstScan) {
-    fromBlock = Math.max(0, latestBlock - INITIAL_LOOKBACK_BLOCKS);
-    console.log(JSON.stringify({
-      level: 'info',
-      event: 'chain_baseline_start',
-      latestBlock,
-      fromBlock,
-      initialLookbackBlocks: latestBlock - fromBlock,
-    }));
-  } else {
-    fromBlock = state.lastScannedBlock + 1;
-  }
-
-  const logs = fromBlock <= latestBlock ? await getLiquidationLogs(fromBlock, latestBlock) : [];
+  const fromBlock = firstScan ? Math.max(0, latestBlock - INITIAL_LOOKBACK_BLOCKS) : null;
   const blockTimestamps = new Map();
   const now = Date.now();
   const currentStart = periodStart(now);
@@ -329,7 +411,10 @@ async function poll() {
   }
   pending = [...stillPending, ...newPending].slice(-PENDING_LIMIT);
 
-  state.lastScannedBlock = latestBlock;
+  if (logs.length) {
+    const highestLogBlock = Math.max(...logs.map(log => Number(BigInt(log.blockNumber))));
+    state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestLogBlock);
+  }
   saveState();
 
   let alerts = 0;
@@ -361,6 +446,7 @@ async function poll() {
     level: 'info',
     event: 'onchain_poll_completed',
     latestBlock,
+    source: firstScan ? 'initial_rpc_baseline' : 'websocket_logs',
     scannedFromBlock: fromBlock,
     scannedToBlock: latestBlock,
     onchainLiquidationsFound: logs.length,
@@ -381,8 +467,10 @@ console.log(JSON.stringify({
   periodMs: WINDOW_MS,
   contract: CONTRACT,
   chainId: '0x3e7',
-  endpoint: 'eth_getLogs + get_recent_trades',
+  endpoint: 'websocket eth_subscribe logs + startup/reconnect eth_getLogs + get_recent_trades',
 }));
+
+runWebSocketLoop().catch(err => console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_loop_failed', message: String(err) })));
 
 let lastPollError = null;
 while (true) {
