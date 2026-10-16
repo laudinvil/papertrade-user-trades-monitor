@@ -77,7 +77,10 @@ try {
         positionId: onchain.positionId,
       },
       apiMatchCount: candidates.length,
+      onchainLiquidationConfirmed: true,
+      matchedByPositionId: candidates.length > 0,
       matchedLiquidationEvent: exactLiquidation.length > 0,
+      apiEventIsClose: chosen ? String(chosen.kind).toLowerCase() === "close" : false,
       apiEvent: chosen ? {
         seq: chosen.seq ?? null,
         ts: chosen.ts ?? null,
@@ -97,6 +100,12 @@ try {
   for (const event of events) {
     const kind = event?.kind == null ? "(missing)" : String(event.kind);
     apiKindSummary[kind] = (apiKindSummary[kind] || 0) + 1;
+  }
+  const liquidationMatchSummary = {};
+  for (const match of matches.filter(m => m.apiMatchCount > 0)) {
+    const event = match.apiEvent;
+    const key = [event?.kind ?? "(missing)", event?.instrument ?? "(missing)", event?.side ?? "(missing)"].join("|");
+    liquidationMatchSummary[key] = (liquidationMatchSummary[key] || 0) + 1;
   }
   const apiEventSamples = events.slice(0, 10).map(event => ({
     seq: event?.seq ?? null,
@@ -118,6 +127,9 @@ try {
     apiEventsReturned: events.length,
     onchainLiquidationsFound: chainEvents.length,
     positionIdMatches: matches.filter(m => m.apiMatchCount > 0).length,
+    positionIdMatchEvents: matches.filter(m => m.apiMatchCount > 0).length,
+    matchedApiCloseEvents: matches.filter(m => m.apiEventIsClose).length,
+    liquidationMatchSummary,
     liquidationKindMatches: matched.length,
     matchesWithInstrumentAndSide: withRequiredFields.length,
     apiKindSummary,
