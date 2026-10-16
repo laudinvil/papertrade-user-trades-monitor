@@ -12,7 +12,7 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const SEEN_LIMIT = 10000;
 const WINDOW_MS = 5 * 60 * 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
-const LIQUIDATED_SELECTOR = '0x0c859bc5';
+const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -59,6 +59,7 @@ let lastWsError = null;
 function saveState() {
   const next = {
     initialized: true,
+    eventFilterVersion: 3,
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
@@ -150,7 +151,8 @@ function decodeLiquidation(log) {
   // Keep this threshold explicit so a future price-regime change is visible.
   const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
   // Longs bust below their liquidation price; shorts bust above it.
-  const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
+  // Long liquidation threshold is below markPrice; short threshold is above it.
+  const side = markPrice > bustPrice ? 'LONG' : markPrice < bustPrice ? 'SHORT' : null;
   return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
 }
 
@@ -206,10 +208,9 @@ async function getLiquidationLogs(fromBlock, toBlock) {
       address: CONTRACT,
       fromBlock: `0x${start.toString(16)}`,
       toBlock: `0x${end.toString(16)}`,
+      topics: [LIQUIDATED_TOPIC],
     }]);
-    // Papertrade's close event is 0x87902ed2…; liquidation is 0x0c859bc5… .
-    // Filter by the liquidation event selector locally because eth_getLogs requires the full 32-byte topic.
-    logs.push(...part.filter(log => String(log.topics?.[0] || '').toLowerCase().startsWith(LIQUIDATED_SELECTOR)));
+    logs.push(...part);
   }
   return logs;
 }
@@ -253,7 +254,7 @@ async function runWebSocketLoop() {
           }
         }
         if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber
-          && String(result.topics?.[0] || '').toLowerCase().startsWith(LIQUIDATED_SELECTOR)) {
+          && String(result.topics?.[0] || '').toLowerCase() === LIQUIDATED_TOPIC) {
           liveLogs.push(result);
         }
         if (message.error) {
@@ -263,7 +264,7 @@ async function runWebSocketLoop() {
       socket.on('message', onMessage);
       socket.send(JSON.stringify({
         jsonrpc: '2.0', id: requestId, method: 'eth_subscribe',
-        params: ['logs', { address: CONTRACT }],
+        params: ['logs', { address: CONTRACT, topics: [LIQUIDATED_TOPIC] },
       }));
       socket.send(JSON.stringify({
         jsonrpc: '2.0', id: requestId + 1, method: 'eth_subscribe', params: ['newHeads'],
@@ -472,8 +473,7 @@ console.log(JSON.stringify({
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
-  liquidationEventSelector: LIQUIDATED_SELECTOR,
-  ignoredCloseEventSelector: '0x87902ed2',
+  liquidationEventTopic: LIQUIDATED_TOPIC,
   chainId: '0x3e7',
   endpoint: 'NodeFlare WebSocket Papertrade Exchange logs filtered to Liquidated event selector + reconnect gap recovery',
   statePath: STATE_PATH,
