@@ -1,37 +1,49 @@
 # Papertrade 5m Liquidation Monitor
 
-Independent, read-only Telegram monitor for Papertrade liquidation events. It is intended to run separately from the existing Polymarket monitor and never places or closes trades.
+Independent, read-only Telegram monitor for liquidation events emitted by the configured Papertrade contract on HyperEVM. It runs separately from the existing Polymarket monitor and never places or closes trades.
 
-## Behavior
+## Actual data source
 
-- Polls the public `get_recent_trades` API every 5 seconds by default to collect events throughout each period.
-- Counts only events with `kind: liquidation`.
-- Aggregates liquidation events into fixed 5-minute windows by instrument.
-- Sends one alert for a completed window if it contains at least one liquidation; there is no minimum threshold of 18.
-- Splits the alert counts into `LONG` and `SHORT`; events without a recognized side still contribute to the total.
-- Uses newline-separated Telegram alert lines and HTML parse mode.
-- Deduplicates events and alerts; state is stored at `STATE_PATH` (default `./data/state.json`).
-- The first poll establishes a baseline and avoids alerts for historical completed windows.
-- Uses public Papertrade event data and Telegram only. No trading actions are performed.
+- NodeFlare HyperEVM JSON-RPC and WebSocket endpoints, authenticated with `NODEFLARE_API_KEY`.
+- Contract address: `0x6cd5661646289fb6e65ea5c032310fded797d0a2`.
+- Event signature topic: `0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8` (`Liquidated`).
+- The monitor subscribes to contract logs over WebSocket and recovers missed blocks through `eth_getLogs` after reconnects.
+- This implementation does **not** use the `get_recent_trades` API described by older documentation and does not subscribe to Hyperliquid exchange liquidation trades.
+
+## Alert behavior
+
+- Aggregates events into fixed 5-minute windows, separated by instrument.
+- Sends an alert for a completed window only when total `LIQS >= 70`; windows below 70 are ignored.
+- Alert lines are `LIQS`, `LONG`, and `SHORT`; LONG and SHORT have no independent thresholds.
+- Uses the decoded event price fields to classify direction. Events without a recognized direction still contribute to total LIQS.
+- Deduplicates by transaction hash and log index, with additional per-window position deduplication.
+- On first startup, establishes a block baseline instead of replaying historical events from earlier periods.
+- Persists monitor state at `STATE_PATH` (default: `/data/state.json`).
 
 ## Configuration
 
-Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Optional settings:
+Required environment variables:
 
-- `PAPERTRADE_API_BASE_URL` (default: `https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools`)
-- `POLL_MS` (minimum 5000)
-- `STATE_PATH` (default: `./data/state.json`)
+- `NODEFLARE_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
 
-Never commit real Telegram credentials. Persistent storage for `data/state.json` is recommended.
+Optional:
+
+- `POLL_MS` (default 2000 ms; minimum 2000)
+- `STATE_PATH` (default `/data/state.json`)
+
+Never commit API keys or Telegram credentials. Persistent storage for the state file is recommended.
 
 ## Run
 
-Requires Node.js 20+ and no external npm dependencies:
+Requires Node.js 20+ and the `ws` dependency:
 
 ```sh
+npm install
 npm start
 ```
 
 ## Hosting
 
-This monitor is intended to run as a standalone Deplexo worker from this repository's `main` branch. A commit triggers a deployment only if the existing Deplexo app is already configured to use this repository and automatic deployments are enabled. Verify the resulting deployment and runtime logs in Deplexo.
+Intended to run as a standalone Deplexo worker from this repository's `main` branch. A commit triggers deployment only if the Deplexo app is configured to use this repository and automatic deployments are enabled. Verify the deployed commit and runtime logs in Deplexo.
