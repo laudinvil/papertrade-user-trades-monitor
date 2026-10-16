@@ -161,32 +161,19 @@ function eventTimestamp(event) {
   return Number.isFinite(ts) && ts > 0 ? ts : null;
 }
 
-function alertText(periodBuckets, periodStartMs) {
-  const startSeconds = Math.floor(Number(periodStartMs) / 1000) + (WINDOW_MS / 1000);
-  const lines = ['<b>5M LIQUIDATIONS</b>'];
-
-  for (const instrument of ['BTC', 'ETH']) {
-    const bucket = periodBuckets[instrument];
-    const total = Number(bucket?.total || 0);
-    const long = Number(bucket?.long || 0);
-    const short = Number(bucket?.short || 0);
-    lines.push('', `<b>${instrument} 5m</b>`, `LIQS: ${total}`, `LONG: ${long} | SHORT: ${short}`);
+function alertText(bucket) {
+  const instrument = String(bucket.instrument || '').toUpperCase();
+  if (instrument !== 'BTC' && instrument !== 'ETH') {
+    throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
-
-  lines.push(
-    '',
-    '<b>POLYMARKET 5m</b>',
-    `BTC: https://polymarket.com/event/btc-updown-5m-${startSeconds}`,
-    `ETH: https://polymarket.com/event/eth-updown-5m-${startSeconds}`,
-    `SOL: https://polymarket.com/event/sol-updown-5m-${startSeconds}`,
-    `XRP: https://polymarket.com/event/xrp-updown-5m-${startSeconds}`,
-    `HYPE: https://polymarket.com/event/hype-updown-5m-${startSeconds}`,
-    `DOGE: https://polymarket.com/event/doge-updown-5m-${startSeconds}`,
-    `BNB: https://polymarket.com/event/bnb-updown-5m-${startSeconds}`,
-  );
-
-  // Join with real newline characters, not the two literal characters backslash+n.
-  return lines.join(String.fromCharCode(10));
+  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
+  const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
+  return [
+    `<b>${esc(instrument)} 5m</b>`,
+    `LIQS: ${Number(bucket.total || 0)}`,
+    `LONG: ${Number(bucket.long || 0)} | SHORT: ${Number(bucket.short || 0)}`,
+    polymarketUrl,
+  ].join('\n');
 }
 
 async function send(message) {
@@ -429,39 +416,23 @@ async function poll() {
   saveState();
 
   let alerts = 0;
-  const closedPeriods = [...new Set(Object.values(windows)
-    .map(bucket => Number(bucket.start))
-    .filter(start => start + WINDOW_MS <= now))].sort((a, b) => a - b);
-
-  for (const start of closedPeriods) {
-    const periodBuckets = {};
-    for (const instrument of ['BTC', 'ETH']) {
-      const bucket = windows[`${start}:${instrument}`];
-      if (bucket) periodBuckets[instrument] = bucket;
-    }
-    const alreadyAlerted = Object.values(periodBuckets).some(bucket => bucket.alerted);
-    if (alreadyAlerted) {
-      for (const bucket of Object.values(periodBuckets)) bucket.alerted = true;
-      continue;
-    }
-
-    const total = Object.values(periodBuckets).reduce((sum, bucket) => sum + Number(bucket.total || 0), 0);
-    if (total > 0) {
-      await send(alertText(periodBuckets, start));
+  for (const bucket of Object.values(windows)) {
+    if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
+    if (Number(bucket.total) > 0) {
+      await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_combined_alert_sent',
-        periodStart: new Date(start).toISOString(),
-        btcLiqs: Number(periodBuckets.BTC?.total || 0),
-        btcLong: Number(periodBuckets.BTC?.long || 0),
-        btcShort: Number(periodBuckets.BTC?.short || 0),
-        ethLiqs: Number(periodBuckets.ETH?.total || 0),
-        ethLong: Number(periodBuckets.ETH?.long || 0),
-        ethShort: Number(periodBuckets.ETH?.short || 0),
-        totalLiqs: total,
+        level: 'info', event: 'liqs_5m_alert_sent',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: Number(bucket.total),
+        long: Number(bucket.long || 0),
+        short: Number(bucket.short || 0),
+        uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+        eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
       }));
     }
-    for (const bucket of Object.values(periodBuckets)) bucket.alerted = true;
+    bucket.alerted = true;
     saveState();
   }
 
