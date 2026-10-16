@@ -122,13 +122,13 @@ function countLiquidation(event, key, allowSeenCurrentWindow, currentStart) {
 }
 
 function alertText(bucket) {
-  const start = new Date(bucket.start).toISOString();
-  const end = new Date(bucket.start + WINDOW_MS).toISOString();
+  const instrument = String(bucket.instrument || 'UNKNOWN').trim().toLowerCase();
+  const periodStartSeconds = Math.floor(Number(bucket.start) / 1000);
+  const polymarketUrl = `https://polymarket.com/event/${instrument}-updown-5m-${periodStartSeconds}`;
   return [
     `<b>${esc(bucket.instrument)} 5m</b>`,
     `LIQS: ${Number(bucket.total ?? (bucket.long + bucket.short))}`,
-    `LONG: ${bucket.long} | SHORT: ${bucket.short}`,
-    `Period: ${esc(start)} — ${esc(end)}`,
+    polymarketUrl,
   ].join('\n');
 }
 
