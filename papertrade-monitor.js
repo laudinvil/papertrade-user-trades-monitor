@@ -144,7 +144,6 @@ function alertText(event) {
     '<b>LIQUIDATION</b>',
     `WALLET: ${esc(event.user || 'UNKNOWN')}`,
     `BLOCK: ${Number(event.blockNumber)}`,
-    `TX: ${esc(event.transactionHash || 'UNKNOWN')}`,
   ].join('\n');
 }
 
