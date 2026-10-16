@@ -12,7 +12,7 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const SEEN_LIMIT = 10000;
 const WINDOW_MS = 5 * 60 * 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
-const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
+const LIQUIDATED_SELECTOR = '0x0c859bc5';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -27,9 +27,10 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     return {
       initialized: s.initialized === true,
-      seenKeys: Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
-      windows: s.windows && typeof s.windows === 'object' ? s.windows : {},
-      lastScannedBlock: Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
+      seenKeys: s.eventFilterVersion === 2 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
+      windows: s.eventFilterVersion === 2 && s.windows && typeof s.windows === 'object' ? s.windows : {},
+      lastScannedBlock: s.eventFilterVersion === 2 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
+      eventFilterVersion: 2,
       pending: [],
     };
   } catch (err) {
@@ -205,9 +206,10 @@ async function getLiquidationLogs(fromBlock, toBlock) {
       address: CONTRACT,
       fromBlock: `0x${start.toString(16)}`,
       toBlock: `0x${end.toString(16)}`,
-      topics: [LIQUIDATED_TOPIC],
     }]);
-    logs.push(...part);
+    // Papertrade's close event is 0x87902ed2…; liquidation is 0x0c859bc5… .
+    // Filter by the liquidation event selector locally because eth_getLogs requires the full 32-byte topic.
+    logs.push(...part.filter(log => String(log.topics?.[0] || '').toLowerCase().startsWith(LIQUIDATED_SELECTOR)));
   }
   return logs;
 }
@@ -250,7 +252,8 @@ async function runWebSocketLoop() {
             }
           }
         }
-        if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber) {
+        if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber
+          && String(result.topics?.[0] || '').toLowerCase().startsWith(LIQUIDATED_SELECTOR)) {
           liveLogs.push(result);
         }
         if (message.error) {
@@ -260,7 +263,7 @@ async function runWebSocketLoop() {
       socket.on('message', onMessage);
       socket.send(JSON.stringify({
         jsonrpc: '2.0', id: requestId, method: 'eth_subscribe',
-        params: ['logs', { address: CONTRACT, topics: [LIQUIDATED_TOPIC] }],
+        params: ['logs', { address: CONTRACT }],
       }));
       socket.send(JSON.stringify({
         jsonrpc: '2.0', id: requestId + 1, method: 'eth_subscribe', params: ['newHeads'],
@@ -463,8 +466,10 @@ console.log(JSON.stringify({
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
+  liquidationEventSelector: LIQUIDATED_SELECTOR,
+  ignoredCloseEventSelector: '0x87902ed2',
   chainId: '0x3e7',
-  endpoint: 'NodeFlare WebSocket Liquidated logs + reconnect gap recovery; no Papertrade API',
+  endpoint: 'NodeFlare WebSocket Papertrade Exchange logs filtered to Liquidated event selector + reconnect gap recovery',
   statePath: STATE_PATH,
 }));
 
