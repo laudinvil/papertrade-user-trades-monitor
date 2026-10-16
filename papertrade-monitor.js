@@ -432,6 +432,16 @@ async function poll() {
         long: longCount,
         short: shortCount,
       }));
+    } else if (String(bucket.instrument).toUpperCase() === 'BTC' && shortCount < 2) {
+      console.log(JSON.stringify({
+        level: 'info', event: 'liqs_5m_alert_suppressed_btc_short_below_threshold',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        long: longCount,
+        short: shortCount,
+        minimumShort: 2,
+      }));
     } else if (longCount > 0 && shortCount > 0) {
       await send(alertText(bucket));
       alerts++;
