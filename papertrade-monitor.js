@@ -48,6 +48,7 @@ let liveLogs = [];
 let liveSocketConnected = false;
 let liveSocketStatus = 'starting';
 let highestObservedBlock = null;
+const blockTimestampCache = new Map();
 const WS_CURSOR_SAFETY_BLOCKS = 10;
 
 function saveState() {
@@ -263,7 +264,13 @@ async function runWebSocketLoop() {
         const result = message?.params?.result;
         if (message.method === 'eth_subscription' && result?.number) {
           const block = Number(BigInt(result.number));
-          if (Number.isSafeInteger(block)) highestObservedBlock = Math.max(highestObservedBlock ?? 0, block);
+          if (Number.isSafeInteger(block)) {
+            highestObservedBlock = Math.max(highestObservedBlock ?? 0, block);
+            if (result.timestamp) {
+              blockTimestampCache.set(block, Number(BigInt(result.timestamp)) * 1000);
+              if (blockTimestampCache.size > 1000) blockTimestampCache.delete(blockTimestampCache.keys().next().value);
+            }
+          }
         }
         if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber) {
           liveLogs.push(result);
@@ -319,10 +326,16 @@ async function runWebSocketLoop() {
 
 
 async function getBlockTimestamp(blockNumber, cache) {
+  if (!cache.has(blockNumber) && blockTimestampCache.has(blockNumber)) {
+    cache.set(blockNumber, blockTimestampCache.get(blockNumber));
+  }
   if (!cache.has(blockNumber)) {
     const block = await rpc('eth_getBlockByNumber', [`0x${blockNumber.toString(16)}`, false]);
     if (!block?.timestamp) throw new Error(`Missing timestamp for block ${blockNumber}`);
-    cache.set(blockNumber, Number(BigInt(block.timestamp)) * 1000);
+    const timestamp = Number(BigInt(block.timestamp)) * 1000;
+    cache.set(blockNumber, timestamp);
+    blockTimestampCache.set(blockNumber, timestamp);
+    if (blockTimestampCache.size > 1000) blockTimestampCache.delete(blockTimestampCache.keys().next().value);
   }
   return cache.get(blockNumber);
 }
