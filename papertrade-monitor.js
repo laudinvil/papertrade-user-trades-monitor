@@ -144,6 +144,7 @@ function alertText(event) {
     '<b>LIQUIDATION</b>',
     `WALLET: ${esc(event.user || 'UNKNOWN')}`,
     `BLOCK: ${Number(event.blockNumber)}`,
+    `https://polymarket.com/event/btc-updown-5m-${Number(event.marketStart)}`,
   ].join('\n');
 }
 
@@ -316,6 +317,7 @@ async function poll() {
   let failed = 0;
   let duplicate = 0;
   let latestProcessedBlock = state.lastScannedBlock ?? latestBlock ?? 0;
+  const timestampCache = new Map();
 
   // Migrate previously sent transaction:logIndex keys into block:wallet groups before
   // processing, so reconnect recovery cannot resend a group already alerted by the old version.
@@ -344,6 +346,9 @@ async function poll() {
     };
 
     try {
+      const blockTimestamp = await getBlockTimestamp(blockNumber, timestampCache);
+      // Link the next 5-minute BTC Up/Down market, not the market period that is already underway.
+      event.marketStart = Math.floor(blockTimestamp / WINDOW_MS) * (WINDOW_MS / 1000) + (WINDOW_MS / 1000);
       if (!ENABLE_ALERTS) {
         seen.add(key);
         console.log(JSON.stringify({ level: 'warn', event: 'liquidation_alert_suppressed_until_enabled', positionId: event.positionId, blockNumber }));
