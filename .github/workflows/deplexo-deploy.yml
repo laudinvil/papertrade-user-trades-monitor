@@ -14,11 +14,10 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - name: Inspect Deplexo app and recent deployments
-        id: inspect
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
           APP_SLUG: merry-cascade-8098
@@ -40,7 +39,6 @@ jobs:
             printf '%s' "$APPS_RESPONSE" | jq '{apps: [.apps[]? | {id,appId,name,url,domain,status}]}'
             exit 1
           fi
-          echo "APP_ID=$APP_ID" >> "$GITHUB_OUTPUT"
           echo "Target app found: $APP_SLUG ($APP_ID)"
           HISTORY="$(curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/deployments?limit=10&offset=0")"
@@ -54,23 +52,28 @@ jobs:
             jq -r '(.lines // [])[]? | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-runtime.json | grep -Ei 'monitor_started|monitor_summary|liqs_5m|liquidation|poll_failed|nodeflare_ws|telegram|error|warn' | tail -n 80 || true
           fi
 
-      - name: Request Deplexo rebuild without cancelling active deployments
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      - name: Request manual Deplexo rebuild
+        if: github.event_name == 'workflow_dispatch'
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          APP_SLUG: merry-cascade-8098
           BASE: https://deplexo.com/user/api/v1
-          APP_ID: ${{ steps.inspect.outputs.APP_ID }}
           REQUESTED_SHA: ${{ inputs.commit_sha }}
           PUSH_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${APP_ID:-}" ]]; then
-            echo "::error::App ID missing from inspection step."
+          APPS_RESPONSE="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/me")"
+          APP_ID="$(printf '%s' "$APPS_RESPONSE" | jq -r --arg slug "$APP_SLUG" '
+            first(.apps[]? | select(((.name // "") == $slug) or ((((.url // .domain // "") | tostring) | contains($slug)))) | (.id // .appId)) // empty
+          ')"
+          if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
+            echo "::error::Could not find target app '$APP_SLUG'."
             exit 1
           fi
           SHA="${REQUESTED_SHA:-$PUSH_SHA}"
-          echo "Requesting Deplexo rebuild for commit $SHA"
+          echo "Requesting manual rebuild for $SHA"
           RESPONSE="$(curl --silent --show-error \
             -X POST \
             -H "Authorization: Bearer $DEPLEXO_TOKEN" \
@@ -86,7 +89,7 @@ jobs:
             exit 1
           fi
           if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
-            echo "::error::Deplexo rebuild request failed with HTTP $STATUS."
+            echo "::error::Manual rebuild failed with HTTP $STATUS."
             exit 1
           fi
-          echo "Deplexo accepted the rebuild request (HTTP $STATUS)."
+          echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
