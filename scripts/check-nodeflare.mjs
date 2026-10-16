@@ -86,6 +86,9 @@ try {
     contractCodeBytes: Math.max(0, (code.length - 2) / 2),
     logRange: { fromBlock: `0x${fromBlock.toString(16)}`, toBlock: blockHex },
     logsReturned: logs.length,
+    liquidatedTopic: LIQUIDATED_TOPIC,
+    liquidatedEventsFound: liquidatedEvents.length,
+    liquidatedSamples: liquidatedEvents.slice(0, 10),
     topicSummary: Object.fromEntries([...byTopic.entries()].map(([topic, value]) => [topic, value])),
   }));
 } catch (error) {
