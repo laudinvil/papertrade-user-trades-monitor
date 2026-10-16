@@ -103,22 +103,27 @@ jobs:
           set -euo pipefail
           SHA="${REQUESTED_SHA:-$PUSH_SHA}"
           echo "Deplexo rebuild requested for commit $SHA"
-          RESPONSE="$(curl --silent --show-error \
-            -X POST \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
-            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
-          BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
-          STATUS="${RESPONSE##*HTTP_STATUS:}"
-          printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
-          if [[ "$STATUS" == "409" ]]; then
-            echo "::error::Deplexo reports a deployment already in progress (HTTP 409). Inspect deployment history before retrying."
-            exit 1
-          fi
-          if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
-            echo "::error::Deplexo restart request failed with HTTP $STATUS."
-            exit 1
-          fi
-          echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
+          for attempt in $(seq 1 10); do
+            RESPONSE="$(curl --silent --show-error \
+              -X POST \
+              -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
+              -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
+            BODY="${RESPONSE%
+\n'HTTP_STATUS:*}"
+            STATUS="${RESPONSE##*HTTP_STATUS:}"
+            printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
+            if [[ "$STATUS" == "409" && "$attempt" -lt 10 ]]; then
+              echo "Deployment is already in progress; retrying in 15 seconds ($attempt/10)."
+              sleep 15
+              continue
+            fi
+            if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
+              echo "::error::Deplexo restart request failed with HTTP $STATUS."
+              exit 1
+            fi
+            echo "Deplexo accepted the rebuild request (HTTP $STATUS)."
+            exit 0
+          done
