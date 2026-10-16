@@ -508,7 +508,7 @@ async function poll() {
       seen.add(chainEvent.key);
       continue;
     }
-    const match = matchApiEvent(chainEvent, apiByPosition);
+    const match = await enrichChainEvent(chainEvent, apiByPosition);
     if (match && countLiquidation(chainEvent, match)) {
       enriched++;
     } else {
