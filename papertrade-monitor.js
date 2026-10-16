@@ -13,7 +13,7 @@ const SEEN_LIMIT = 10000;
 const WINDOW_MS = 5 * 60 * 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const ENABLE_ALERTS = process.env.ENABLE_LIQUIDATION_ALERTS !== 'false';
+const ENABLE_ALERTS = process.env.ENABLE_LIQUIDATION_ALERTS === 'true';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -418,7 +418,7 @@ console.log(JSON.stringify({
   contract: CONTRACT,
   chainId: '0x3e7',
   alertsEnabled: ENABLE_ALERTS,
-  endpoint: 'NodeFlare WebSocket logs filtered by Liquidated topic; deduplication key is blockNumber + wallet; alerts enabled by default; set ENABLE_LIQUIDATION_ALERTS=false to disable',
+  endpoint: 'NodeFlare WebSocket logs filtered by Liquidated topic; deduplication key is blockNumber + wallet; alerts disabled by default; set ENABLE_LIQUIDATION_ALERTS=true only after exact liquidation event decoding is verified',
   statePath: STATE_PATH,
 }));
 
