@@ -29,15 +29,10 @@ jobs:
             echo "::error::DEPLEXO_TOKEN secret is missing."
             exit 1
           fi
-
           APPS_RESPONSE="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" "$BASE/me")"
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/me")"
           APP_ID="$(printf '%s' "$APPS_RESPONSE" | jq -r --arg slug "$APP_SLUG" '
-            first(.apps[]? |
-              select(((.name // "") == $slug) or
-                (((.url // .domain // "") | tostring) | contains($slug))) |
-              (.id // .appId)) // empty
+            first(.apps[]? | select(((.name // "") == $slug) or ((((.url // .domain // "") | tostring) | contains($slug))) ) | (.id // .appId)) // empty
           ')"
           if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
             echo "::error::Could not find target app '$APP_SLUG'."
@@ -46,41 +41,37 @@ jobs:
           fi
           echo "Target app found: $APP_SLUG"
           HISTORY="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" "$BASE/apps/$APP_ID/deployments?limit=10&offset=0")"
-          echo "Recent deployment history (status and commit only):"
-          printf '%s' "$HISTORY" | jq '{
-            deployments: [(.data // .deployments // .items // [])[]? |
-              {id, status, state, commitSha, commit_sha, createdAt, created_at, startedAt, finishedAt, error}]
-          }'
-
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/deployments?limit=10&offset=0")"
+          printf '%s' "$HISTORY" | jq '{deployments: [(.data // .deployments // .items // [])[]? | {id,status,state,commitSha,commit_sha,createdAt,created_at,startedAt,finishedAt,error}]}'
           DEPLOY_ID="$(printf '%s' "$HISTORY" | jq -r 'first((.data // .deployments // .items // [])[]?) | .id // empty')"
           if [[ -n "$DEPLOY_ID" ]]; then
-            echo "Latest deployment build log (last 100 lines):"
             if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/deployments/$DEPLOY_ID/logs" -o /tmp/deplexo-build.json; then
+              echo "Latest deployment build log:"
               jq -r '(.lines // .logs // .data // []) | if type == "array" then .[] else . end | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-build.json | tail -n 100 || true
-            else
-              echo "Build logs unavailable for deployment $DEPLOY_ID."
             fi
           fi
-
-          echo "Runtime diagnostics (filtered):"
           if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/logs/runtime?limit=1000" -o /tmp/deplexo-runtime.json; then
-            jq -r '(.lines // [])[]? | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-runtime.json | grep -Ei 'monitor_started|monitor_summary|liqs_5m_alert_sent|poll_failed|nodeflare_ws|telegram|error|warn|state' | tail -n 80 || true
-          else
-            echo "Runtime logs unavailable; verify DEPLEXO_TOKEN has logs:read scope."
+            echo "Runtime diagnostics:"
+            jq -r '(.lines // [])[]? | if type == "string" then . else (.message // .line // .text // tostring) end' /tmp/deplexo-runtime.json | grep -Ei 'monitor_started|monitor_summary|liquidation|poll_failed|nodeflare_ws|telegram|error|warn|state' | tail -n 80 || true
           fi
-
-          echo "Usage summary:"
-          if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/usage" -o /tmp/deplexo-usage.json; then
-            jq '{plan, period, usage, limits, remaining, data}' /tmp/deplexo-usage.json
-          else
-            echo "Usage endpoint unavailable."
-          fi
-
-          echo "App live stats:"
           if curl --fail --silent --show-error --max-time 20 -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/apps/$APP_ID/live-stats" -o /tmp/deplexo-live.json; then
-            jq '{status, cpu, memory, restarts, uptime, data}' /tmp/deplexo-live.json
-          else
-            echo "Live stats unavailable."
+            echo "App live stats:"
+            jq '{status,cpu,memory,restarts,uptime,data}' /tmp/deplexo-live.json
           fi
+
+      - name: Emergency stop monitor only for an explicitly marked commit
+        if: startsWith(github.event.head_commit.message, 'EMERGENCY STOP MONITOR:')
+        env:
+          DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          APP_SLUG: merry-cascade-8098
+          BASE: https://deplexo.com/user/api/v1
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPS_RESPONSE="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/me")"
+          APP_ID="$(printf '%s' "$APPS_RESPONSE" | jq -r --arg slug "$APP_SLUG" 'first(.apps[]? | select(((.name // "") == $slug) or ((((.url // .domain // "") | tostring) | contains($slug)))) | (.id // .appId)) // empty')"
+          test -n "$APP_ID" && test "$APP_ID" != "null"
+          echo "Emergency stop requested for $APP_SLUG"
+          curl --fail-with-body --silent --show-error -X POST -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" -H "Content-Type: application/json" --data '{}' "$BASE/apps/$APP_ID/cancel"
+          curl --fail-with-body --silent --show-error -X POST -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" -H "Content-Type: application/json" --data '{}' "$BASE/apps/$APP_ID/stop"
+          echo "Deplexo stop request accepted."
