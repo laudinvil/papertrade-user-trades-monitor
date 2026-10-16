@@ -91,7 +91,7 @@ jobs:
           fi
 
       - name: Request manual rebuild only
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
           BASE: https://deplexo.com/user/api/v1
@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           SHA="${REQUESTED_SHA:-$PUSH_SHA}"
-          echo "Manual rebuild requested for commit $SHA"
+          echo "Deplexo rebuild requested for commit $SHA"
           RESPONSE="$(curl --silent --show-error \
             -X POST \
             -H "Authorization: Bearer $DEPLEXO_TOKEN" \
