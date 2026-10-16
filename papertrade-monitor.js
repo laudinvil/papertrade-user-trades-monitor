@@ -56,13 +56,19 @@ let highestObservedBlock = null;
 let lastApiFetchAt = 0;
 let cachedApiEvents = [];
 const accountTradeCache = new Map();
-const ACCOUNT_CACHE_TTL_MS = 5000;
-const ACCOUNT_MAX_PAGES = 4;
+const ACCOUNT_CACHE_TTL_MS = 60_000;
+const ACCOUNT_MAX_PAGES = 2;
+const ACCOUNT_LOOKUP_MIN_INTERVAL_MS = 10_000;
 const blockTimestampCache = new Map();
 const WS_CURSOR_SAFETY_BLOCKS = 10;
 const SUMMARY_INTERVAL_MS = 60_000;
 let lastSummaryAt = 0;
 let lastWsError = null;
+let accountApiRequests = 0;
+let accountApiPages = 0;
+let accountApiCooldownSkips = 0;
+let accountCacheHits = 0;
+let lastAccountLookupAt = 0;
 
 function saveState() {
   const next = {
@@ -141,8 +147,15 @@ async function getAccountTradeByPosition(wallet, positionId) {
   const now = Date.now();
   const cached = accountTradeCache.get(address);
   if (cached && now - cached.fetchedAt < ACCOUNT_CACHE_TTL_MS) {
+    accountCacheHits++;
     return cached.items.find(item => String(item.positionId) === String(positionId)) || null;
   }
+  // Bound account-history traffic globally. A throttled lookup stays pending and is retried later.
+  if (now - lastAccountLookupAt < ACCOUNT_LOOKUP_MIN_INTERVAL_MS) {
+    accountApiCooldownSkips++;
+    return null;
+  }
+  lastAccountLookupAt = now;
 
   const items = [];
   let cursor = null;
@@ -151,6 +164,8 @@ async function getAccountTradeByPosition(wallet, positionId) {
     url.searchParams.set('filter', 'all');
     url.searchParams.set('limit', '75');
     if (cursor) url.searchParams.set('cursor', cursor);
+    accountApiRequests++;
+    accountApiPages++;
     const response = await fetch(url, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(12000),
@@ -188,7 +203,7 @@ function periodStart(ts) {
 function getWindow(start, instrument) {
   const key = `${start}:${instrument}`;
   if (!windows[key]) {
-    windows[key] = { start, instrument, total: 0, long: 0, short: 0, eventKeys: [], alerted: false };
+    windows[key] = { start, instrument, total: 0, long: 0, short: 0, eventKeys: [], positionIds: [], alerted: false };
   }
   return windows[key];
 }
@@ -236,6 +251,9 @@ function countLiquidation(chainEvent, apiEvent) {
     return true;
   }
   bucket.eventKeys.push(key);
+  const positionId = chainEvent.positionId == null ? null : String(chainEvent.positionId);
+  if (positionId && !Array.isArray(bucket.positionIds)) bucket.positionIds = [];
+  if (positionId && !bucket.positionIds.includes(positionId)) bucket.positionIds.push(positionId);
   bucket.total++;
   const side = sideName(apiEvent);
   if (side === 'LONG') bucket.long++;
@@ -540,6 +558,8 @@ async function poll() {
         liqs: bucket.total,
         long: bucket.long,
         short: bucket.short,
+        uniquePositions: Array.isArray(bucket.positionIds) ? bucket.positionIds.length : null,
+        eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
       }));
     }
     bucket.alerted = true;
@@ -566,10 +586,18 @@ async function poll() {
       unmatchedNewThisPoll: unmatched,
       expiredUnmatched,
       skippedOldBaseline,
+      accountApiRequests,
+      accountApiPages,
+      accountApiCooldownSkips,
+      accountCacheHits,
       alertsSent: alerts,
       websocket: liveSocketStatus,
     }));
     lastSummaryAt = summaryNow;
+    accountApiRequests = 0;
+    accountApiPages = 0;
+    accountApiCooldownSkips = 0;
+    accountCacheHits = 0;
   }
 }
 
@@ -582,6 +610,10 @@ console.log(JSON.stringify({
   contract: CONTRACT,
   chainId: '0x3e7',
   endpoint: 'websocket eth_subscribe logs + reconnect-only eth_getLogs + throttled Papertrade enrichment',
+  statePath: STATE_PATH,
+  accountLookupMinIntervalMs: ACCOUNT_LOOKUP_MIN_INTERVAL_MS,
+  accountCacheTtlMs: ACCOUNT_CACHE_TTL_MS,
+  accountMaxPages: ACCOUNT_MAX_PAGES,
 }));
 
 runWebSocketLoop().catch(err => console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_loop_failed', message: String(err) })));
