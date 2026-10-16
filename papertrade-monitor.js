@@ -8,7 +8,6 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const SEEN_LIMIT = 5000;
 const WINDOW_MS = 5 * 60 * 1000;
-const MIN_LIQS = 18;
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -201,7 +200,7 @@ async function poll() {
   for (const [key, bucket] of Object.entries(windows)) {
     if (bucket.alerted || bucket.start + WINDOW_MS > now) continue;
     const total = Number(bucket.total ?? (bucket.long + bucket.short));
-    if (total >= MIN_LIQS) {
+    if (total > 0) {
       await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
@@ -231,7 +230,6 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   mode: 'liqs_5m_long_short',
   pollMs: POLL_MS,
-  minLiqs: MIN_LIQS,
   periodMs: WINDOW_MS,
   endpoint: 'get_recent_trades',
 }));
