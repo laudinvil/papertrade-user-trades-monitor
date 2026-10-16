@@ -1,0 +1,99 @@
+name: Deploy to Deplexo
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to deploy (defaults to this workflow run's commit)"
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deplexo-deploy-papertrade
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request deployment of existing Deplexo app
+        env:
+          DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          PUSH_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DEPLEXO_TOKEN:-}" ]]; then
+            echo "::error::Add DEPLEXO_TOKEN as a GitHub Actions repository secret before running this workflow."
+            exit 1
+          fi
+
+          BASE="https://deplexo.com/user/api/v1"
+          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
+
+          apps_json="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            "$BASE/me")"
+
+          APP_ID="$(printf '%s' "$apps_json" | jq -r '
+            first(.apps[] |
+              select(
+                ((.name // "") == "fierce-garnet-0621") or
+                (((.url // .domain // "") | tostring) | contains("fierce-garnet-0621"))
+              ) |
+              (.id // .appId)
+            ) // empty
+          ')"
+
+          if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
+            echo "::error::Could not find the existing Deplexo app fierce-garnet-0621 in /me. Check token scopes (app:read) and app inventory."
+            exit 1
+          fi
+
+          echo "Requesting rebuild of existing Deplexo app $APP_ID at commit $SHA"
+          response="$(curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
+            "$BASE/apps/$APP_ID/restart")"
+
+          echo "$response" | jq .
+          DEPLOYMENT_ID="$(printf '%s' "$response" | jq -r '.deploymentId // .id // empty')"
+
+          if [[ -z "$DEPLOYMENT_ID" || "$DEPLOYMENT_ID" == "null" ]]; then
+            echo "::error::Deplexo accepted no identifiable deployment ID; inspect the API response above."
+            exit 1
+          fi
+
+          for attempt in $(seq 1 30); do
+            logs="$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+              "$BASE/deployments/$DEPLOYMENT_ID/logs")"
+            status="$(printf '%s' "$logs" | jq -r '.status // .deployment.status // "unknown"')"
+            echo "Deployment $DEPLOYMENT_ID status: $status"
+
+            case "$status" in
+              success|succeeded|running|healthy)
+                echo "Deplexo reports deployment status: $status"
+                exit 0
+                ;;
+              failed|error|cancelled|canceled)
+                printf '%s' "$logs" | jq -r '.errorMessage // .message // .buildLogs // .' || true
+                echo "::error::Deplexo deployment ended with status $status"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+
+          echo "::error::Timed out waiting for deployment status. Check Deplexo deployment logs for $DEPLOYMENT_ID."
+          exit 1
