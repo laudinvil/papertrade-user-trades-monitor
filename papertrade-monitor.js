@@ -357,7 +357,7 @@ async function poll() {
     liveLogs = liveLogs.filter(log => Number(BigInt(log.blockNumber)) > latestBlock);
     state.lastScannedBlock = latestBlock;
   } else {
-    logs = liveLogs.splice(0);
+    logs = liveLogs.slice();
   }
 
   // Papertrade is enrichment only, not the liquidation source. Query it only when
@@ -448,6 +448,10 @@ async function poll() {
   if (highestObservedBlock != null) {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
+  // Remove queued notifications only after processing and persistence succeed; API/RPC failures
+  // must not silently discard live liquidation events.
+  const processedLogKeys = new Set(logs.map(eventKey));
+  liveLogs = liveLogs.filter(log => !processedLogKeys.has(eventKey(log)));
   saveState();
 
   let alerts = 0;
