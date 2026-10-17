@@ -151,10 +151,10 @@ function decodeLiquidation(log) {
   }
   if (markPrice <= 0n || bustPrice <= 0n) return null;
 
-  // Current protocol scales: BTC=10, ETH=100. Their raw mark-price ranges are
-  // currently separated around 500,000 (BTC ~830,000; ETH ~250,000).
-  // Keep this threshold explicit so a future price-regime change is visible.
-  const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
+  // BTC raw mark prices are currently >= 500,000; ETH is below this boundary.
+  // This monitor intentionally ignores non-BTC liquidation events.
+  const instrument = markPrice >= 500000n ? 'BTC' : null;
+  if (!instrument) return { instrument: null, side: null, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
   // The event's markPrice is the observed mark and bustPrice is the liquidation threshold.
   // A LONG is liquidated when markPrice falls below bustPrice; a SHORT when it rises above.
   const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
@@ -168,7 +168,7 @@ function eventTimestamp(event) {
 
 function alertText(bucket, direction) {
   const instrument = String(bucket.instrument || '').toUpperCase();
-  if (instrument !== 'BTC' && instrument !== 'ETH') {
+  if (instrument !== 'BTC') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
   const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
@@ -353,6 +353,7 @@ async function poll() {
   let decoded = 0;
   let skippedOldBaseline = 0;
   let invalidLogs = 0;
+  let skippedNonBtc = 0;
 
   for (const log of logs) {
     const key = eventKey(log);
@@ -385,6 +386,12 @@ async function poll() {
         positionId: chainEvent.positionId, blockNumber,
         dataLength: String(log.data || '').length,
       }));
+      continue;
+    }
+
+    if (classified.instrument !== 'BTC') {
+      skippedNonBtc++;
+      seen.add(key);
       continue;
     }
 
@@ -426,9 +433,12 @@ async function poll() {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
-  // Keep empty buckets for both instruments so completed zero-liquidation windows can alert.
+  // Keep an empty BTC bucket so completed zero-liquidation windows can be compared.
   getWindow(currentStart, 'BTC');
-  getWindow(currentStart, 'ETH');
+  // Drop legacy ETH buckets; this monitor now tracks BTC only.
+  for (const [key, bucket] of Object.entries(windows)) {
+    if (bucket.instrument !== 'BTC') delete windows[key];
+  }
 
   const processedLogKeys = new Set(logs.map(eventKey));
   liveLogs = liveLogs.filter(log => !processedLogKeys.has(eventKey(log)));
@@ -436,6 +446,7 @@ async function poll() {
 
   let alerts = 0;
   for (const bucket of Object.values(windows)) {
+    if (bucket.instrument !== 'BTC') continue;
     if (Number(bucket.start) + WINDOW_MS > now) continue;
     const totalLiqs = Number(bucket.total || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
@@ -456,7 +467,7 @@ async function poll() {
       } else {
         const previousLiqs = Number(previousBucket.total || 0);
         if (totalLiqs > previousLiqs) {
-          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'down' : 'up'));
+          await send(alertText(bucket, 'up'));
           alerts++;
           console.log(JSON.stringify({
             level: 'info', event: 'liqs_5m_alert_sent',
@@ -475,7 +486,7 @@ async function poll() {
             eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
           }));
         } else if (totalLiqs < previousLiqs) {
-          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'up' : 'down'));
+          await send(alertText(bucket, 'down'));
           alerts++;
           console.log(JSON.stringify({
             level: 'info', event: 'liqs_5m_alert_sent',
@@ -524,6 +535,7 @@ async function poll() {
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
       invalidOnchainLogs: invalidLogs,
+      skippedNonBtcLiquidations: skippedNonBtc,
       skippedOldBaseline,
       alertsSent: alerts,
       websocket: liveSocketStatus,
