@@ -31,7 +31,8 @@ Required environment variables:
 
 Optional:
 
-- `POLL_MS` (default 2000 ms; minimum 2000)
+- `POLL_MS` (default 10000 ms; minimum 10000). This controls the processing loop, not the WebSocket event stream.
+- JSON-RPC requests are spaced by at least 250 ms (maximum 4 requests/second per monitor process). HTTP 429 responses use exponential backoff, honoring numeric `Retry-After` values up to 60 seconds; the outer loop waits 15 seconds after a 429 failure.
 - `STATE_PATH` (default `/data/state.json`)
 
 Never commit API keys or Telegram credentials. Persistent storage for the state file is recommended.
