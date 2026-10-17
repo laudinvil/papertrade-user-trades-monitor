@@ -439,7 +439,7 @@ async function poll() {
       const longLiqs = Number(bucket.long || 0);
       const shortLiqs = Number(bucket.short || 0);
       const unknownLiqs = Number(bucket.unknownSide || 0);
-      if (longLiqs > 0 && shortLiqs === 0 && unknownLiqs === 0) {
+      if (shortLiqs > 0 && longLiqs === 0 && unknownLiqs === 0) {
         await send(alertText(bucket));
         alerts++;
         console.log(JSON.stringify({
@@ -466,7 +466,7 @@ async function poll() {
           short: shortLiqs,
           unknown: unknownLiqs,
           liqSeconds,
-          requiredCondition: 'LONG > 0, SHORT = 0, UNKNOWN = 0',
+          requiredCondition: 'SHORT > 0, LONG = 0, UNKNOWN = 0',
         }));
       }
       bucket.alerted = true;
