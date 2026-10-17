@@ -448,8 +448,29 @@ async function poll() {
       const shortLiqs = Number(bucket.short || 0);
       const unknownLiqs = Number(bucket.unknownSide || 0);
       const currentSpanSeconds = liqSpanSeconds(bucket);
-      const previousKey = `${Number(bucket.start) - WINDOW_MS}:${bucket.instrument}`;
-      const previousBucket = windows[previousKey];
+
+      // An entirely empty window is ignored and must not become a comparison baseline.
+      if (totalLiqs === 0 && longLiqs === 0 && shortLiqs === 0 && unknownLiqs === 0 && liqSeconds === 0 && currentSpanSeconds === 0) {
+        bucket.alerted = true;
+        console.log(JSON.stringify({
+          level: 'info', event: 'liq_span_5m_alert_suppressed_all_zero',
+          instrument: bucket.instrument,
+          periodStart: new Date(bucket.start).toISOString(),
+          reason: 'all values are zero; window excluded from LIQ SPAN comparisons',
+        }));
+        saveState();
+        continue;
+      }
+
+      // Find the most recent earlier non-empty window, skipping all-zero windows.
+      let previousBucket = null;
+      for (let previousStart = Number(bucket.start) - WINDOW_MS; previousStart >= Number(bucket.start) - 60 * 60 * 1000; previousStart -= WINDOW_MS) {
+        const candidate = windows[`${previousStart}:${bucket.instrument}`];
+        if (candidate && Number(candidate.total || 0) > 0) {
+          previousBucket = candidate;
+          break;
+        }
+      }
       if (!previousBucket) {
         console.log(JSON.stringify({
           level: 'info', event: 'liq_span_5m_alert_suppressed_missing_previous_period',
