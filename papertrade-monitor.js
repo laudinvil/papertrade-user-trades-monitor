@@ -426,6 +426,10 @@ async function poll() {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
+  // Keep empty buckets for both instruments so completed zero-liquidation windows can alert.
+  getWindow(currentStart, 'BTC');
+  getWindow(currentStart, 'ETH');
+
   const processedLogKeys = new Set(logs.map(eventKey));
   liveLogs = liveLogs.filter(log => !processedLogKeys.has(eventKey(log)));
   saveState();
@@ -439,7 +443,7 @@ async function poll() {
       const longLiqs = Number(bucket.long || 0);
       const shortLiqs = Number(bucket.short || 0);
       const unknownLiqs = Number(bucket.unknownSide || 0);
-      if (shortLiqs > 0 && longLiqs === 0 && unknownLiqs === 0) {
+      if (totalLiqs === 0) {
         await send(alertText(bucket));
         alerts++;
         console.log(JSON.stringify({
@@ -458,7 +462,7 @@ async function poll() {
         }));
       } else {
         console.log(JSON.stringify({
-          level: 'info', event: 'liqs_5m_alert_suppressed_side_condition',
+          level: 'info', event: 'liqs_5m_alert_suppressed_nonzero_liquidations',
           instrument: bucket.instrument,
           periodStart: new Date(bucket.start).toISOString(),
           liqs: totalLiqs,
@@ -466,7 +470,7 @@ async function poll() {
           short: shortLiqs,
           unknown: unknownLiqs,
           liqSeconds,
-          requiredCondition: 'SHORT > 0, LONG = 0, UNKNOWN = 0',
+          requiredCondition: 'LIQS = 0',
         }));
       }
       bucket.alerted = true;
