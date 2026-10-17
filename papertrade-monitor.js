@@ -173,7 +173,7 @@ function alertText(bucket) {
     `LIQS: ${Number(bucket.total || 0)}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
-    `LIQ SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
+    `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
     `LIQ SPAN: ${bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0}s`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
