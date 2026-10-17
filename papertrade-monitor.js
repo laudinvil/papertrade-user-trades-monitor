@@ -125,7 +125,7 @@ function periodStart(ts) {
 function getWindow(start, instrument) {
   const key = `${start}:${instrument}`;
   if (!windows[key]) {
-    windows[key] = { start, instrument, total: 0, long: 0, short: 0, eventKeys: [], positionIds: [], positionKeys: [], alerted: false };
+    windows[key] = { start, instrument, total: 0, long: 0, short: 0, eventKeys: [], positionIds: [], positionKeys: [], liquidationSeconds: [], firstLiquidationAt: null, lastLiquidationAt: null, alerted: false };
   }
   return windows[key];
 }
@@ -173,7 +173,8 @@ function alertText(bucket) {
     `LIQS: ${Number(bucket.total || 0)}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
-    `UNKNOWN: ${Number(bucket.unknownSide || 0)}`,
+    `LIQ SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
+    `LIQ SPAN: ${bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0}s`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
 }
@@ -397,6 +398,13 @@ async function poll() {
     bucket.eventKeys.push(key);
     if (positionKey) bucket.positionKeys.push(positionKey);
     if (positionId) bucket.positionIds.push(positionId);
+    if (!Array.isArray(bucket.liquidationSeconds)) bucket.liquidationSeconds = [];
+    const eventSecond = Math.floor(chainEvent.ts / 1000);
+    if (!bucket.liquidationSeconds.includes(eventSecond)) bucket.liquidationSeconds.push(eventSecond);
+    bucket.firstLiquidationAt = bucket.firstLiquidationAt == null
+      ? chainEvent.ts : Math.min(Number(bucket.firstLiquidationAt), chainEvent.ts);
+    bucket.lastLiquidationAt = bucket.lastLiquidationAt == null
+      ? chainEvent.ts : Math.max(Number(bucket.lastLiquidationAt), chainEvent.ts);
     bucket.total++;
     if (classified.side === 'LONG') bucket.long++;
     else if (classified.side === 'SHORT') bucket.short++;
@@ -421,39 +429,24 @@ async function poll() {
   for (const bucket of Object.values(windows)) {
     if (Number(bucket.start) + WINDOW_MS > now) continue;
     const totalLiqs = Number(bucket.total || 0);
-    const longCount = Number(bucket.long || 0);
-    const shortCount = Number(bucket.short || 0);
-    const unknownCount = Number(bucket.unknownSide || 0);
-
-    // Independent flag: older releases set bucket.alerted even for suppressed windows.
-    // Do not let that legacy flag block an alert for unclassified liquidation events.
-    const unknownThreshold = bucket.instrument === 'ETH' ? 3 : 2;
-    if (unknownCount >= unknownThreshold && bucket.unclassifiedAlerted !== true) {
-      await send(alertText(bucket));
-      bucket.unclassifiedAlerted = true;
-      alerts++;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_sent_unclassified',
-        instrument: bucket.instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longCount,
-        short: shortCount,
-        unknown: unknownCount,
-        uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
-        eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-      }));
-      saveState();
-    } else if (bucket.alerted !== true) {
-      console.log(JSON.stringify({
-        level: 'info', event: 'liqs_5m_alert_suppressed_no_unclassified',
-        instrument: bucket.instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longCount,
-        short: shortCount,
-        unknown: unknownCount,
-      }));
+    if (bucket.alerted !== true) {
+      if (totalLiqs > 0) {
+        await send(alertText(bucket));
+        alerts++;
+        console.log(JSON.stringify({
+          level: 'info', event: 'liqs_5m_alert_sent',
+          instrument: bucket.instrument,
+          periodStart: new Date(bucket.start).toISOString(),
+          liqs: totalLiqs,
+          long: Number(bucket.long || 0),
+          short: Number(bucket.short || 0),
+          liqSeconds: Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0,
+          liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
+            ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
+          uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+          eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+        }));
+      }
       bucket.alerted = true;
       saveState();
     }
