@@ -5,7 +5,7 @@ import WebSocket from 'ws';
 const RPC_KEY = process.env.NODEFLARE_API_KEY || '';
 const RPC_URL = RPC_KEY ? `https://rpc.nodeflare.app/hl/v1/${RPC_KEY}` : '';
 const WS_URL = RPC_KEY ? `wss://rpc.nodeflare.app/hl/ws/v1/${RPC_KEY}` : '';
-const POLL_MS = Math.max(2000, Number(process.env.POLL_MS || 2000));
+const POLL_MS = Math.max(10000, Number(process.env.POLL_MS || 10000));
 const STATE_PATH = process.env.STATE_PATH || '/data/state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
@@ -55,6 +55,8 @@ const WS_CURSOR_SAFETY_BLOCKS = 10;
 const SUMMARY_INTERVAL_MS = 60_000;
 let lastSummaryAt = 0;
 let lastWsError = null;
+const RPC_MIN_INTERVAL_MS = 250;
+let lastRpcRequestAt = 0;
 
 function saveState() {
   const next = {
@@ -80,6 +82,9 @@ async function rpc(method, params = []) {
   let lastError;
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
+      const waitMs = Math.max(0, RPC_MIN_INTERVAL_MS - (Date.now() - lastRpcRequestAt));
+      if (waitMs > 0) await sleep(waitMs);
+      lastRpcRequestAt = Date.now();
       const response = await fetch(RPC_URL, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -89,8 +94,8 @@ async function rpc(method, params = []) {
       if (response.status === 429 || response.status >= 500) {
         const retryAfter = Number(response.headers.get('retry-after'));
         const delay = Number.isFinite(retryAfter) && retryAfter > 0
-          ? Math.min(retryAfter * 1000, 2000)
-          : Math.min(250 * (2 ** attempt), 2000);
+          ? Math.min(retryAfter * 1000, 60000)
+          : Math.min(5000 * (2 ** attempt), 60000);
         lastError = new Error(`${method}: HTTP ${response.status}`);
         if (attempt < 4) {
           await sleep(delay);
