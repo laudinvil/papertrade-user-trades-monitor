@@ -30,12 +30,16 @@ function loadState() {
       seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
+      // Per-asset gate: only the first non-zero period after an all-zero period may alert.
+      alertGate: s.alertGate && typeof s.alertGate === 'object'
+        ? { BTC: s.alertGate.BTC === true, ETH: s.alertGate.ETH === true }
+        : { BTC: false, ETH: false },
       eventFilterVersion: 3,
       pending: [],
     };
   } catch (err) {
     if (err?.code === 'ENOENT') {
-      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, pending: [] };
+      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, alertGate: { BTC: false, ETH: false }, pending: [] };
     }
     // Never silently reset deduplication or unsent alerts when persisted state is unreadable.
     throw new Error(`Cannot load persisted monitor state at ${STATE_PATH}: ${err instanceof Error ? err.message : String(err)}`);
@@ -45,6 +49,7 @@ function loadState() {
 let state = loadState();
 const seen = new Set(state.seenKeys);
 const windows = state.windows;
+const alertGate = state.alertGate || { BTC: false, ETH: false };
 let pending = [];
 let liveLogs = [];
 let liveSocketConnected = false;
@@ -65,6 +70,7 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
+    alertGate,
     pending,
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -430,7 +436,7 @@ async function poll() {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
-  // Keep empty buckets for both instruments so zero-span windows can be compared.
+  // Keep empty buckets for both instruments so all-zero periods can re-arm alerts.
   getWindow(currentStart, 'BTC');
   getWindow(currentStart, 'ETH');
 
@@ -439,9 +445,17 @@ async function poll() {
   saveState();
 
   let alerts = 0;
-  for (const bucket of Object.values(windows)) {
-    if (Number(bucket.start) + WINDOW_MS > now) continue;
-    if (bucket.alerted === true) continue;
+  const completedWindows = Object.values(windows)
+    .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
+    .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
+
+  for (const bucket of completedWindows) {
+    const instrument = String(bucket.instrument || '').toUpperCase();
+    if (instrument !== 'BTC' && instrument !== 'ETH') {
+      bucket.alerted = true;
+      saveState();
+      continue;
+    }
 
     const totalLiqs = Number(bucket.total || 0);
     const longLiqs = Number(bucket.long || 0);
@@ -449,16 +463,32 @@ async function poll() {
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
+    const isAllZero = totalLiqs === 0 && longLiqs === 0 && shortLiqs === 0
+      && unknownLiqs === 0 && liqSeconds === 0 && currentSpanSeconds === 0;
 
-    // All-zero windows are ignored. Non-empty windows send a data-only summary,
-    // without comparison to previous periods and without directional arrows.
-    if (totalLiqs === 0 && longLiqs === 0 && shortLiqs === 0 && unknownLiqs === 0 && liqSeconds === 0 && currentSpanSeconds === 0) {
+    // A zero period arms this instrument. Send only the first non-zero period
+    // after that zero period; suppress further non-zero periods until another zero.
+    if (isAllZero) {
+      alertGate[instrument] = true;
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_all_zero',
-        instrument: bucket.instrument,
+        instrument,
         periodStart: new Date(bucket.start).toISOString(),
-        reason: 'all values are zero',
+        nextNonZeroAlertArmed: true,
+      }));
+      saveState();
+      continue;
+    }
+
+    if (alertGate[instrument] !== true) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_until_zero_then_nonzero',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        reason: 'no all-zero period has armed the next alert',
       }));
       saveState();
       continue;
@@ -466,9 +496,10 @@ async function poll() {
 
     await send(alertText(bucket));
     alerts++;
+    alertGate[instrument] = false;
     console.log(JSON.stringify({
       level: 'info', event: 'liquidation_5m_alert_sent',
-      instrument: bucket.instrument,
+      instrument,
       periodStart: new Date(bucket.start).toISOString(),
       liqs: totalLiqs,
       long: longLiqs,
@@ -478,6 +509,7 @@ async function poll() {
       liqSpanSeconds: currentSpanSeconds,
       uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+      nextAlertRequiresAllZeroPeriod: true,
     }));
     bucket.alerted = true;
     saveState();
