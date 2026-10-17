@@ -522,7 +522,7 @@ while (true) {
     const message = err instanceof Error ? err.message : String(err);
     // Keep recovery responsive; individual RPC calls already retry transient errors.
     delay = /HTTP 429/i.test(message) ? 15000
-      : /HTTP 5\\d\\d|timeout|fetch failed/i.test(message) ? 10000 : POLL_MS;
+      : (message.includes('HTTP 5') || message.includes('timeout') || message.includes('fetch failed')) ? 10000 : POLL_MS;
     if (message !== lastPollError) {
       console.error(JSON.stringify({
         level: 'error', event: 'poll_failed', message, retryInMs: delay,
