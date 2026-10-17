@@ -429,8 +429,9 @@ async function poll() {
   for (const bucket of Object.values(windows)) {
     if (Number(bucket.start) + WINDOW_MS > now) continue;
     const totalLiqs = Number(bucket.total || 0);
+    const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     if (bucket.alerted !== true) {
-      if (totalLiqs > 0) {
+      if (totalLiqs > 0 && liqSeconds >= 18) {
         await send(alertText(bucket));
         alerts++;
         console.log(JSON.stringify({
@@ -440,11 +441,20 @@ async function poll() {
           liqs: totalLiqs,
           long: Number(bucket.long || 0),
           short: Number(bucket.short || 0),
-          liqSeconds: Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0,
+          liqSeconds,
           liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
             ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
           uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
           eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+        }));
+      } else {
+        console.log(JSON.stringify({
+          level: 'info', event: 'liqs_5m_alert_suppressed_threshold',
+          instrument: bucket.instrument,
+          periodStart: new Date(bucket.start).toISOString(),
+          liqs: totalLiqs,
+          liqSeconds,
+          requiredLiqSeconds: 18,
         }));
       }
       bucket.alerted = true;
