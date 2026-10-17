@@ -170,7 +170,7 @@ function eventTimestamp(event) {
   return Number.isFinite(ts) && ts > 0 ? ts : null;
 }
 
-function alertText(bucket, direction) {
+function alertText(bucket) {
   const instrument = String(bucket.instrument || '').toUpperCase();
   if (instrument !== 'BTC' && instrument !== 'ETH') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
@@ -178,7 +178,7 @@ function alertText(bucket, direction) {
   const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   return [
-    `<b>${esc(instrument)} 5m ${direction === 'up' ? '⬆️' : '⬇️'}</b>`,
+    `<b>${esc(instrument)} 5m</b>`,
     `LIQS: ${Number(bucket.total || 0)}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
@@ -441,103 +441,46 @@ async function poll() {
   let alerts = 0;
   for (const bucket of Object.values(windows)) {
     if (Number(bucket.start) + WINDOW_MS > now) continue;
+    if (bucket.alerted === true) continue;
+
     const totalLiqs = Number(bucket.total || 0);
+    const longLiqs = Number(bucket.long || 0);
+    const shortLiqs = Number(bucket.short || 0);
+    const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
-    if (bucket.alerted !== true) {
-      const longLiqs = Number(bucket.long || 0);
-      const shortLiqs = Number(bucket.short || 0);
-      const unknownLiqs = Number(bucket.unknownSide || 0);
-      const currentSpanSeconds = liqSpanSeconds(bucket);
+    const currentSpanSeconds = liqSpanSeconds(bucket);
 
-      // An entirely empty window is ignored and must not become a comparison baseline.
-      if (totalLiqs === 0 && longLiqs === 0 && shortLiqs === 0 && unknownLiqs === 0 && liqSeconds === 0 && currentSpanSeconds === 0) {
-        bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liq_span_5m_alert_suppressed_all_zero',
-          instrument: bucket.instrument,
-          periodStart: new Date(bucket.start).toISOString(),
-          reason: 'all values are zero; window excluded from LIQ SPAN comparisons',
-        }));
-        saveState();
-        continue;
-      }
-
-      // Find the most recent earlier non-empty window, skipping all-zero windows.
-      let previousBucket = null;
-      for (let previousStart = Number(bucket.start) - WINDOW_MS; previousStart >= Number(bucket.start) - 60 * 60 * 1000; previousStart -= WINDOW_MS) {
-        const candidate = windows[`${previousStart}:${bucket.instrument}`];
-        if (candidate && Number(candidate.total || 0) > 0) {
-          previousBucket = candidate;
-          break;
-        }
-      }
-      if (!previousBucket) {
-        console.log(JSON.stringify({
-          level: 'info', event: 'liq_span_5m_alert_suppressed_missing_previous_period',
-          instrument: bucket.instrument,
-          periodStart: new Date(bucket.start).toISOString(),
-          liqSpanSeconds: currentSpanSeconds,
-          requiredCondition: 'previous 5-minute window must be available',
-        }));
-      } else {
-        const previousSpanSeconds = liqSpanSeconds(previousBucket);
-        const isIncrease = currentSpanSeconds > previousSpanSeconds;
-        const isDecrease = currentSpanSeconds < previousSpanSeconds;
-        if (isIncrease) {
-          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'down' : 'down'));
-          alerts++;
-          console.log(JSON.stringify({
-            level: 'info', event: 'liq_span_5m_alert_sent',
-            instrument: bucket.instrument,
-            periodStart: new Date(bucket.start).toISOString(),
-            liqs: totalLiqs,
-            liqSpanSeconds: currentSpanSeconds,
-            previousLiqSpanSeconds: previousSpanSeconds,
-            direction: 'down',
-            long: longLiqs,
-            short: shortLiqs,
-            unknown: unknownLiqs,
-            liqSeconds,
-            liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
-              ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
-            uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
-            eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-          }));
-        } else if (isDecrease) {
-          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'up' : 'up'));
-          alerts++;
-          console.log(JSON.stringify({
-            level: 'info', event: 'liqs_5m_alert_sent',
-            instrument: bucket.instrument,
-            periodStart: new Date(bucket.start).toISOString(),
-            liqs: totalLiqs,
-            liqSpanSeconds: currentSpanSeconds,
-            previousLiqSpanSeconds: previousSpanSeconds,
-            direction: 'up',
-            long: longLiqs,
-            short: shortLiqs,
-            unknown: unknownLiqs,
-            liqSeconds,
-            liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
-              ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
-            uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
-            eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-          }));
-        } else {
-          console.log(JSON.stringify({
-            level: 'info', event: 'liq_span_5m_alert_suppressed_equal_span',
-            instrument: bucket.instrument,
-            periodStart: new Date(bucket.start).toISOString(),
-            liqs: totalLiqs,
-            liqSpanSeconds: currentSpanSeconds,
-            previousLiqSpanSeconds: previousSpanSeconds,
-            requiredCondition: 'current LIQ SPAN must differ from previous 5-minute window',
-          }));
-        }
-      }
+    // All-zero windows are ignored. Non-empty windows send a data-only summary,
+    // without comparison to previous periods and without directional arrows.
+    if (totalLiqs === 0 && longLiqs === 0 && shortLiqs === 0 && unknownLiqs === 0 && liqSeconds === 0 && currentSpanSeconds === 0) {
       bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_all_zero',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        reason: 'all values are zero',
+      }));
       saveState();
+      continue;
     }
+
+    await send(alertText(bucket));
+    alerts++;
+    console.log(JSON.stringify({
+      level: 'info', event: 'liquidation_5m_alert_sent',
+      instrument: bucket.instrument,
+      periodStart: new Date(bucket.start).toISOString(),
+      liqs: totalLiqs,
+      long: longLiqs,
+      short: shortLiqs,
+      unknown: unknownLiqs,
+      liqSeconds,
+      liqSpanSeconds: currentSpanSeconds,
+      uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+      eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+    }));
+    bucket.alerted = true;
+    saveState();
   }
 
   for (const [key, bucket] of Object.entries(windows)) {
