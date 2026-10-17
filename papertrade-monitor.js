@@ -184,7 +184,7 @@ function alertText(bucket) {
   const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   const totalLiqs = Number(bucket.total || 0);
-  const arrow = totalLiqs > 52 ? '⬆️' : totalLiqs < 52 ? '⬇️' : '';
+  const arrow = totalLiqs > 52 ? '⬆️' : '⬇️';
   return [
     `<b>${esc(instrument)} 5m${arrow ? ' ' + arrow : ''}</b>`,
     `LIQS: ${totalLiqs}`,
