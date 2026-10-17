@@ -14,8 +14,8 @@ Independent, read-only Telegram monitor for liquidation events emitted by the co
 
 - Aggregates events into fixed 5-minute windows, separated by instrument.
 - Sends one alert for a completed 5-minute window only when it has at least 18 distinct seconds containing counted liquidations; there is no LIQS count threshold and no special `UNKNOWN` alert rule.
-- Alert lines are `LIQS`, `LONG`, `SHORT`, `LIQ SECONDS`, and `LIQ SPAN`.
-- `LIQ SECONDS` is the number of distinct block-timestamp seconds containing counted liquidations. `LIQ SPAN` is the elapsed time in seconds between the first and last counted liquidation in that window; it does not imply uninterrupted activity.
+- Alert lines are `LIQS`, `LONG`, `SHORT`, `SECONDS`, and `LIQ SPAN`.
+- `SECONDS` is the number of distinct block-timestamp seconds containing counted liquidations. `LIQ SPAN` is the elapsed time in seconds between the first and last counted liquidation in that window; it does not imply uninterrupted activity.
 - Events that cannot be classified as LONG or SHORT still count toward `LIQS`, but are not shown as a separate `UNKNOWN` line.
 - Deduplicates by transaction hash and log index, with additional per-window position deduplication.
 - On first startup, establishes a block baseline instead of replaying historical events from earlier periods.
