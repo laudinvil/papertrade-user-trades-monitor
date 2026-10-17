@@ -13,9 +13,10 @@ Independent, read-only Telegram monitor for liquidation events emitted by the co
 ## Alert behavior
 
 - Aggregates events into fixed 5-minute windows, separated by instrument.
-- Sends an alert for a completed 5-minute window when at least one event has no LONG/SHORT classification (`markPrice == bustPrice`); the former `LIQS >= 70` threshold is removed.
-- Alert lines are `LIQS`, `LONG`, `SHORT`, and `UNKNOWN`, where `UNKNOWN` counts liquidation events that cannot be classified as LONG or SHORT.
-- Events without a recognized direction still contribute to total LIQS and now trigger an alert when `UNKNOWN >= 1`.
+- Sends one alert for each completed 5-minute window with at least one counted liquidation; there is no LIQS threshold and no special `UNKNOWN` alert rule.
+- Alert lines are `LIQS`, `LONG`, `SHORT`, `LIQ SECONDS`, and `LIQ SPAN`.
+- `LIQ SECONDS` is the number of distinct block-timestamp seconds containing counted liquidations. `LIQ SPAN` is the elapsed time in seconds between the first and last counted liquidation in that window; it does not imply uninterrupted activity.
+- Events that cannot be classified as LONG or SHORT still count toward `LIQS`, but are not shown as a separate `UNKNOWN` line.
 - Deduplicates by transaction hash and log index, with additional per-window position deduplication.
 - On first startup, establishes a block baseline instead of replaying historical events from earlier periods.
 - Persists monitor state at `STATE_PATH` (default: `/data/state.json`).
