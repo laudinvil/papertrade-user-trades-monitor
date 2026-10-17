@@ -431,7 +431,10 @@ async function poll() {
     const totalLiqs = Number(bucket.total || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     if (bucket.alerted !== true) {
-      if (totalLiqs > 0 && liqSeconds >= 18) {
+      const longLiqs = Number(bucket.long || 0);
+      const shortLiqs = Number(bucket.short || 0);
+      const unknownLiqs = Number(bucket.unknownSide || 0);
+      if (longLiqs > 0 && shortLiqs === 0 && unknownLiqs === 0) {
         await send(alertText(bucket));
         alerts++;
         console.log(JSON.stringify({
@@ -439,8 +442,9 @@ async function poll() {
           instrument: bucket.instrument,
           periodStart: new Date(bucket.start).toISOString(),
           liqs: totalLiqs,
-          long: Number(bucket.long || 0),
-          short: Number(bucket.short || 0),
+          long: longLiqs,
+          short: shortLiqs,
+          unknown: unknownLiqs,
           liqSeconds,
           liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
             ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
@@ -449,12 +453,15 @@ async function poll() {
         }));
       } else {
         console.log(JSON.stringify({
-          level: 'info', event: 'liqs_5m_alert_suppressed_threshold',
+          level: 'info', event: 'liqs_5m_alert_suppressed_side_condition',
           instrument: bucket.instrument,
           periodStart: new Date(bucket.start).toISOString(),
           liqs: totalLiqs,
+          long: longLiqs,
+          short: shortLiqs,
+          unknown: unknownLiqs,
           liqSeconds,
-          requiredLiqSeconds: 18,
+          requiredCondition: 'LONG > 0, SHORT = 0, UNKNOWN = 0',
         }));
       }
       bucket.alerted = true;
