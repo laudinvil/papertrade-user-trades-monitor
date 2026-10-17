@@ -166,7 +166,7 @@ function eventTimestamp(event) {
   return Number.isFinite(ts) && ts > 0 ? ts : null;
 }
 
-function alertText(bucket) {
+function alertText(bucket, direction) {
   const instrument = String(bucket.instrument || '').toUpperCase();
   if (instrument !== 'BTC' && instrument !== 'ETH') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
@@ -174,7 +174,7 @@ function alertText(bucket) {
   const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   return [
-    `<b>${esc(instrument)} 5m</b>`,
+    `<b>${esc(instrument)} 5m ${direction === 'up' ? '⬆️' : '⬇️'}</b>`,
     `LIQS: ${Number(bucket.total || 0)}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
@@ -443,35 +443,66 @@ async function poll() {
       const longLiqs = Number(bucket.long || 0);
       const shortLiqs = Number(bucket.short || 0);
       const unknownLiqs = Number(bucket.unknownSide || 0);
-      if (totalLiqs === 0) {
-        await send(alertText(bucket));
-        alerts++;
+      const previousKey = `${Number(bucket.start) - WINDOW_MS}:${bucket.instrument}`;
+      const previousBucket = windows[previousKey];
+      if (!previousBucket) {
         console.log(JSON.stringify({
-          level: 'info', event: 'liqs_5m_alert_sent',
+          level: 'info', event: 'liqs_5m_alert_suppressed_missing_previous_period',
           instrument: bucket.instrument,
           periodStart: new Date(bucket.start).toISOString(),
           liqs: totalLiqs,
-          long: longLiqs,
-          short: shortLiqs,
-          unknown: unknownLiqs,
-          liqSeconds,
-          liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
-            ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
-          uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
-          eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+          requiredCondition: 'previous 5-minute window must be available',
         }));
       } else {
-        console.log(JSON.stringify({
-          level: 'info', event: 'liqs_5m_alert_suppressed_nonzero_liquidations',
-          instrument: bucket.instrument,
-          periodStart: new Date(bucket.start).toISOString(),
-          liqs: totalLiqs,
-          long: longLiqs,
-          short: shortLiqs,
-          unknown: unknownLiqs,
-          liqSeconds,
-          requiredCondition: 'LIQS = 0',
-        }));
+        const previousLiqs = Number(previousBucket.total || 0);
+        if (totalLiqs > previousLiqs) {
+          await send(alertText(bucket, 'up'));
+          alerts++;
+          console.log(JSON.stringify({
+            level: 'info', event: 'liqs_5m_alert_sent',
+            instrument: bucket.instrument,
+            periodStart: new Date(bucket.start).toISOString(),
+            liqs: totalLiqs,
+            previousLiqs,
+            direction: 'up',
+            long: longLiqs,
+            short: shortLiqs,
+            unknown: unknownLiqs,
+            liqSeconds,
+            liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
+              ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
+            uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+            eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+          }));
+        } else if (totalLiqs < previousLiqs) {
+          await send(alertText(bucket, 'down'));
+          alerts++;
+          console.log(JSON.stringify({
+            level: 'info', event: 'liqs_5m_alert_sent',
+            instrument: bucket.instrument,
+            periodStart: new Date(bucket.start).toISOString(),
+            liqs: totalLiqs,
+            previousLiqs,
+            direction: 'down',
+            long: longLiqs,
+            short: shortLiqs,
+            unknown: unknownLiqs,
+            liqSeconds,
+            liqSpanSeconds: bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
+              ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0,
+            uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+            eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+          }));
+        } else {
+          console.log(JSON.stringify({
+            level: 'info', event: 'liqs_5m_alert_suppressed_equal_liquidations',
+            instrument: bucket.instrument,
+            periodStart: new Date(bucket.start).toISOString(),
+            liqs: totalLiqs,
+            previousLiqs,
+            requiredCondition: 'current LIQS must differ from previous 5-minute window',
+          }));
+        }
       }
       bucket.alerted = true;
       saveState();
