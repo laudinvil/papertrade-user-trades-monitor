@@ -151,14 +151,18 @@ function decodeLiquidation(log) {
   }
   if (markPrice <= 0n || bustPrice <= 0n) return null;
 
-  // BTC raw mark prices are currently >= 500,000; ETH is below this boundary.
-  // This monitor intentionally ignores non-BTC liquidation events.
-  const instrument = markPrice >= 500000n ? 'BTC' : null;
-  if (!instrument) return { instrument: null, side: null, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
+  // Current protocol price ranges: BTC is >= 500,000; ETH is below this boundary.
+  const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
   // The event's markPrice is the observed mark and bustPrice is the liquidation threshold.
   // A LONG is liquidated when markPrice falls below bustPrice; a SHORT when it rises above.
   const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
   return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
+}
+
+function liqSpanSeconds(bucket) {
+  return bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
+    ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000))
+    : 0;
 }
 
 function eventTimestamp(event) {
@@ -168,7 +172,7 @@ function eventTimestamp(event) {
 
 function alertText(bucket, direction) {
   const instrument = String(bucket.instrument || '').toUpperCase();
-  if (instrument !== 'BTC') {
+  if (instrument !== 'BTC' && instrument !== 'ETH') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
   const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
@@ -353,7 +357,6 @@ async function poll() {
   let decoded = 0;
   let skippedOldBaseline = 0;
   let invalidLogs = 0;
-  let skippedNonBtc = 0;
 
   for (const log of logs) {
     const key = eventKey(log);
@@ -386,12 +389,6 @@ async function poll() {
         positionId: chainEvent.positionId, blockNumber,
         dataLength: String(log.data || '').length,
       }));
-      continue;
-    }
-
-    if (classified.instrument !== 'BTC') {
-      skippedNonBtc++;
-      seen.add(key);
       continue;
     }
 
@@ -433,12 +430,9 @@ async function poll() {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
-  // Keep an empty BTC bucket so completed zero-liquidation windows can be compared.
+  // Keep empty buckets for both instruments so zero-span windows can be compared.
   getWindow(currentStart, 'BTC');
-  // Drop legacy ETH buckets; this monitor now tracks BTC only.
-  for (const [key, bucket] of Object.entries(windows)) {
-    if (bucket.instrument !== 'BTC') delete windows[key];
-  }
+  getWindow(currentStart, 'ETH');
 
   const processedLogKeys = new Set(logs.map(eventKey));
   liveLogs = liveLogs.filter(log => !processedLogKeys.has(eventKey(log)));
@@ -446,7 +440,6 @@ async function poll() {
 
   let alerts = 0;
   for (const bucket of Object.values(windows)) {
-    if (bucket.instrument !== 'BTC') continue;
     if (Number(bucket.start) + WINDOW_MS > now) continue;
     const totalLiqs = Number(bucket.total || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
@@ -454,28 +447,32 @@ async function poll() {
       const longLiqs = Number(bucket.long || 0);
       const shortLiqs = Number(bucket.short || 0);
       const unknownLiqs = Number(bucket.unknownSide || 0);
+      const currentSpanSeconds = liqSpanSeconds(bucket);
       const previousKey = `${Number(bucket.start) - WINDOW_MS}:${bucket.instrument}`;
       const previousBucket = windows[previousKey];
       if (!previousBucket) {
         console.log(JSON.stringify({
-          level: 'info', event: 'liqs_5m_alert_suppressed_missing_previous_period',
+          level: 'info', event: 'liq_span_5m_alert_suppressed_missing_previous_period',
           instrument: bucket.instrument,
           periodStart: new Date(bucket.start).toISOString(),
-          liqs: totalLiqs,
+          liqSpanSeconds: currentSpanSeconds,
           requiredCondition: 'previous 5-minute window must be available',
         }));
       } else {
-        const previousLiqs = Number(previousBucket.total || 0);
-        if (totalLiqs > previousLiqs) {
-          await send(alertText(bucket, 'up'));
+        const previousSpanSeconds = liqSpanSeconds(previousBucket);
+        const isIncrease = currentSpanSeconds > previousSpanSeconds;
+        const isDecrease = currentSpanSeconds < previousSpanSeconds;
+        if (isIncrease) {
+          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'down' : 'up'));
           alerts++;
           console.log(JSON.stringify({
-            level: 'info', event: 'liqs_5m_alert_sent',
+            level: 'info', event: 'liq_span_5m_alert_sent',
             instrument: bucket.instrument,
             periodStart: new Date(bucket.start).toISOString(),
             liqs: totalLiqs,
-            previousLiqs,
-            direction: 'up',
+            liqSpanSeconds: currentSpanSeconds,
+            previousLiqSpanSeconds: previousSpanSeconds,
+            direction: bucket.instrument === 'ETH' ? 'down' : 'up',
             long: longLiqs,
             short: shortLiqs,
             unknown: unknownLiqs,
@@ -485,16 +482,17 @@ async function poll() {
             uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
             eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
           }));
-        } else if (totalLiqs < previousLiqs) {
-          await send(alertText(bucket, 'down'));
+        } else if (isDecrease) {
+          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'up' : 'down'));
           alerts++;
           console.log(JSON.stringify({
             level: 'info', event: 'liqs_5m_alert_sent',
             instrument: bucket.instrument,
             periodStart: new Date(bucket.start).toISOString(),
             liqs: totalLiqs,
-            previousLiqs,
-            direction: 'down',
+            liqSpanSeconds: currentSpanSeconds,
+            previousLiqSpanSeconds: previousSpanSeconds,
+            direction: bucket.instrument === 'ETH' ? 'up' : 'down',
             long: longLiqs,
             short: shortLiqs,
             unknown: unknownLiqs,
@@ -506,12 +504,13 @@ async function poll() {
           }));
         } else {
           console.log(JSON.stringify({
-            level: 'info', event: 'liqs_5m_alert_suppressed_equal_liquidations',
+            level: 'info', event: 'liq_span_5m_alert_suppressed_equal_span',
             instrument: bucket.instrument,
             periodStart: new Date(bucket.start).toISOString(),
             liqs: totalLiqs,
-            previousLiqs,
-            requiredCondition: 'current LIQS must differ from previous 5-minute window',
+            liqSpanSeconds: currentSpanSeconds,
+            previousLiqSpanSeconds: previousSpanSeconds,
+            requiredCondition: 'current LIQ SPAN must differ from previous 5-minute window',
           }));
         }
       }
@@ -535,7 +534,6 @@ async function poll() {
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
       invalidOnchainLogs: invalidLogs,
-      skippedNonBtcLiquidations: skippedNonBtc,
       skippedOldBaseline,
       alertsSent: alerts,
       websocket: liveSocketStatus,
