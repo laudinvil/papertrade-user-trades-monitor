@@ -30,8 +30,9 @@ function loadState() {
       seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      // Per-asset gate: only the first non-zero period after an all-zero period may alert.
-      alertGate: s.alertGate && typeof s.alertGate === 'object'
+      // Gate semantics version 2: a one-liquidation period arms the next non-zero alert.
+      // Reset only the gates when upgrading from the previous all-zero trigger rule.
+      alertGate: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
         ? { BTC: s.alertGate.BTC === true, ETH: s.alertGate.ETH === true }
         : { BTC: false, ETH: false },
       eventFilterVersion: 3,
@@ -70,6 +71,7 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
+    alertGateVersion: 2,
     alertGate,
     pending,
   };
@@ -438,7 +440,8 @@ async function poll() {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
-  // Keep empty buckets for both instruments so all-zero periods can re-arm alerts.
+  // Keep empty buckets for both instruments so completed periods with zero
+  // liquidations can be evaluated without changing the alert gate.
   getWindow(currentStart, 'BTC');
   getWindow(currentStart, 'ETH');
 
@@ -465,19 +468,31 @@ async function poll() {
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
-    const isAllZero = totalLiqs === 0 && longLiqs === 0 && shortLiqs === 0
-      && unknownLiqs === 0 && liqSeconds === 0 && currentSpanSeconds === 0;
-
-    // A zero period arms this instrument. Send only the first non-zero period
-    // after that zero period; suppress further non-zero periods until another zero.
-    if (isAllZero) {
+    // Exactly one liquidation arms the next alert for this instrument.
+    // The one-liquidation period itself does not alert. After arming, skip
+    // zero-liquidation periods and send the first subsequent non-zero period.
+    if (totalLiqs === 1) {
       alertGate[instrument] = true;
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_all_zero',
+        level: 'info', event: 'liquidation_5m_alert_armed_by_single_liq_period',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
         nextNonZeroAlertArmed: true,
+      }));
+      saveState();
+      continue;
+    }
+
+    if (totalLiqs === 0) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_zero',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        nextNonZeroAlertArmed: alertGate[instrument] === true,
       }));
       saveState();
       continue;
@@ -486,11 +501,11 @@ async function poll() {
     if (alertGate[instrument] !== true) {
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_until_zero_then_nonzero',
+        level: 'info', event: 'liquidation_5m_alert_suppressed_until_single_liq_then_nonzero',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        reason: 'no all-zero period has armed the next alert',
+        reason: 'no one-liquidation period has armed the next alert',
       }));
       saveState();
       continue;
@@ -511,7 +526,7 @@ async function poll() {
       liqSpanSeconds: currentSpanSeconds,
       uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-      nextAlertRequiresAllZeroPeriod: true,
+      nextAlertRequiresSingleLiqPeriod: true,
     }));
     bucket.alerted = true;
     saveState();
