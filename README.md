@@ -13,7 +13,8 @@ Independent, read-only Telegram monitor for liquidation events emitted by the co
 ## Alert behavior
 
 - Tracks both BTC and ETH liquidation events in separate fixed 5-minute windows.
-- Alert gating is independent for BTC and ETH. A completed window where all values are zero is ignored and arms the next alert for that instrument. Only the first subsequent non-zero 5-minute window sends an alert; further non-zero windows are ignored until another all-zero window occurs. Every liquidation alert heading shows a downward arrow; there is no LIQS threshold for the arrow.
+- Alert gating is independent for BTC and ETH. A completed 5-minute window with exactly one counted liquidation arms the next alert for that instrument but does not itself send an alert. The monitor then sends an alert for the first subsequent non-zero 5-minute window; zero-liquidation windows do not arm or clear the gate. After an alert, another single-liquidation window is required to arm the next alert. Every liquidation alert heading shows a downward arrow; there is no LIQS threshold for the arrow.
+- On upgrade from the previous all-zero trigger rule, only the alert-gate flags reset; event deduplication, block cursor, and accumulated window data are preserved.
 - Alert lines are `LIQS`, `LONG`, `SHORT`, `SECONDS`, and `LIQ SPAN`.
 - `SECONDS` is the number of distinct block-timestamp seconds containing counted liquidations. `LIQ SPAN` is the elapsed time in seconds between the first and last counted liquidation in that window; it does not imply uninterrupted activity.
 - Events that cannot be classified as LONG or SHORT still count toward `LIQS` and contribute to `LIQ SPAN`. The comparison uses elapsed span regardless of side; the alert still shows `LONG`, `SHORT`, `SECONDS`, and `LIQ SPAN`, without a separate `UNKNOWN` line.
