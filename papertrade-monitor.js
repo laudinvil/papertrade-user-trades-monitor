@@ -463,7 +463,7 @@ async function poll() {
         const isIncrease = currentSpanSeconds > previousSpanSeconds;
         const isDecrease = currentSpanSeconds < previousSpanSeconds;
         if (isIncrease) {
-          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'down' : 'up'));
+          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'down' : 'down'));
           alerts++;
           console.log(JSON.stringify({
             level: 'info', event: 'liq_span_5m_alert_sent',
@@ -472,7 +472,7 @@ async function poll() {
             liqs: totalLiqs,
             liqSpanSeconds: currentSpanSeconds,
             previousLiqSpanSeconds: previousSpanSeconds,
-            direction: bucket.instrument === 'ETH' ? 'down' : 'up',
+            direction: 'down',
             long: longLiqs,
             short: shortLiqs,
             unknown: unknownLiqs,
@@ -483,7 +483,7 @@ async function poll() {
             eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
           }));
         } else if (isDecrease) {
-          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'up' : 'down'));
+          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'up' : 'up'));
           alerts++;
           console.log(JSON.stringify({
             level: 'info', event: 'liqs_5m_alert_sent',
@@ -492,7 +492,7 @@ async function poll() {
             liqs: totalLiqs,
             liqSpanSeconds: currentSpanSeconds,
             previousLiqSpanSeconds: previousSpanSeconds,
-            direction: bucket.instrument === 'ETH' ? 'up' : 'down',
+            direction: 'up',
             long: longLiqs,
             short: shortLiqs,
             unknown: unknownLiqs,
