@@ -183,9 +183,11 @@ function alertText(bucket) {
   }
   const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
+  const totalLiqs = Number(bucket.total || 0);
+  const arrow = totalLiqs > 52 ? '⬆️' : totalLiqs < 52 ? '⬇️' : '';
   return [
-    `<b>${esc(instrument)} 5m</b>`,
-    `LIQS: ${Number(bucket.total || 0)}`,
+    `<b>${esc(instrument)} 5m${arrow ? ' ' + arrow : ''}</b>`,
+    `LIQS: ${totalLiqs}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
@@ -476,23 +478,6 @@ async function poll() {
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         nextNonZeroAlertArmed: true,
-      }));
-      saveState();
-      continue;
-    }
-
-    if (totalLiqs > 52) {
-      // A non-zero period above the LIQS cap is ignored and consumes the
-      // one-alert opportunity after a zero period; wait for another zero period.
-      if (alertGate[instrument] === true) alertGate[instrument] = false;
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_liqs_above_limit',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        maxLiqs: 52,
-        nextAlertRequiresAllZeroPeriod: true,
       }));
       saveState();
       continue;
