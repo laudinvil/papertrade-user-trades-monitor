@@ -481,6 +481,23 @@ async function poll() {
       continue;
     }
 
+    if (totalLiqs > 52) {
+      // A non-zero period above the LIQS cap is ignored and consumes the
+      // one-alert opportunity after a zero period; wait for another zero period.
+      if (alertGate[instrument] === true) alertGate[instrument] = false;
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_liqs_above_limit',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        maxLiqs: 52,
+        nextAlertRequiresAllZeroPeriod: true,
+      }));
+      saveState();
+      continue;
+    }
+
     if (alertGate[instrument] !== true) {
       bucket.alerted = true;
       console.log(JSON.stringify({
