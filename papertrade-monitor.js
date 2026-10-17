@@ -456,7 +456,7 @@ async function poll() {
       } else {
         const previousLiqs = Number(previousBucket.total || 0);
         if (totalLiqs > previousLiqs) {
-          await send(alertText(bucket, 'up'));
+          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'down' : 'up'));
           alerts++;
           console.log(JSON.stringify({
             level: 'info', event: 'liqs_5m_alert_sent',
@@ -475,7 +475,7 @@ async function poll() {
             eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
           }));
         } else if (totalLiqs < previousLiqs) {
-          await send(alertText(bucket, 'down'));
+          await send(alertText(bucket, bucket.instrument === 'ETH' ? 'up' : 'down'));
           alerts++;
           console.log(JSON.stringify({
             level: 'info', event: 'liqs_5m_alert_sent',
