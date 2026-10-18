@@ -519,9 +519,26 @@ async function poll() {
       continue;
     }
 
+    // Ignore alert candidates with zero measured span: all counted events share
+    // the same block-timestamp second. Suppression preserves an armed alert gate.
+    if (currentSpanSeconds === 0) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info',
+        event: 'liquidation_5m_alert_suppressed_zero_liq_span',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        liqSpanSeconds: currentSpanSeconds,
+        nextNonZeroAlertArmed: alertGate[instrument] === true,
+      }));
+      saveState();
+      continue;
+    }
+
     if (instrument === 'ETH' && currentSpanSeconds > 190) {
       bucket.alerted = true;
-      console.log(JSON.stringify({ level: 'info', event: 'liquidation_5m_alert_suppressed_eth_liq_span_over_270', instrument, periodStart: new Date(bucket.start).toISOString(), liqs: totalLiqs, liqSpanSeconds: currentSpanSeconds, nextNonZeroAlertArmed: alertGate[instrument] === true }));
+      console.log(JSON.stringify({ level: 'info', event: 'liquidation_5m_alert_suppressed_eth_liq_span_over_190', instrument, periodStart: new Date(bucket.start).toISOString(), liqs: totalLiqs, liqSpanSeconds: currentSpanSeconds, nextNonZeroAlertArmed: alertGate[instrument] === true }));
       saveState();
       continue;
     }
