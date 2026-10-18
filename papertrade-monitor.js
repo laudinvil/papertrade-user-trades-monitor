@@ -519,6 +519,13 @@ async function poll() {
       continue;
     }
 
+    if (instrument === 'ETH' && currentSpanSeconds > 270) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({ level: 'info', event: 'liquidation_5m_alert_suppressed_eth_liq_span_over_270', instrument, periodStart: new Date(bucket.start).toISOString(), liqs: totalLiqs, liqSpanSeconds: currentSpanSeconds, nextNonZeroAlertArmed: alertGate[instrument] === true }));
+      saveState();
+      continue;
+    }
+
     if (alertGate[instrument] !== true) {
       bucket.alerted = true;
       console.log(JSON.stringify({
