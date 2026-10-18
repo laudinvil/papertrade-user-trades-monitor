@@ -501,7 +501,7 @@ async function poll() {
     // ETH alerts are allowed only with 3–18 liquidations inclusive.
     // BTC alerts require at least 3 liquidations. Suppressed windows do not
     // consume an already armed alert gate.
-    const belowInstrumentMinimum = instrument === 'BTC' ? totalLiqs < 3 : totalLiqs < 3;
+    const belowInstrumentMinimum = totalLiqs < 3;
     const aboveEthMaximum = instrument === 'ETH' && totalLiqs > 18;
     if (belowInstrumentMinimum || aboveEthMaximum) {
       bucket.alerted = true;
