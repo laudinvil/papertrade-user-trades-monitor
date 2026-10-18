@@ -498,13 +498,13 @@ async function poll() {
       continue;
     }
 
-    // ETH alerts are allowed only when the completed 5-minute window has 18
-    // or fewer liquidations. A higher-count ETH window is suppressed without
-    // consuming the armed alert gate.
-    if (instrument === 'ETH' && totalLiqs > 18) {
+    // ETH alerts are allowed only when the completed 5-minute window has
+    // between 3 and 18 liquidations inclusive. Suppressed ETH windows do not
+    // consume the armed alert gate.
+    if (instrument === 'ETH' && (totalLiqs < 3 || totalLiqs > 18)) {
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_eth_liqs_over_18',
+        level: 'info', event: 'liquidation_5m_alert_suppressed_eth_liqs_outside_3_18',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
