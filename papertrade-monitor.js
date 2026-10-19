@@ -211,7 +211,7 @@ function alertText(bucket) {
   const longLiqs = Number(bucket.long || 0);
   const shortLiqs = Number(bucket.short || 0);
   return [
-    `<b>${esc(instrument)} 5m${instrument === 'ETH' ? (totalLiqs >= 4 ? ' ⬆️' : ' ⬇️') : ''}</b>`,
+    `<b>${esc(instrument)} 5m${instrument === 'BTC' ? ' ⬆️' : (totalLiqs >= 4 ? ' ⬆️' : ' ⬇️')}</b>`,
     `LIQS: ${totalLiqs}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
