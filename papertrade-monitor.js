@@ -497,9 +497,9 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // Alert thresholds are instrument-specific: BTC requires cascade >= 11,
+    // Alert thresholds are instrument-specific: BTC requires cascade >= 13,
     // while ETH keeps the existing threshold of cascade >= 9.
-    const minimumCascade = instrument === 'BTC' ? 11 : 9;
+    const minimumCascade = instrument === 'BTC' ? 13 : 9;
     if (cascades.maxCascade < minimumCascade) {
       bucket.alerted = true;
       console.log(JSON.stringify({
