@@ -495,87 +495,20 @@ async function poll() {
       continue;
     }
 
-    // ETH alerts are allowed only with 4–18 liquidations inclusive.
-    // BTC alerts require at least 4 liquidations. Suppressed windows do not
-    // consume an already armed alert gate.
-    const belowInstrumentMinimum = totalLiqs < 4;
-    const aboveEthMaximum = instrument === 'ETH' && totalLiqs > 18;
-    if (belowInstrumentMinimum || aboveEthMaximum) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info',
-        event: instrument === 'BTC'
-          ? 'liquidation_5m_alert_suppressed_btc_liqs_below_4'
-          : 'liquidation_5m_alert_suppressed_eth_liqs_outside_4_18',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        nextNonZeroAlertArmed: alertGate[instrument] === true,
-      }));
-      saveState();
-      continue;
-    }
-
-    // Ignore alert candidates with zero measured span: all counted events share
-    // the same block-timestamp second. Suppression preserves an armed alert gate.
-    if (currentSpanSeconds === 0) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info',
-        event: 'liquidation_5m_alert_suppressed_zero_liq_span',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        liqSpanSeconds: currentSpanSeconds,
-        nextNonZeroAlertArmed: alertGate[instrument] === true,
-      }));
-      saveState();
-      continue;
-    }
-
-    if (instrument === 'BTC' && currentSpanSeconds > 190) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({ level: 'info', event: 'liquidation_5m_alert_suppressed_btc_liq_span_over_190', instrument, periodStart: new Date(bucket.start).toISOString(), liqs: totalLiqs, liqSpanSeconds: currentSpanSeconds, nextNonZeroAlertArmed: alertGate[instrument] === true }));
-      saveState();
-      continue;
-    }
-
-    if (instrument === 'BTC' && currentSpanSeconds > 138) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info',
-        event: 'liquidation_5m_alert_suppressed_btc_liq_span_over_138',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        liqSpanSeconds: currentSpanSeconds,
-        nextNonZeroAlertArmed: alertGate[instrument] === true,
-      }));
-      saveState();
-      continue;
-    }
-
-    if (instrument === 'ETH' && currentSpanSeconds > 190) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({ level: 'info', event: 'liquidation_5m_alert_suppressed_eth_liq_span_over_190', instrument, periodStart: new Date(bucket.start).toISOString(), liqs: totalLiqs, liqSpanSeconds: currentSpanSeconds, nextNonZeroAlertArmed: alertGate[instrument] === true }));
-      saveState();
-      continue;
-    }
-
     if (alertGate[instrument] !== true) {
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_until_one_or_two_liq_then_eligible',
+        level: 'info', event: 'liquidation_5m_alert_suppressed_until_trigger_period',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        reason: 'no one- or two-liquidation period has armed the next alert',
+        reason: 'no 1–3 liquidation trigger period has armed the next alert',
       }));
       saveState();
       continue;
     }
 
-    bucket.triggerLiqs = alertTrigger[instrument] === 2 ? 2 : 1;
+    bucket.triggerLiqs = [1, 2, 3].includes(alertTrigger[instrument]) ? alertTrigger[instrument] : 1;
     await send(alertText(bucket));
     alerts++;
     alertGate[instrument] = false;
@@ -593,7 +526,7 @@ async function poll() {
       liqSpanSeconds: currentSpanSeconds,
       uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-      nextAlertRequiresOneOrTwoLiqPeriod: true,
+      nextAlertRequiresOneToThreeLiqPeriod: true,
     }));
     bucket.alerted = true;
     saveState();
