@@ -496,15 +496,15 @@ async function poll() {
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
 
-    // ETH alerts require at least 3 liquidations in the 5-minute window; BTC is unchanged.
-    if (instrument === 'ETH' && totalLiqs < 3) {
+    // ETH alerts require at least 4 liquidations in the 5-minute window; BTC is unchanged.
+    if (instrument === 'ETH' && totalLiqs < 4) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_below_eth_minimum',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        minimumLiqs: 3,
+        minimumLiqs: 4,
       }));
       saveState();
       continue;
