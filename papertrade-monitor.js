@@ -497,8 +497,8 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // New alert rule: send BTC and ETH summaries only when SERIES >= 11.
-    const minimumSeries = 11;
+    // Send BTC and ETH summaries only when SERIES >= 12.
+    const minimumSeries = 12;
     if (cascades.cascadeCount < minimumSeries) {
       bucket.alerted = true;
       console.log(JSON.stringify({
