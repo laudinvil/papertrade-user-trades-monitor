@@ -497,9 +497,10 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // New alert rule: send BTC and ETH summaries only when the largest
-    // cascade in the completed 5-minute window contains at least 4 events.
-    if (cascades.maxCascade < 9) {
+    // Alert thresholds are instrument-specific: BTC requires cascade >= 11,
+    // while ETH keeps the existing threshold of cascade >= 9.
+    const minimumCascade = instrument === 'BTC' ? 11 : 9;
+    if (cascades.maxCascade < minimumCascade) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_cascade_below_minimum',
@@ -510,7 +511,7 @@ async function poll() {
         short: shortLiqs,
         cascadeCount: cascades.cascadeCount,
         maxCascade: cascades.maxCascade,
-        minimumCascade: 4,
+        minimumCascade,
         maxGapMs: CASCADE_GAP_MS,
       }));
       saveState();
