@@ -499,7 +499,7 @@ async function poll() {
 
     // New alert rule: send BTC and ETH summaries only when the largest
     // cascade in the completed 5-minute window contains at least 4 events.
-    if (cascades.maxCascade < 5) {
+    if (cascades.maxCascade < 8) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_cascade_below_minimum',
