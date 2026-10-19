@@ -210,15 +210,14 @@ function alertText(bucket) {
   const totalLiqs = Number(bucket.total || 0);
   const longLiqs = Number(bucket.long || 0);
   const shortLiqs = Number(bucket.short || 0);
-  const arrow = longLiqs > shortLiqs ? '⬆️' : shortLiqs > longLiqs ? '⬇️' : '';
   return [
-    `<b>${esc(instrument)} 5m${arrow ? ' ' + arrow : ''}</b>`,
+    `<b>${esc(instrument)} 5m</b>`,
     `LIQS: ${totalLiqs}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
     `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
-    `CASCADE: ${cascadeStats(bucket).maxCascade} events`,
+    `CASCADE: ${cascadeStats(bucket).maxCascade}`,
     `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
