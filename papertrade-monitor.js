@@ -30,15 +30,15 @@ function loadState() {
       seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      // Gate semantics version 2: a 1-, 2-, or 3-liquidation period arms the next eligible alert.
+      // Gate semantics version 2: a 1-, 2-, 3-, or 4-liquidation period arms the next eligible alert.
       alertGate: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
         ? { BTC: s.alertGate.BTC === true, ETH: s.alertGate.ETH === true }
         : { BTC: false, ETH: false },
       // Persist the low-count period that armed the next alert.
       alertTrigger: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
         ? {
-            BTC: s.alertTrigger && (s.alertTrigger.BTC === 1 || s.alertTrigger.BTC === 2 || s.alertTrigger.BTC === 3) ? s.alertTrigger.BTC : (s.alertGate.BTC === true ? 1 : null),
-            ETH: s.alertTrigger && (s.alertTrigger.ETH === 1 || s.alertTrigger.ETH === 2 || s.alertTrigger.ETH === 3) ? s.alertTrigger.ETH : (s.alertGate.ETH === true ? 1 : null),
+            BTC: s.alertTrigger && (s.alertTrigger.BTC === 1 || s.alertTrigger.BTC === 2 || s.alertTrigger.BTC === 3 || s.alertTrigger.BTC === 4) ? s.alertTrigger.BTC : (s.alertGate.BTC === true ? 1 : null),
+            ETH: s.alertTrigger && (s.alertTrigger.ETH === 1 || s.alertTrigger.ETH === 2 || s.alertTrigger.ETH === 3 || s.alertTrigger.ETH === 4) ? s.alertTrigger.ETH : (s.alertGate.ETH === true ? 1 : null),
           }
         : { BTC: null, ETH: null },
       eventFilterVersion: 3,
@@ -477,14 +477,14 @@ async function poll() {
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
-    // Periods with 1, 2, or 3 liquidations arm the next alert for this instrument.
+    // Periods with 1, 2, 3, or 4 liquidations arm the next alert for this instrument.
     // Trigger periods never send alerts themselves; zero-liquidation periods do not arm it.
-    if (totalLiqs >= 1 && totalLiqs <= 3) {
+    if (totalLiqs >= 1 && totalLiqs <= 4) {
       alertGate[instrument] = true;
       alertTrigger[instrument] = totalLiqs;
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_armed_by_one_two_or_three_liq_period',
+        level: 'info', event: 'liquidation_5m_alert_armed_by_one_two_three_or_four_liq_period',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
@@ -502,13 +502,13 @@ async function poll() {
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        reason: 'no 1–3 liquidation trigger period has armed the next alert',
+        reason: 'no 1–4 liquidation trigger period has armed the next alert',
       }));
       saveState();
       continue;
     }
 
-    bucket.triggerLiqs = [1, 2, 3].includes(alertTrigger[instrument]) ? alertTrigger[instrument] : 1;
+    bucket.triggerLiqs = [1, 2, 3, 4].includes(alertTrigger[instrument]) ? alertTrigger[instrument] : 1;
     await send(alertText(bucket));
     alerts++;
     alertGate[instrument] = false;
@@ -526,7 +526,7 @@ async function poll() {
       liqSpanSeconds: currentSpanSeconds,
       uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-      nextAlertRequiresOneToThreeLiqPeriod: true,
+      nextAlertRequiresOneToFourLiqPeriod: true,
     }));
     bucket.alerted = true;
     saveState();
