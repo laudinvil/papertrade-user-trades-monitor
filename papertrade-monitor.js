@@ -194,17 +194,13 @@ function alertText(bucket) {
   const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   const totalLiqs = Number(bucket.total || 0);
-  const longLiqs = Number(bucket.long || 0);
-  const shortLiqs = Number(bucket.short || 0);
-  const arrow = longLiqs > shortLiqs ? '⬆️' : shortLiqs > longLiqs ? '⬇️' : '';
   return [
-    `<b>${esc(instrument)} 5m${arrow ? ' ' + arrow : ''}</b>`,
+    `<b>${esc(instrument)} 5m</b>`,
     `LIQS: ${totalLiqs}`,
-    `TRIGGER: ${Number(bucket.triggerLiqs ?? 1)}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
-    `LIQ SPAN: ${bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000)) : 0}s`,
+    `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
 }
@@ -479,62 +475,29 @@ async function poll() {
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
-    // Periods with 1, 2, 3, or 4 liquidations arm the next alert for this instrument.
-    // Trigger periods never send alerts themselves; zero-liquidation periods do not arm it.
-    if (totalLiqs >= 1 && totalLiqs <= 4) {
-      alertGate[instrument] = true;
-      alertTrigger[instrument] = totalLiqs;
+
+    // The only alert condition is LIQ SPAN >= 240 seconds.
+    if (currentSpanSeconds < 240) {
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_armed_by_one_two_three_or_four_liq_period',
+        level: 'info', event: 'liquidation_5m_alert_suppressed_below_span_threshold',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        trigger: totalLiqs,
-        nextEligibleAlertArmed: true,
+        liqSpanSeconds: currentSpanSeconds,
+        requiredLiqSpanSeconds: 240,
       }));
       saveState();
       continue;
     }
 
-    // Never send an alert for an empty period; keep the armed trigger for the next non-zero period.
-    if (totalLiqs === 0) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_zero_period_skipped',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        trigger: alertTrigger[instrument],
-        nextEligibleAlertArmed: alertGate[instrument] === true,
-      }));
-      saveState();
-      continue;
-    }
-
-    if (alertGate[instrument] !== true) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_until_trigger_period',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        reason: 'no 1–4 liquidation trigger period has armed the next alert',
-      }));
-      saveState();
-      continue;
-    }
-
-    bucket.triggerLiqs = [1, 2, 3, 4].includes(alertTrigger[instrument]) ? alertTrigger[instrument] : 1;
     await send(alertText(bucket));
     alerts++;
-    alertGate[instrument] = false;
-    alertTrigger[instrument] = null;
     console.log(JSON.stringify({
       level: 'info', event: 'liquidation_5m_alert_sent',
       instrument,
       periodStart: new Date(bucket.start).toISOString(),
       liqs: totalLiqs,
-      trigger: bucket.triggerLiqs,
       long: longLiqs,
       short: shortLiqs,
       unknown: unknownLiqs,
@@ -542,7 +505,7 @@ async function poll() {
       liqSpanSeconds: currentSpanSeconds,
       uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-      nextAlertRequiresOneToFourLiqPeriod: true,
+      requiredLiqSpanSeconds: 240,
     }));
     bucket.alerted = true;
     saveState();
