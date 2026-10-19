@@ -30,23 +30,12 @@ function loadState() {
       seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      // Gate semantics version 2: a 1-, 2-, 3-, or 4-liquidation period arms the next eligible alert.
-      alertGate: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
-        ? { BTC: s.alertGate.BTC === true, ETH: s.alertGate.ETH === true }
-        : { BTC: false, ETH: false },
-      // Persist the low-count period that armed the next alert.
-      alertTrigger: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
-        ? {
-            BTC: s.alertTrigger && (s.alertTrigger.BTC === 1 || s.alertTrigger.BTC === 2 || s.alertTrigger.BTC === 3 || s.alertTrigger.BTC === 4) ? s.alertTrigger.BTC : (s.alertGate.BTC === true ? 1 : null),
-            ETH: s.alertTrigger && (s.alertTrigger.ETH === 1 || s.alertTrigger.ETH === 2 || s.alertTrigger.ETH === 3 || s.alertTrigger.ETH === 4) ? s.alertTrigger.ETH : (s.alertGate.ETH === true ? 1 : null),
-          }
-        : { BTC: null, ETH: null },
       eventFilterVersion: 3,
       pending: [],
     };
   } catch (err) {
     if (err?.code === 'ENOENT') {
-      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, alertGate: { BTC: false, ETH: false }, pending: [] };
+      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, pending: [] };
     }
     // Never silently reset deduplication or unsent alerts when persisted state is unreadable.
     throw new Error(`Cannot load persisted monitor state at ${STATE_PATH}: ${err instanceof Error ? err.message : String(err)}`);
@@ -56,8 +45,6 @@ function loadState() {
 let state = loadState();
 const seen = new Set(state.seenKeys);
 const windows = state.windows;
-const alertGate = state.alertGate || { BTC: false, ETH: false };
-const alertTrigger = state.alertTrigger || { BTC: null, ETH: null };
 let pending = [];
 let liveLogs = [];
 let liveSocketConnected = false;
@@ -78,9 +65,6 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
-    alertGateVersion: 2,
-    alertGate,
-    alertTrigger,
     pending,
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
