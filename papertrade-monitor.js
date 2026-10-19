@@ -218,7 +218,6 @@ function alertText(bucket) {
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
     `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
     `CASCADE: ${cascadeStats(bucket).maxCascade}`,
-    `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
 }
