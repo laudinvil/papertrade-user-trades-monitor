@@ -497,6 +497,20 @@ async function poll() {
       continue;
     }
 
+    // Never send an alert for an empty period; keep the armed trigger for the next non-zero period.
+    if (totalLiqs === 0) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_zero_period_skipped',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        trigger: alertTrigger[instrument],
+        nextEligibleAlertArmed: alertGate[instrument] === true,
+      }));
+      saveState();
+      continue;
+    }
+
     if (alertGate[instrument] !== true) {
       bucket.alerted = true;
       console.log(JSON.stringify({
