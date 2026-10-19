@@ -483,17 +483,7 @@ async function poll() {
 
   for (const bucket of completedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
-    if (instrument === 'BTC') {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_instrument_disabled',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-      }));
-      saveState();
-      continue;
-    }
-    if (instrument !== 'ETH') {
+    if (instrument !== 'BTC' && instrument !== 'ETH') {
       bucket.alerted = true;
       saveState();
       continue;
@@ -505,14 +495,14 @@ async function poll() {
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
-
-    // Send one summary at the end of the 5-minute window only when
-    // exactly one cascade series exists (consecutive events no more than 1s apart).
     const cascades = cascadeStats(bucket);
-    if (cascades.cascadeCount !== 1) {
+
+    // New alert rule: send BTC and ETH summaries only when the largest
+    // cascade in the completed 5-minute window contains at least 4 events.
+    if (cascades.maxCascade < 4) {
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_series_not_one',
+        level: 'info', event: 'liquidation_5m_alert_suppressed_cascade_below_minimum',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
@@ -520,7 +510,7 @@ async function poll() {
         short: shortLiqs,
         cascadeCount: cascades.cascadeCount,
         maxCascade: cascades.maxCascade,
-        expectedSeries: 1,
+        minimumCascade: 4,
         maxGapMs: CASCADE_GAP_MS,
       }));
       saveState();
