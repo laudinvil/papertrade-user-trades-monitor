@@ -217,7 +217,8 @@ function alertText(bucket) {
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
     `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
-    `CASCADE: ${cascadeStats(bucket).maxCascade}`,
+    `CASCADE: ${cascadeStats(bucket).maxCascade}`, 
+    `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
 }
@@ -495,13 +496,13 @@ async function poll() {
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
 
-    // Send one summary at the end of the 5-minute window only if it contains
-    // at least one cascade: consecutive liquidation events no more than 1s apart.
+    // Send one summary at the end of the 5-minute window only when
+    // exactly one cascade series exists (consecutive events no more than 1s apart).
     const cascades = cascadeStats(bucket);
-    if (cascades.maxCascade < 2) {
+    if (cascades.cascadeCount !== 1) {
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_no_cascade',
+        level: 'info', event: 'liquidation_5m_alert_suppressed_series_not_one',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
@@ -509,6 +510,7 @@ async function poll() {
         short: shortLiqs,
         cascadeCount: cascades.cascadeCount,
         maxCascade: cascades.maxCascade,
+        expectedSeries: 1,
         maxGapMs: CASCADE_GAP_MS,
       }));
       saveState();
