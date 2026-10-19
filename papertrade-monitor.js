@@ -35,6 +35,13 @@ function loadState() {
       alertGate: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
         ? { BTC: s.alertGate.BTC === true, ETH: s.alertGate.ETH === true }
         : { BTC: false, ETH: false },
+      // Older persisted gates could only have been armed by a one-liquidation period.
+      alertTrigger: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
+        ? {
+            BTC: s.alertTrigger && (s.alertTrigger.BTC === 0 || s.alertTrigger.BTC === 1) ? s.alertTrigger.BTC : (s.alertGate.BTC === true ? 1 : null),
+            ETH: s.alertTrigger && (s.alertTrigger.ETH === 0 || s.alertTrigger.ETH === 1) ? s.alertTrigger.ETH : (s.alertGate.ETH === true ? 1 : null),
+          }
+        : { BTC: null, ETH: null },
       eventFilterVersion: 3,
       pending: [],
     };
@@ -51,6 +58,7 @@ let state = loadState();
 const seen = new Set(state.seenKeys);
 const windows = state.windows;
 const alertGate = state.alertGate || { BTC: false, ETH: false };
+const alertTrigger = state.alertTrigger || { BTC: null, ETH: null };
 let pending = [];
 let liveLogs = [];
 let liveSocketConnected = false;
@@ -73,6 +81,7 @@ function saveState() {
     lastScannedBlock: state.lastScannedBlock,
     alertGateVersion: 2,
     alertGate,
+    alertTrigger,
     pending,
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -190,6 +199,7 @@ function alertText(bucket) {
   return [
     `<b>${esc(instrument)} 5m${arrow ? ' ' + arrow : ''}</b>`,
     `LIQS: ${totalLiqs}`,
+    `TRIGGER: ${Number(bucket.triggerLiqs ?? 1)}`,
     `LONG: ${Number(bucket.long || 0)}`,
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
@@ -473,12 +483,14 @@ async function poll() {
     // non-zero period can alert. A zero-count period also arms the gate.
     if (totalLiqs <= 1) {
       alertGate[instrument] = true;
+      alertTrigger[instrument] = totalLiqs;
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_armed_by_zero_or_single_liq_period',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
+        trigger: totalLiqs,
         nextNonZeroAlertArmed: true,
       }));
       saveState();
@@ -565,14 +577,17 @@ async function poll() {
       continue;
     }
 
+    bucket.triggerLiqs = alertTrigger[instrument] === 0 ? 0 : 1;
     await send(alertText(bucket));
     alerts++;
     alertGate[instrument] = false;
+    alertTrigger[instrument] = null;
     console.log(JSON.stringify({
       level: 'info', event: 'liquidation_5m_alert_sent',
       instrument,
       periodStart: new Date(bucket.start).toISOString(),
       liqs: totalLiqs,
+      trigger: bucket.triggerLiqs,
       long: longLiqs,
       short: shortLiqs,
       unknown: unknownLiqs,
