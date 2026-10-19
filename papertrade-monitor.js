@@ -483,7 +483,17 @@ async function poll() {
 
   for (const bucket of completedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
-    if (instrument !== 'BTC' && instrument !== 'ETH') {
+    if (instrument === 'BTC') {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_instrument_disabled',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+      }));
+      saveState();
+      continue;
+    }
+    if (instrument !== 'ETH') {
       bucket.alerted = true;
       saveState();
       continue;
