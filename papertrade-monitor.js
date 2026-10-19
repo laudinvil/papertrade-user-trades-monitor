@@ -11,6 +11,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const SEEN_LIMIT = 10000;
 const WINDOW_MS = 5 * 60 * 1000;
+const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
 const INITIAL_LOOKBACK_BLOCKS = 400;
@@ -165,6 +166,35 @@ function liqSpanSeconds(bucket) {
     : 0;
 }
 
+function cascadeStats(bucket) {
+  const timestamps = (Array.isArray(bucket.liquidationTimestamps) ? bucket.liquidationTimestamps : [])
+    .map(Number)
+    .filter(ts => Number.isFinite(ts) && ts > 0)
+    .sort((a, b) => a - b);
+  let run = 0;
+  let cascadeCount = 0;
+  let cascadeEvents = 0;
+  let maxCascade = 0;
+  for (let i = 0; i < timestamps.length; i++) {
+    if (i === 0 || timestamps[i] - timestamps[i - 1] <= CASCADE_GAP_MS) {
+      run++;
+    } else {
+      if (run >= 2) {
+        cascadeCount++;
+        cascadeEvents += run;
+        maxCascade = Math.max(maxCascade, run);
+      }
+      run = 1;
+    }
+  }
+  if (run >= 2) {
+    cascadeCount++;
+    cascadeEvents += run;
+    maxCascade = Math.max(maxCascade, run);
+  }
+  return { cascadeCount, cascadeEvents, maxCascade };
+}
+
 function eventTimestamp(event) {
   const ts = Number(event?.ts);
   return Number.isFinite(ts) && ts > 0 ? ts : null;
@@ -188,6 +218,8 @@ function alertText(bucket) {
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
     `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
+    `CASCADE: ${cascadeStats(bucket).maxCascade} events`,
+    `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
 }
@@ -412,6 +444,8 @@ async function poll() {
     if (positionKey) bucket.positionKeys.push(positionKey);
     if (positionId) bucket.positionIds.push(positionId);
     if (!Array.isArray(bucket.liquidationSeconds)) bucket.liquidationSeconds = [];
+    if (!Array.isArray(bucket.liquidationTimestamps)) bucket.liquidationTimestamps = [];
+    bucket.liquidationTimestamps.push(chainEvent.ts);
     const eventSecond = Math.floor(chainEvent.ts / 1000);
     if (!bucket.liquidationSeconds.includes(eventSecond)) bucket.liquidationSeconds.push(eventSecond);
     bucket.firstLiquidationAt = bucket.firstLiquidationAt == null
@@ -463,32 +497,21 @@ async function poll() {
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
 
-    // Suppress balanced periods: send only when LONG or SHORT is dominant.
-    if (longLiqs === shortLiqs) {
+    // Send one summary at the end of the 5-minute window only if it contains
+    // at least one cascade: consecutive liquidation events no more than 1s apart.
+    const cascades = cascadeStats(bucket);
+    if (cascades.maxCascade < 2) {
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_balanced_sides',
+        level: 'info', event: 'liquidation_5m_alert_suppressed_no_cascade',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
         long: longLiqs,
         short: shortLiqs,
-        liqSpanSeconds: currentSpanSeconds,
-      }));
-      saveState();
-      continue;
-    }
-
-    // The only remaining timing condition is LIQ SPAN >= 240 seconds.
-    if (currentSpanSeconds < 240) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_below_span_threshold',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        liqSpanSeconds: currentSpanSeconds,
-        requiredLiqSpanSeconds: 240,
+        cascadeCount: cascades.cascadeCount,
+        maxCascade: cascades.maxCascade,
+        maxGapMs: CASCADE_GAP_MS,
       }));
       saveState();
       continue;
@@ -506,9 +529,12 @@ async function poll() {
       unknown: unknownLiqs,
       liqSeconds,
       liqSpanSeconds: currentSpanSeconds,
+      cascadeCount: cascades.cascadeCount,
+      cascadeEvents: cascades.cascadeEvents,
+      maxCascade: cascades.maxCascade,
+      maxGapMs: CASCADE_GAP_MS,
       uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-      requiredLiqSpanSeconds: 240,
     }));
     bucket.alerted = true;
     saveState();
