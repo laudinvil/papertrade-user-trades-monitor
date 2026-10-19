@@ -30,16 +30,15 @@ function loadState() {
       seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      // Gate semantics version 2: a zero- or one-liquidation period arms the next non-zero alert.
-      // Reset only the gates when upgrading from the previous all-zero trigger rule.
+      // Gate semantics version 2: a 1-, 2-, or 3-liquidation period arms the next eligible alert.
       alertGate: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
         ? { BTC: s.alertGate.BTC === true, ETH: s.alertGate.ETH === true }
         : { BTC: false, ETH: false },
       // Persist the low-count period that armed the next alert.
       alertTrigger: s.alertGateVersion === 2 && s.alertGate && typeof s.alertGate === 'object'
         ? {
-            BTC: s.alertTrigger && (s.alertTrigger.BTC === 1 || s.alertTrigger.BTC === 2) ? s.alertTrigger.BTC : (s.alertGate.BTC === true ? 1 : null),
-            ETH: s.alertTrigger && (s.alertTrigger.ETH === 1 || s.alertTrigger.ETH === 2) ? s.alertTrigger.ETH : (s.alertGate.ETH === true ? 1 : null),
+            BTC: s.alertTrigger && (s.alertTrigger.BTC === 1 || s.alertTrigger.BTC === 2 || s.alertTrigger.BTC === 3) ? s.alertTrigger.BTC : (s.alertGate.BTC === true ? 1 : null),
+            ETH: s.alertTrigger && (s.alertTrigger.ETH === 1 || s.alertTrigger.ETH === 2 || s.alertTrigger.ETH === 3) ? s.alertTrigger.ETH : (s.alertGate.ETH === true ? 1 : null),
           }
         : { BTC: null, ETH: null },
       eventFilterVersion: 3,
@@ -478,14 +477,14 @@ async function poll() {
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
-    // Periods with one or two liquidations arm the next alert for this instrument.
-    // Neither trigger period sends an alert itself; zero-liquidation periods do not arm it.
-    if (totalLiqs === 1 || totalLiqs === 2) {
+    // Periods with 1, 2, or 3 liquidations arm the next alert for this instrument.
+    // Trigger periods never send alerts themselves; zero-liquidation periods do not arm it.
+    if (totalLiqs >= 1 && totalLiqs <= 3) {
       alertGate[instrument] = true;
       alertTrigger[instrument] = totalLiqs;
       bucket.alerted = true;
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_armed_by_one_or_two_liq_period',
+        level: 'info', event: 'liquidation_5m_alert_armed_by_one_two_or_three_liq_period',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
@@ -496,18 +495,18 @@ async function poll() {
       continue;
     }
 
-    // ETH alerts are allowed only with 3–18 liquidations inclusive.
-    // BTC alerts require at least 3 liquidations. Suppressed windows do not
+    // ETH alerts are allowed only with 4–18 liquidations inclusive.
+    // BTC alerts require at least 4 liquidations. Suppressed windows do not
     // consume an already armed alert gate.
-    const belowInstrumentMinimum = totalLiqs < 3;
+    const belowInstrumentMinimum = totalLiqs < 4;
     const aboveEthMaximum = instrument === 'ETH' && totalLiqs > 18;
     if (belowInstrumentMinimum || aboveEthMaximum) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info',
         event: instrument === 'BTC'
-          ? 'liquidation_5m_alert_suppressed_btc_liqs_below_3'
-          : 'liquidation_5m_alert_suppressed_eth_liqs_outside_3_18',
+          ? 'liquidation_5m_alert_suppressed_btc_liqs_below_4'
+          : 'liquidation_5m_alert_suppressed_eth_liqs_outside_4_18',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
