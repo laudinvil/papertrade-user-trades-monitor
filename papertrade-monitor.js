@@ -463,7 +463,23 @@ async function poll() {
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
 
-    // The only alert condition is LIQ SPAN >= 240 seconds.
+    // Suppress balanced periods: send only when LONG or SHORT is dominant.
+    if (longLiqs === shortLiqs) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_balanced_sides',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        long: longLiqs,
+        short: shortLiqs,
+        liqSpanSeconds: currentSpanSeconds,
+      }));
+      saveState();
+      continue;
+    }
+
+    // The only remaining timing condition is LIQ SPAN >= 240 seconds.
     if (currentSpanSeconds < 240) {
       bucket.alerted = true;
       console.log(JSON.stringify({
