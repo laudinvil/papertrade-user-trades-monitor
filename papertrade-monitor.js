@@ -217,7 +217,7 @@ function alertText(bucket) {
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
     `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
-    `CASCADE: ${cascadeStats(bucket).maxCascade}`, 
+    `CASCADE: ${cascadeStats(bucket).maxCascade}`,
     `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     polymarketUrl,
   ].join(String.fromCharCode(10));
