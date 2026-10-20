@@ -31,12 +31,14 @@ function loadState() {
       seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
+      consecutiveAlertPeriods: s.eventFilterVersion === 3 && Number.isSafeInteger(s.consecutiveAlertPeriods) ? s.consecutiveAlertPeriods : 0,
+      lastAlertPeriodStart: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastAlertPeriodStart) ? s.lastAlertPeriodStart : null,
       eventFilterVersion: 3,
       pending: [],
     };
   } catch (err) {
     if (err?.code === 'ENOENT') {
-      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, pending: [] };
+      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, consecutiveAlertPeriods: 0, lastAlertPeriodStart: null, pending: [] };
     }
     // Never silently reset deduplication or unsent alerts when persisted state is unreadable.
     throw new Error(`Cannot load persisted monitor state at ${STATE_PATH}: ${err instanceof Error ? err.message : String(err)}`);
@@ -66,6 +68,8 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
+    consecutiveAlertPeriods: state.consecutiveAlertPeriods || 0,
+    lastAlertPeriodStart: state.lastAlertPeriodStart ?? null,
     pending,
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -600,8 +604,32 @@ async function poll() {
         continue;
       }
 
+      // Allow at most two consecutive 5-minute periods with ETH alerts.
+      // The third consecutive qualifying period is suppressed, then the streak resets.
+      if (Number(state.consecutiveAlertPeriods || 0) >= 2
+        && Number(state.lastAlertPeriodStart) === Number(bucket.start) - WINDOW_MS) {
+        bucket.alerted = true;
+        state.consecutiveAlertPeriods = 0;
+        state.lastAlertPeriodStart = null;
+        console.log(JSON.stringify({
+          level: 'info', event: 'liquidation_5m_alert_suppressed',
+          instrument, periodStart: new Date(bucket.start).toISOString(),
+          reason: 'third_consecutive_alert_period',
+          consecutiveAlertPeriods: 2, liqs: totalLiqs,
+          long: longLiqs, short: shortLiqs,
+        }));
+        saveState();
+        continue;
+      }
+
       await send(alertText(bucket));
       alerts++;
+      if (Number(state.lastAlertPeriodStart) === Number(bucket.start) - WINDOW_MS) {
+        state.consecutiveAlertPeriods = Number(state.consecutiveAlertPeriods || 0) + 1;
+      } else {
+        state.consecutiveAlertPeriods = 1;
+      }
+      state.lastAlertPeriodStart = Number(bucket.start);
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_sent',
         instrument,
