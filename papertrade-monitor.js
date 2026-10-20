@@ -478,45 +478,102 @@ async function poll() {
 
   let alerts = 0;
   const completedWindows = Object.values(windows)
-    .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
-    .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
-
+    .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true);
+  const periods = new Map();
   for (const bucket of completedWindows) {
-    const instrument = String(bucket.instrument || '').toUpperCase();
-    if (instrument !== 'BTC' && instrument !== 'ETH') {
-      bucket.alerted = true;
+    const startKey = Number(bucket.start);
+    if (!periods.has(startKey)) periods.set(startKey, []);
+    periods.get(startKey).push(bucket);
+  }
+
+  for (const [periodStartMs, periodBuckets] of periods) {
+    const byInstrument = new Map(periodBuckets.map(bucket => [String(bucket.instrument || '').toUpperCase(), bucket]));
+    const btc = byInstrument.get('BTC');
+    const eth = byInstrument.get('ETH');
+    const btcTotal = Number(btc?.total || 0);
+    const ethTotal = Number(eth?.total || 0);
+
+    // Ignore the entire 5m period if either instrument had no liquidations.
+    if (btcTotal === 0 || ethTotal === 0) {
+      for (const bucket of periodBuckets) bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_period_suppressed',
+        periodStart: new Date(periodStartMs).toISOString(),
+        reason: 'btc_or_eth_zero_liquidations',
+        btcLiqs: btcTotal, ethLiqs: ethTotal,
+      }));
       saveState();
       continue;
     }
 
-    const totalLiqs = Number(bucket.total || 0);
-    const longLiqs = Number(bucket.long || 0);
-    const shortLiqs = Number(bucket.short || 0);
-    const unknownLiqs = Number(bucket.unknownSide || 0);
-    const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
-    const currentSpanSeconds = liqSpanSeconds(bucket);
-    const cascades = cascadeStats(bucket);
+    // Never send BTC and ETH alerts together for the same 5m period.
+    const candidates = [btc, eth].filter(bucket =>
+      bucket && Number(bucket.long || 0) > 0 && Number(bucket.short || 0) > 0
+    );
+    if (candidates.length > 1) {
+      for (const bucket of periodBuckets) bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_period_suppressed',
+        periodStart: new Date(periodStartMs).toISOString(),
+        reason: 'both_btc_and_eth_qualify',
+        btcLiqs: btcTotal, ethLiqs: ethTotal,
+      }));
+      saveState();
+      continue;
+    }
 
-    await send(alertText(bucket));
-    alerts++;
-    console.log(JSON.stringify({
-      level: 'info', event: 'liquidation_5m_alert_sent',
-      instrument,
-      periodStart: new Date(bucket.start).toISOString(),
-      liqs: totalLiqs,
-      long: longLiqs,
-      short: shortLiqs,
-      unknown: unknownLiqs,
-      liqSeconds,
-      liqSpanSeconds: currentSpanSeconds,
-      cascadeCount: cascades.cascadeCount,
-      cascadeEvents: cascades.cascadeEvents,
-      maxCascade: cascades.maxCascade,
-      maxGapMs: CASCADE_GAP_MS,
-      uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
-      eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-    }));
-    bucket.alerted = true;
+    for (const bucket of periodBuckets) {
+      const instrument = String(bucket.instrument || '').toUpperCase();
+      if (instrument !== 'BTC' && instrument !== 'ETH') {
+        bucket.alerted = true;
+        continue;
+      }
+
+      const totalLiqs = Number(bucket.total || 0);
+      const longLiqs = Number(bucket.long || 0);
+      const shortLiqs = Number(bucket.short || 0);
+      if (longLiqs === 0 || shortLiqs === 0) {
+        bucket.alerted = true;
+        console.log(JSON.stringify({
+          level: 'info', event: 'liquidation_5m_alert_suppressed',
+          instrument, periodStart: new Date(bucket.start).toISOString(),
+          reason: 'long_or_short_zero', liqs: totalLiqs,
+          long: longLiqs, short: shortLiqs,
+        }));
+        continue;
+      }
+      if (!candidates.includes(bucket)) {
+        bucket.alerted = true;
+        continue;
+      }
+
+      const unknownLiqs = Number(bucket.unknownSide || 0);
+      const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
+      const currentSpanSeconds = liqSpanSeconds(bucket);
+      const cascades = cascadeStats(bucket);
+
+      await send(alertText(bucket));
+      alerts++;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_sent',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        long: longLiqs,
+        short: shortLiqs,
+        unknown: unknownLiqs,
+        liqSeconds,
+        liqSpanSeconds: currentSpanSeconds,
+        cascadeCount: cascades.cascadeCount,
+        cascadeEvents: cascades.cascadeEvents,
+        maxCascade: cascades.maxCascade,
+        maxGapMs: CASCADE_GAP_MS,
+        uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+        eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+      }));
+      bucket.alerted = true;
+      saveState();
+    }
     saveState();
   }
 
