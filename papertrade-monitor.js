@@ -506,6 +506,24 @@ async function poll() {
       continue;
     }
 
+    // BTC remains part of period-level filtering even though BTC alerts are disabled.
+    // If BTC has no cascade and no series, suppress the ETH alert for this same 5m period.
+    if (btc) {
+      const btcCascades = cascadeStats(btc);
+      if (btcCascades.maxCascade === 0 && btcCascades.cascadeCount === 0) {
+        for (const bucket of periodBuckets) bucket.alerted = true;
+        console.log(JSON.stringify({
+          level: 'info', event: 'liquidation_5m_period_suppressed',
+          periodStart: new Date(periodStartMs).toISOString(),
+          reason: 'btc_cascade_and_series_zero',
+          btcLiqs: btcTotal, ethLiqs: ethTotal,
+          btcCascade: btcCascades.maxCascade, btcSeries: btcCascades.cascadeCount,
+        }));
+        saveState();
+        continue;
+      }
+    }
+
     // Preserve the existing rule: suppress both alerts if BTC and ETH qualify together.
     const candidates = [btc, eth].filter(bucket =>
       bucket && Number(bucket.long || 0) > 0 && Number(bucket.short || 0) > 0
