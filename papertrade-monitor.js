@@ -481,8 +481,39 @@ async function poll() {
     .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
     .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
 
+  // If both BTC and ETH qualify in the same completed 5-minute period,
+  // suppress both alerts instead of sending either one.
+  const minimumSeriesForPeriodGate = 12;
+  const qualifyingByPeriod = new Map();
+  for (const candidate of completedWindows) {
+    const candidateInstrument = String(candidate.instrument || '').toUpperCase();
+    if ((candidateInstrument !== 'BTC' && candidateInstrument !== 'ETH') ||
+        cascadeStats(candidate).cascadeCount < minimumSeriesForPeriodGate) continue;
+    const periodKey = String(candidate.start);
+    if (!qualifyingByPeriod.has(periodKey)) qualifyingByPeriod.set(periodKey, new Set());
+    qualifyingByPeriod.get(periodKey).add(candidateInstrument);
+  }
+  const suppressBothPeriods = new Set(
+    [...qualifyingByPeriod.entries()]
+      .filter(([, instruments]) => instruments.has('BTC') && instruments.has('ETH'))
+      .map(([periodKey]) => periodKey)
+  );
+
   for (const bucket of completedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
+    if (suppressBothPeriods.has(String(bucket.start))) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info',
+        event: 'liquidation_5m_both_instruments_suppressed',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        reason: 'BTC and ETH both met the SERIES threshold in the same 5-minute period',
+        minimumSeries: minimumSeriesForPeriodGate,
+      }));
+      saveState();
+      continue;
+    }
     if (instrument !== 'BTC' && instrument !== 'ETH') {
       bucket.alerted = true;
       saveState();
