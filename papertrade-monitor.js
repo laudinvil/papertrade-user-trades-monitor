@@ -506,21 +506,11 @@ async function poll() {
       continue;
     }
 
-    // Never send BTC and ETH alerts together for the same 5m period.
+    // Keep evaluating both instruments, but BTC notifications are disabled.
+    // BTC qualifying must not block an otherwise valid ETH notification.
     const candidates = [btc, eth].filter(bucket =>
       bucket && Number(bucket.long || 0) > 0 && Number(bucket.short || 0) > 0
     );
-    if (candidates.length > 1) {
-      for (const bucket of periodBuckets) bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_period_suppressed',
-        periodStart: new Date(periodStartMs).toISOString(),
-        reason: 'both_btc_and_eth_qualify',
-        btcLiqs: btcTotal, ethLiqs: ethTotal,
-      }));
-      saveState();
-      continue;
-    }
 
     for (const bucket of periodBuckets) {
       const instrument = String(bucket.instrument || '').toUpperCase();
@@ -544,6 +534,16 @@ async function poll() {
       }
       if (!candidates.includes(bucket)) {
         bucket.alerted = true;
+        continue;
+      }
+      if (instrument === 'BTC') {
+        bucket.alerted = true;
+        console.log(JSON.stringify({
+          level: 'info', event: 'liquidation_5m_alert_suppressed',
+          instrument, periodStart: new Date(bucket.start).toISOString(),
+          reason: 'btc_alerts_disabled_by_request',
+          liqs: totalLiqs, long: longLiqs, short: shortLiqs,
+        }));
         continue;
       }
 
