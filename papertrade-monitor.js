@@ -551,27 +551,6 @@ async function poll() {
       const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
       const currentSpanSeconds = liqSpanSeconds(bucket);
       const cascades = cascadeStats(bucket);
-      if (cascades.cascadeCount === 0) {
-        bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_alert_suppressed',
-          instrument, periodStart: new Date(bucket.start).toISOString(),
-          reason: 'series_zero', liqs: totalLiqs, series: cascades.cascadeCount,
-          cascade: cascades.maxCascade, long: longLiqs, short: shortLiqs,
-        }));
-        continue;
-      }
-      if (cascades.maxCascade === 0) {
-        bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_alert_suppressed',
-          instrument, periodStart: new Date(bucket.start).toISOString(),
-          reason: 'cascade_zero', liqs: totalLiqs, series: cascades.cascadeCount,
-          cascade: cascades.maxCascade, long: longLiqs, short: shortLiqs,
-        }));
-        continue;
-      }
-
       await send(alertText(bucket));
       alerts++;
       console.log(JSON.stringify({
