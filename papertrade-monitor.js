@@ -497,6 +497,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info',
   event: 'monitor_started',
+  // DEPLOYMENT_RETRY_2026_10_21: restored immediate per-liquidation alert mode.
   mode: 'every_unique_liquidation_event_immediate',
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
