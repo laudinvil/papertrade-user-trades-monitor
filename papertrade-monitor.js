@@ -1,10 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import WebSocket from 'ws';
 
 const RPC_KEY = process.env.NODEFLARE_API_KEY || '';
 const RPC_URL = RPC_KEY ? `https://rpc.nodeflare.app/hl/v1/${RPC_KEY}` : '';
-const WS_URL = RPC_KEY ? `wss://rpc.nodeflare.app/hl/ws/v1/${RPC_KEY}` : '';
 const POLL_MS = Math.max(1000, Number(process.env.POLL_MS || 1000));
 const STATE_PATH = process.env.STATE_PATH || '/data/state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -47,15 +45,9 @@ let state = loadState();
 const seen = new Set(state.seenKeys);
 const windows = state.windows;
 let pending = [];
-let liveLogs = [];
-let liveSocketConnected = false;
-let liveSocketStatus = 'starting';
-let highestObservedBlock = null;
 const blockTimestampCache = new Map();
-const WS_CURSOR_SAFETY_BLOCKS = 10;
 const SUMMARY_INTERVAL_MS = 60_000;
 let lastSummaryAt = 0;
-let lastWsError = null;
 const RPC_MIN_INTERVAL_MS = 250;
 let lastRpcRequestAt = 0;
 
@@ -259,99 +251,6 @@ async function getLiquidationLogs(fromBlock, toBlock) {
   return logs;
 }
 
-async function runWebSocketLoop() {
-  while (true) {
-    let socket;
-    try {
-      socket = new WebSocket(WS_URL);
-      await new Promise((resolve, reject) => {
-        socket.once('open', resolve);
-        socket.once('error', reject);
-      });
-      liveSocketConnected = true;
-      liveSocketStatus = 'connected';
-      lastWsError = null;
-      console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_connected' }));
-
-      let requestId = 1;
-      const readySubscriptions = new Set();
-      const onMessage = raw => {
-        let message;
-        try { message = JSON.parse(String(raw)); } catch { return; }
-        if ((message.id === requestId || message.id === requestId + 1) && message.result) {
-          readySubscriptions.add(message.id);
-          if (readySubscriptions.size === 2) {
-            liveSocketStatus = 'subscribed';
-            console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_subscribed', subscriptions: 2 }));
-          }
-          return;
-        }
-        const result = message?.params?.result;
-        if (message.method === 'eth_subscription' && result?.number) {
-          const block = Number(BigInt(result.number));
-          if (Number.isSafeInteger(block)) {
-            highestObservedBlock = Math.max(highestObservedBlock ?? 0, block);
-            if (result.timestamp) {
-              blockTimestampCache.set(block, Number(BigInt(result.timestamp)) * 1000);
-              if (blockTimestampCache.size > 1000) blockTimestampCache.delete(blockTimestampCache.keys().next().value);
-            }
-          }
-        }
-        if (message.method === 'eth_subscription' && result?.transactionHash && result?.blockNumber
-          && String(result.topics?.[0] || '').toLowerCase() === LIQUIDATED_TOPIC) {
-          liveLogs.push(result);
-        }
-        if (message.error) {
-          console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_error', message: message.error.message || 'subscription error' }));
-        }
-      };
-      socket.on('message', onMessage);
-      socket.send(JSON.stringify({
-        jsonrpc: '2.0', id: requestId, method: 'eth_subscribe',
-        params: ['logs', { address: CONTRACT, topics: [LIQUIDATED_TOPIC] }],
-      }));
-      socket.send(JSON.stringify({
-        jsonrpc: '2.0', id: requestId + 1, method: 'eth_subscribe', params: ['newHeads'],
-      }));
-
-      // Recover only the gap since the last confirmed cursor after reconnect.
-      // On first boot, the normal baseline scan initializes the cursor.
-      await new Promise((resolve, reject) => {
-        const check = setInterval(() => {
-          if (readySubscriptions.size === 2) { clearInterval(check); resolve(); }
-          else if (socket.readyState !== WebSocket.OPEN) { clearInterval(check); reject(new Error('WebSocket closed before subscription confirmation')); }
-        }, 100);
-        setTimeout(() => { clearInterval(check); reject(new Error('WebSocket subscription timeout')); }, 10000);
-      });
-      if (state.lastScannedBlock != null) {
-        const latest = await getBlockNumber();
-        const from = Math.max(0, state.lastScannedBlock - WS_CURSOR_SAFETY_BLOCKS + 1);
-        if (from <= latest) {
-          const recovered = await getLiquidationLogs(from, latest);
-          liveLogs.push(...recovered);
-          console.log(JSON.stringify({ level: 'info', event: 'nodeflare_ws_gap_recovered', fromBlock: from, toBlock: latest, logs: recovered.length }));
-        }
-      }
-
-      await new Promise(resolve => socket.once('close', resolve));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message !== lastWsError) {
-        console.error(JSON.stringify({ level: 'warn', event: 'nodeflare_ws_disconnected', message }));
-        lastWsError = message;
-      }
-    } finally {
-      liveSocketConnected = false;
-      liveSocketStatus = 'disconnected';
-      if (socket) {
-        try { socket.terminate(); } catch {}
-      }
-    }
-    await sleep(2000);
-  }
-}
-
-
 async function getBlockTimestamp(blockNumber, cache) {
   if (!cache.has(blockNumber) && blockTimestampCache.has(blockNumber)) {
     cache.set(blockNumber, blockTimestampCache.get(blockNumber));
@@ -381,13 +280,11 @@ async function poll() {
       note: 'Counting starts with new on-chain Liquidated logs after the baseline block.',
     }));
   } else {
-    // HTTP RPC is the primary source. WebSocket is only an optional low-latency
-    // supplement and must never be required for the monitor to collect events.
+    // HTTP RPC eth_getLogs is the only event source.
     const fromBlock = Number(state.lastScannedBlock) + 1;
-    const rpcLogs = fromBlock <= latestBlock
+    logs = fromBlock <= latestBlock
       ? await getLiquidationLogs(fromBlock, latestBlock)
       : [];
-    logs = [...rpcLogs, ...liveLogs];
     // Advance the cursor only after every eth_getLogs chunk has succeeded.
     state.lastScannedBlock = latestBlock;
   }
@@ -469,17 +366,11 @@ async function poll() {
     const highestLogBlock = Math.max(...logs.map(log => Number(BigInt(log.blockNumber))));
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestLogBlock);
   }
-  if (highestObservedBlock != null) {
-    state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
-  }
-
   // Keep empty buckets for both instruments so completed periods with zero
   // liquidations can be evaluated without changing the alert gate.
   getWindow(currentStart, 'BTC');
   getWindow(currentStart, 'ETH');
 
-  const processedLogKeys = new Set(logs.map(eventKey));
-  liveLogs = liveLogs.filter(log => !processedLogKeys.has(eventKey(log)));
   saveState();
 
   let alerts = 0;
@@ -548,14 +439,14 @@ async function poll() {
     console.log(JSON.stringify({
       level: 'info', event: 'monitor_summary',
       intervalMs: SUMMARY_INTERVAL_MS,
-      latestBlock: highestObservedBlock ?? latestBlock,
+      latestBlock,
       source: firstScan ? 'initial_rpc_baseline' : 'http_rpc_eth_getLogs',
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
       invalidOnchainLogs: invalidLogs,
       skippedOldBaseline,
       alertsSent: alerts,
-      websocket: liveSocketStatus,
+      sourceMode: 'http_rpc_only',
     }));
     lastSummaryAt = summaryNow;
   }
@@ -570,11 +461,9 @@ console.log(JSON.stringify({
   contract: CONTRACT,
   liquidationEventTopic: LIQUIDATED_TOPIC,
   chainId: '0x3e7',
-  endpoint: 'NodeFlare HTTP RPC eth_getLogs primary; WebSocket optional supplement',
+  endpoint: 'NodeFlare HTTP RPC eth_getLogs only',
   statePath: STATE_PATH,
 }));
-
-runWebSocketLoop().catch(err => console.error(JSON.stringify({ level: 'error', event: 'nodeflare_ws_loop_failed', message: String(err) })));
 
 let lastPollError = null;
 while (true) {
