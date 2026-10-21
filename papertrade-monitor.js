@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-21-v1';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-21-v2-liqspan61';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -457,6 +457,18 @@ async function poll() {
         level: 'info', event: 'liquidation_5m_suppressed_below_min_liqs',
         instrument, periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs, minimumLiqs: 5,
+      }));
+      continue;
+    }
+
+    // Require liquidation span of at least 61 seconds (inclusive).
+    if (currentSpanSeconds < 61) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_suppressed_liq_span_below_minimum',
+        instrument, periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs, liqSpanSeconds: currentSpanSeconds, minimumLiqSpanSeconds: 61,
       }));
       continue;
     }
