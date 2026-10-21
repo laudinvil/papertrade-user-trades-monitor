@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-5-no-top-trader-trade-heading";
+const VERSION = "shark-radar-standalone-6-heading-removal-redeploy-check";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
