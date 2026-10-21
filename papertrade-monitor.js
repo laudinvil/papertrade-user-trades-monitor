@@ -270,9 +270,9 @@ let lastSharkPollAt = 0;
 function loadSharkState() {
   try {
     const value = JSON.parse(fs.readFileSync(SHARK_STATE_PATH, 'utf8'));
-    return { initialized: value.initialized === true, leaderWallet: String(value.leaderWallet || '').toLowerCase(), leaderName: String(value.leaderName || ''), seenTradeIds: Array.isArray(value.seenTradeIds) ? value.seenTradeIds.map(String).slice(-5000) : [] };
+    return { initialized: value.initialized === true, leaderWallet: String(value.leaderWallet || '').toLowerCase(), leaderName: String(value.leaderName || ''), pendingTradeBaseline: value.pendingTradeBaseline === true, seenTradeIds: Array.isArray(value.seenTradeIds) ? value.seenTradeIds.map(String).slice(-5000) : [] };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, leaderWallet: '', leaderName: '', seenTradeIds: [] };
+    if (error?.code === 'ENOENT') return { initialized: false, leaderWallet: '', leaderName: '', pendingTradeBaseline: false, seenTradeIds: [] };
     throw new Error(`Cannot load Shark Radar state at ${SHARK_STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -302,13 +302,13 @@ async function pollSharkRadar() {
   const isBaseline = !sharkState.initialized;
   const changedLeader = !isBaseline && sharkState.leaderWallet && leaderWallet !== sharkState.leaderWallet;
   if (isBaseline) {
-    sharkState = { ...sharkState, initialized: true, leaderWallet, leaderName };
+    sharkState = { ...sharkState, initialized: true, leaderWallet, leaderName, pendingTradeBaseline: true };
     saveSharkState();
     console.log(JSON.stringify({ level: 'info', event: 'shark_radar_baseline_initialized', version: SHARK_RADAR_MONITOR_VERSION, leader: leaderName, wallet: leaderWallet }));
   } else if (changedLeader) {
     await send(['<b>SHARK RADAR — NEW #1 LEADER</b>', `Previous: ${esc(sharkState.leaderName || sharkState.leaderWallet)}`, `New: ${esc(leaderName)}`, `Wallet: ${leaderWallet}`, SHARK_RADAR_URL].join(String.fromCharCode(10)));
     console.log(JSON.stringify({ level: 'info', event: 'shark_radar_leader_changed', previousWallet: sharkState.leaderWallet, previousName: sharkState.leaderName, leaderWallet, leaderName }));
-    sharkState = { ...sharkState, leaderWallet, leaderName, seenTradeIds: [] };
+    sharkState = { ...sharkState, leaderWallet, leaderName, pendingTradeBaseline: true, seenTradeIds: [] };
     saveSharkState();
   } else if (leaderName && leaderName !== sharkState.leaderName) {
     sharkState.leaderName = leaderName;
@@ -319,9 +319,10 @@ async function pollSharkRadar() {
   if (!trades) throw new Error('Polymarket trades response did not contain a trades array');
   const seen = new Set(sharkState.seenTradeIds);
   const normalized = trades.map(trade => ({ trade, id: String(trade?.id ?? trade?.transactionHash ?? trade?.transaction_hash ?? [trade?.proxyWallet, trade?.asset, trade?.timestamp, trade?.side, trade?.size, trade?.price].join(':')) })).filter(item => item.id && item.id !== ':::::');
-  if (isBaseline || changedLeader) {
+  if (isBaseline || changedLeader || sharkState.pendingTradeBaseline) {
     for (const item of normalized) seen.add(item.id);
     sharkState.seenTradeIds = [...seen].slice(-5000);
+    sharkState.pendingTradeBaseline = false;
     saveSharkState();
     return;
   }
