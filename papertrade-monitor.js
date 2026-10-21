@@ -133,20 +133,29 @@ function decodeLiquidation(log) {
   // uint64 markPrice, uint64 bustPrice, bool fromQueuedBalance,
   // uint256 stakerFee, uint256 devFee). The two prices are the first ABI words.
   const data = String(log.data || '').replace(/^0x/, '');
-  if (data.length < 5 * 64 || data.length % 64 !== 0) return null;
+  if (data.length < 5 * 64) return { error: 'data_too_short', dataLength: data.length + 2, dataWords: Math.floor(data.length / 64) };
+  if (data.length % 64 !== 0) return { error: 'data_length_not_word_aligned', dataLength: data.length + 2, dataWords: Math.floor(data.length / 64) };
   let markPrice;
   let bustPrice;
   try {
     markPrice = BigInt('0x' + data.slice(0, 64));
     bustPrice = BigInt('0x' + data.slice(64, 128));
   } catch {
-    return null;
+    return { error: 'price_word_parse_failed', dataLength: data.length + 2, dataWords: data.length / 64, firstWords: [data.slice(0, 64), data.slice(64, 128)] };
   }
-  if (markPrice <= 0n || bustPrice <= 0n) return null;
+  if (markPrice <= 0n || bustPrice <= 0n) {
+    return {
+      error: 'zero_or_negative_price',
+      dataLength: data.length + 2,
+      dataWords: data.length / 64,
+      markPrice: markPrice.toString(),
+      bustPrice: bustPrice.toString(),
+      firstWords: [data.slice(0, 64), data.slice(64, 128)],
+    };
+  }
 
   // Current protocol price ranges: BTC is >= 500,000; ETH is below this boundary.
   const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
-  // The event's markPrice is the observed mark and bustPrice is the liquidation threshold.
   // A LONG is liquidated when markPrice falls below bustPrice; a SHORT when it rises above.
   const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
   return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
@@ -319,13 +328,18 @@ async function poll() {
     }
 
     const classified = decodeLiquidation(log);
-    if (!classified) {
+    if (!classified || classified.error) {
       invalidLogs++;
       seen.add(key);
       console.warn(JSON.stringify({
         level: 'warn', event: 'onchain_liquidation_decode_failed',
         positionId: chainEvent.positionId, blockNumber,
-        dataLength: String(log.data || '').length,
+        reason: classified?.error || 'unknown_decode_failure',
+        dataLength: classified?.dataLength ?? String(log.data || '').length,
+        dataWords: classified?.dataWords ?? null,
+        markPrice: classified?.markPrice ?? null,
+        bustPrice: classified?.bustPrice ?? null,
+        firstWords: classified?.firstWords ?? null,
       }));
       continue;
     }
