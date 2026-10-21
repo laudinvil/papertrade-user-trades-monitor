@@ -224,21 +224,13 @@ function alertText(bucket) {
 }
 
 async function send(message) {
-  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: CHAT_ID,
-      text: message,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    }),
-    signal: AbortSignal.timeout(12000),
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || body.ok !== true) {
-    throw new Error(`Telegram HTTP ${response.status}: ${body.description || 'send failed'}`);
-  }
+  console.warn(JSON.stringify({
+    level: 'warn',
+    event: 'telegram_alerts_emergency_muted',
+    reason: 'Emergency mute enabled to stop alert spam',
+    messagePreview: String(message).slice(0, 80),
+  }));
+  return;
 }
 
 async function getBlockNumber() {
