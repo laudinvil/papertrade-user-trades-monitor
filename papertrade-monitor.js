@@ -13,7 +13,6 @@ const SEEN_LIMIT = 10000;
 const WINDOW_MS = 5 * 60 * 1000;
 const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
-// Verified against the Papertrade Liquidated event topic used by scripts/check-nodeflare.mjs.
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
@@ -29,10 +28,10 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     return {
       initialized: s.initialized === true,
-      seenKeys: Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
-      windows: {},
-      lastScannedBlock: Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      eventFilterVersion: 4,
+      seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
+      windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
+      lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
+      eventFilterVersion: 3,
       pending: [],
     };
   } catch (err) {
@@ -63,7 +62,7 @@ let lastRpcRequestAt = 0;
 function saveState() {
   const next = {
     initialized: true,
-    eventFilterVersion: 4,
+    eventFilterVersion: 3,
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
@@ -162,9 +161,9 @@ function decodeLiquidation(log) {
 }
 
 function liqSpanSeconds(bucket) {
-  // No liquidation timestamps means the span is unknown, not 0 seconds.
-  if (!bucket || bucket.firstLiquidationAt == null || bucket.lastLiquidationAt == null) return null;
-  return Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000));
+  return bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
+    ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000))
+    : 0;
 }
 
 function cascadeStats(bucket) {
@@ -201,20 +200,27 @@ function eventTimestamp(event) {
   return Number.isFinite(ts) && ts > 0 ? ts : null;
 }
 
-function alertText(instrument, timestamp, positionId) {
-  const symbol = String(instrument || '').toUpperCase();
-  if (symbol !== 'BTC' && symbol !== 'ETH') {
-    throw new Error(`Unsupported liquidation instrument: ${symbol}`);
+function alertText(bucket) {
+  const instrument = String(bucket.instrument || '').toUpperCase();
+  if (instrument !== 'BTC' && instrument !== 'ETH') {
+    throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
-  const marketStart = periodStart(Number(timestamp));
-  const marketId = Math.floor(marketStart / 1000) + (WINDOW_MS / 1000);
-  const polymarketUrl = `https://polymarket.com/event/${symbol.toLowerCase()}-updown-5m-${marketId}`;
+  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
+  const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
+  const totalLiqs = Number(bucket.total || 0);
+  const longLiqs = Number(bucket.long || 0);
+  const shortLiqs = Number(bucket.short || 0);
   return [
-    `<b>${esc(symbol)} LIQUIDATION</b>`,
-    `TIME: ${new Date(Number(timestamp)).toISOString()}`,
-    positionId == null ? null : `POSITION: ${esc(positionId)}`,
+    `<b>${esc(instrument)} 5m</b>`,
+    `LIQS: ${totalLiqs}`,
+    `LONG: ${Number(bucket.long || 0)}`,
+    `SHORT: ${Number(bucket.short || 0)}`,
+    `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
+    `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
+    `CASCADE: ${cascadeStats(bucket).maxCascade}`,
+    `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     polymarketUrl,
-  ].filter(Boolean).join(String.fromCharCode(10));
+  ].join(String.fromCharCode(10));
 }
 
 async function send(message) {
@@ -377,18 +383,7 @@ async function poll() {
       note: 'Counting starts with live on-chain Liquidated logs.',
     }));
   } else {
-    // Keep the monitor live through NodeFlare WebSocket 502 outages by polling HTTP RPC.
-    // HTTP RPC polling is the reliable fallback when NodeFlare WebSocket is unavailable.
-    // Fetch every block since the last successful scan so a WS 502 cannot silently stop alerts.
-    latestBlock = await getBlockNumber();
-    const fromBlock = Number(state.lastScannedBlock) + 1;
-    const httpLogs = fromBlock <= latestBlock
-      ? await getLiquidationLogs(fromBlock, latestBlock)
-      : [];
-    logs = [...liveLogs, ...httpLogs];
-    if (!liveSocketConnected) {
-      liveSocketStatus = 'disconnected_http_fallback';
-    }
+    logs = liveLogs.slice();
   }
 
   const blockTimestamps = new Map();
@@ -423,57 +418,131 @@ async function poll() {
     const classified = decodeLiquidation(log);
     if (!classified) {
       invalidLogs++;
+      seen.add(key);
       console.warn(JSON.stringify({
-        level: 'warn', event: 'onchain_liquidation_decode_failed_alerting_anyway',
+        level: 'warn', event: 'onchain_liquidation_decode_failed',
         positionId: chainEvent.positionId, blockNumber,
         dataLength: String(log.data || '').length,
       }));
+      continue;
     }
 
-    // Reset alert rules: alert every unique log matching the Liquidated contract topic.
-    // Decoding failure, side, position repetition, 5-minute totals, and BTC/ETH comparison
-    // must never suppress the event. Deduplication is only by transaction hash + log index.
-    const symbol = classified?.instrument || null;
-    const marketStart = periodStart(chainEvent.ts);
-    const marketId = Math.floor(marketStart / 1000) + (WINDOW_MS / 1000);
-    const eventMessage = symbol
-      ? alertText(symbol, chainEvent.ts, chainEvent.positionId)
-      : [
-          '<b>PAPERTRADE LIQUIDATION</b>',
-          `TIME: ${new Date(chainEvent.ts).toISOString()}`,
-          chainEvent.positionId == null ? null : `POSITION: ${esc(chainEvent.positionId)}`,
-          `BLOCK: ${blockNumber}`,
-          `TX: ${esc(chainEvent.transactionHash)}`,
-        ].filter(Boolean).join(String.fromCharCode(10));
-    await send(eventMessage);
+    const bucket = getWindow(periodStart(chainEvent.ts), classified.instrument);
+    if (!Array.isArray(bucket.eventKeys)) bucket.eventKeys = [];
+    if (!Array.isArray(bucket.positionIds)) bucket.positionIds = [];
+    if (!Array.isArray(bucket.positionKeys)) bucket.positionKeys = [];
+    const positionId = chainEvent.positionId == null ? null : String(chainEvent.positionId);
+    const positionKey = positionId && chainEvent.user
+      ? `${String(chainEvent.user).toLowerCase()}:${positionId}`
+      : positionId;
+    if (bucket.eventKeys.includes(key) || (positionKey && bucket.positionKeys.includes(positionKey))) {
+      seen.add(key);
+      continue;
+    }
+    bucket.eventKeys.push(key);
+    if (positionKey) bucket.positionKeys.push(positionKey);
+    if (positionId) bucket.positionIds.push(positionId);
+    if (!Array.isArray(bucket.liquidationSeconds)) bucket.liquidationSeconds = [];
+    if (!Array.isArray(bucket.liquidationTimestamps)) bucket.liquidationTimestamps = [];
+    bucket.liquidationTimestamps.push(chainEvent.ts);
+    const eventSecond = Math.floor(chainEvent.ts / 1000);
+    if (!bucket.liquidationSeconds.includes(eventSecond)) bucket.liquidationSeconds.push(eventSecond);
+    bucket.firstLiquidationAt = bucket.firstLiquidationAt == null
+      ? chainEvent.ts : Math.min(Number(bucket.firstLiquidationAt), chainEvent.ts);
+    bucket.lastLiquidationAt = bucket.lastLiquidationAt == null
+      ? chainEvent.ts : Math.max(Number(bucket.lastLiquidationAt), chainEvent.ts);
+    bucket.total++;
+    if (classified.side === 'LONG') bucket.long++;
+    else if (classified.side === 'SHORT') bucket.short++;
+    else bucket.unknownSide = Number(bucket.unknownSide || 0) + 1;
     seen.add(key);
-    if (classified) decoded++;
-    saveState();
-    console.log(JSON.stringify({
-      level: 'info', event: 'liquidation_event_alert_sent',
-      instrument: symbol || 'UNKNOWN',
-      side: classified?.side || 'UNKNOWN',
-      positionId: chainEvent.positionId,
-      blockNumber,
-      transactionHash: chainEvent.transactionHash,
-      logIndex: chainEvent.logIndex,
-      timestamp: new Date(chainEvent.ts).toISOString(),
-    }));
+    decoded++;
   }
 
-  if (latestBlock != null && !firstScan) {
-    // Advance the cursor only after the HTTP log range was fetched and processed.
-    state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, latestBlock);
-  } else if (logs.length) {
+  if (logs.length) {
     const highestLogBlock = Math.max(...logs.map(log => Number(BigInt(log.blockNumber))));
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestLogBlock);
   }
-  if (highestObservedBlock != null && latestBlock == null) {
+  if (highestObservedBlock != null) {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
+  // Keep empty buckets for both instruments so completed periods with zero
+  // liquidations can be evaluated without changing the alert gate.
+  getWindow(currentStart, 'BTC');
+  getWindow(currentStart, 'ETH');
+
   const processedLogKeys = new Set(logs.map(eventKey));
   liveLogs = liveLogs.filter(log => !processedLogKeys.has(eventKey(log)));
+  saveState();
+
+  let alerts = 0;
+  const completedWindows = Object.values(windows)
+    .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
+    .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
+
+  for (const bucket of completedWindows) {
+    const instrument = String(bucket.instrument || '').toUpperCase();
+    if (instrument !== 'BTC' && instrument !== 'ETH') {
+      bucket.alerted = true;
+      saveState();
+      continue;
+    }
+
+    const totalLiqs = Number(bucket.total || 0);
+    const longLiqs = Number(bucket.long || 0);
+    const shortLiqs = Number(bucket.short || 0);
+    const unknownLiqs = Number(bucket.unknownSide || 0);
+    const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
+    const currentSpanSeconds = liqSpanSeconds(bucket);
+    const cascades = cascadeStats(bucket);
+
+    // Send BTC and ETH summaries only when SERIES >= 12.
+    const minimumSeries = 12;
+    if (cascades.cascadeCount < minimumSeries) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_series_below_minimum',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        long: longLiqs,
+        short: shortLiqs,
+        series: cascades.cascadeCount,
+        minimumSeries,
+        maxCascade: cascades.maxCascade,
+        maxGapMs: CASCADE_GAP_MS,
+      }));
+      saveState();
+      continue;
+    }
+
+    await send(alertText(bucket));
+    alerts++;
+    console.log(JSON.stringify({
+      level: 'info', event: 'liquidation_5m_alert_sent',
+      instrument,
+      periodStart: new Date(bucket.start).toISOString(),
+      liqs: totalLiqs,
+      long: longLiqs,
+      short: shortLiqs,
+      unknown: unknownLiqs,
+      liqSeconds,
+      liqSpanSeconds: currentSpanSeconds,
+      cascadeCount: cascades.cascadeCount,
+      cascadeEvents: cascades.cascadeEvents,
+      maxCascade: cascades.maxCascade,
+      maxGapMs: CASCADE_GAP_MS,
+      uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
+      eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
+    }));
+    bucket.alerted = true;
+    saveState();
+  }
+
+  for (const [key, bucket] of Object.entries(windows)) {
+    if (bucket.alerted && Number(bucket.start) + WINDOW_MS < now - 60 * 60 * 1000) delete windows[key];
+  }
   saveState();
 
   const summaryNow = Date.now();
@@ -482,12 +551,12 @@ async function poll() {
       level: 'info', event: 'monitor_summary',
       intervalMs: SUMMARY_INTERVAL_MS,
       latestBlock: highestObservedBlock ?? latestBlock,
-      source: firstScan ? 'initial_rpc_baseline' : (liveSocketConnected ? 'websocket_plus_http_rpc' : 'http_rpc_fallback'),
+      source: firstScan ? 'initial_rpc_baseline' : 'websocket_logs',
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
       invalidOnchainLogs: invalidLogs,
       skippedOldBaseline,
-      alertsSent: decoded,
+      alertsSent: alerts,
       websocket: liveSocketStatus,
     }));
     lastSummaryAt = summaryNow;
@@ -497,14 +566,13 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info',
   event: 'monitor_started',
-  // DEPLOYMENT_RETRY_2026_10_21: restored immediate per-liquidation alert mode.
-  mode: 'every_unique_liquidation_event_immediate',
+  mode: 'onchain_liquidations_only',
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
   liquidationEventTopic: LIQUIDATED_TOPIC,
   chainId: '0x3e7',
-  endpoint: 'NodeFlare HTTP RPC eth_getLogs fallback + optional WebSocket subscriptions',
+  endpoint: 'NodeFlare WebSocket Papertrade Exchange logs filtered to Liquidated event selector + reconnect gap recovery',
   statePath: STATE_PATH,
 }));
 
