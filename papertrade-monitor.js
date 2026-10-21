@@ -369,20 +369,27 @@ async function getBlockTimestamp(blockNumber, cache) {
 
 async function poll() {
   const firstScan = state.lastScannedBlock == null;
-  let latestBlock = null;
+  const latestBlock = await getBlockNumber();
   let logs;
   if (firstScan) {
-    latestBlock = await getBlockNumber();
     state.lastScannedBlock = latestBlock;
     saveState();
     logs = [];
     console.log(JSON.stringify({
       level: 'info', event: 'chain_baseline_initialized',
       latestBlock, historicalScan: false,
-      note: 'Counting starts with live on-chain Liquidated logs.',
+      note: 'Counting starts with new on-chain Liquidated logs after the baseline block.',
     }));
   } else {
-    logs = liveLogs.slice();
+    // HTTP RPC is the primary source. WebSocket is only an optional low-latency
+    // supplement and must never be required for the monitor to collect events.
+    const fromBlock = Number(state.lastScannedBlock) + 1;
+    const rpcLogs = fromBlock <= latestBlock
+      ? await getLiquidationLogs(fromBlock, latestBlock)
+      : [];
+    logs = [...rpcLogs, ...liveLogs];
+    // Advance the cursor only after every eth_getLogs chunk has succeeded.
+    state.lastScannedBlock = latestBlock;
   }
 
   const blockTimestamps = new Map();
@@ -563,7 +570,7 @@ console.log(JSON.stringify({
   contract: CONTRACT,
   liquidationEventTopic: LIQUIDATED_TOPIC,
   chainId: '0x3e7',
-  endpoint: 'NodeFlare WebSocket Papertrade Exchange logs filtered to Liquidated event selector + reconnect gap recovery',
+  endpoint: 'NodeFlare HTTP RPC eth_getLogs primary; WebSocket optional supplement',
   statePath: STATE_PATH,
 }));
 
