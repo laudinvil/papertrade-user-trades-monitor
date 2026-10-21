@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-1";
+const VERSION = "shark-radar-standalone-2";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
@@ -44,6 +44,15 @@ async function getActivity(wallet) {
 function idOf(a) {
   return String(a.transactionHash || a.id || [a.timestamp, a.conditionId, a.side, a.asset, a.size, a.price].join(":"));
 }
+function eventUrlOf(a) {
+  // `slug` may identify a market rather than its parent event; prefer explicit eventSlug.
+  const slug = a.eventSlug || a.event_slug || a.event?.slug;
+  if (typeof slug === "string" && slug.trim()) return `https://polymarket.com/event/${encodeURIComponent(slug.trim())}`;
+  const direct = a.eventUrl || a.event_url || a.event?.url;
+  if (typeof direct === "string" && /^https:\/\/polymarket\.com\/event\/[a-zA-Z0-9_-]+\/?$/.test(direct)) return direct;
+  // Never construct an event URL from a market-level `slug`.
+  return "https://polymarket.com";
+}
 function tradeMessage(a, leader) {
   const action = String(a.side || a.type || "TRADE").toUpperCase();
   const market = a.title || a.market || a.slug || "Polymarket market";
@@ -51,7 +60,7 @@ function tradeMessage(a, leader) {
   const size = Number(a.size), price = Number(a.price);
   const value = Number.isFinite(size) && Number.isFinite(price) ? `\nValue: $${(size * price).toFixed(2)}` : "";
   const when = a.timestamp ? new Date(Number(a.timestamp) * 1000).toISOString() : "unknown";
-  const marketUrl = a.slug ? `https://polymarket.com/event/${a.slug}` : "https://polymarket.com";
+  const marketUrl = eventUrlOf(a);
   return `SHARK RADAR — TOP TRADER TRADE\nTrader: ${leader.name}\nWallet: ${leader.wallet}\nAction: ${action}${outcome}\nMarket: ${market}${value}\nTime: ${when}\n${marketUrl}\nProfile: ${leader.url}`;
 }
 async function sendTelegram(text) {
@@ -94,7 +103,7 @@ async function poll(state) {
     for (const trade of fresh) {
       await sendTelegram(tradeMessage(trade, leader));
       seen.add(idOf(trade));
-      console.log(JSON.stringify({ level: "info", event: "leader_trade_alert_sent", wallet: leader.wallet, activityId: idOf(trade), side: trade.side }));
+      console.log(JSON.stringify({ level: "info", event: "leader_trade_alert_sent", wallet: leader.wallet, activityId: idOf(trade), side: trade.side, eventUrl: eventUrlOf(trade) }));
     }
     for (const trade of trades) seen.add(idOf(trade));
   }
