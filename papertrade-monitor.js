@@ -449,15 +449,16 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // Ignore completed periods with neither a cascade nor a series.
-    if (cascades.maxCascade === 0 && cascades.cascadeCount === 0) {
+    // Ignore weak liquidation activity when SERIES <= 1 AND CASCADE <= 2.
+    if (cascades.cascadeCount <= 1 && cascades.maxCascade <= 2) {
       bucket.alerted = true;
       saveState();
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_suppressed_no_cascade_or_series',
+        level: 'info', event: 'liquidation_5m_suppressed_low_cascade_and_series',
         instrument, periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs, short: shortLiqs,
         cascade: cascades.maxCascade, series: cascades.cascadeCount,
+        minimumCascadeToAlert: 3, minimumSeriesToAlert: 2,
       }));
       continue;
     }
