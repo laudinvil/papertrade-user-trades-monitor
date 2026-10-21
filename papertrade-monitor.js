@@ -161,9 +161,9 @@ function decodeLiquidation(log) {
 }
 
 function liqSpanSeconds(bucket) {
-  return bucket.firstLiquidationAt != null && bucket.lastLiquidationAt != null
-    ? Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000))
-    : 0;
+  // No liquidation timestamps means the span is unknown, not 0 seconds.
+  if (!bucket || bucket.firstLiquidationAt == null || bucket.lastLiquidationAt == null) return null;
+  return Math.max(0, Math.round((Number(bucket.lastLiquidationAt) - Number(bucket.firstLiquidationAt)) / 1000));
 }
 
 function cascadeStats(bucket) {
@@ -490,14 +490,17 @@ async function poll() {
     const byInstrument = new Map(periodBuckets.map(bucket => [String(bucket.instrument || '').toUpperCase(), bucket]));
     const btc = byInstrument.get('BTC');
     const eth = byInstrument.get('ETH');
-    const btcSpan = btc ? liqSpanSeconds(btc) : 0;
-    const ethSpan = eth ? liqSpanSeconds(eth) : 0;
+    const btcSpan = liqSpanSeconds(btc);
+    const ethSpan = liqSpanSeconds(eth);
 
-    // Send an alert only when exactly one instrument has LIQ SPAN = 0s
-    // and the other has LIQ SPAN > 0s. No other values affect selection.
+    // A missing bucket/timestamp has an unknown span, not a zero span.
+    // Alert only when both instruments have measurable spans and exactly one is 0s.
     if (!((btcSpan === 0 && ethSpan > 0) || (ethSpan === 0 && btcSpan > 0))) {
       for (const bucket of periodBuckets) bucket.alerted = true;
-      const reason = btcSpan === 0 && ethSpan === 0 ? 'both_liq_spans_zero' : 'both_liq_spans_positive';
+      let reason;
+      if (btcSpan == null || ethSpan == null) reason = 'liq_span_unknown';
+      else if (btcSpan === 0 && ethSpan === 0) reason = 'both_liq_spans_zero';
+      else reason = 'both_liq_spans_positive';
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_period_suppressed',
         periodStart: new Date(periodStartMs).toISOString(),
