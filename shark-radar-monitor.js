@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-3";
+const VERSION = "shark-radar-standalone-4-consecutive-market-dedupe";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
@@ -56,6 +56,10 @@ function eventUrlOf(a) {
     ? `https://polymarket.com/search?_q=${encodeURIComponent(marketSlug.trim())}`
     : "https://polymarket.com";
 }
+function marketKeyOf(a) {
+  const market = String(a.title || a.market || a.slug || a.marketSlug || a.market_slug || "").trim();
+  return market.toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, " ").trim();
+}
 function tradeMessage(a, leader) {
   const action = String(a.side || a.type || "TRADE").toUpperCase();
   const market = a.title || a.market || a.slug || "Polymarket market";
@@ -101,11 +105,22 @@ async function poll(state) {
   if (firstRun || changed) {
     // Establish a baseline; do not alert on trades that predate the monitoring of this leader.
     for (const trade of trades) seen.add(idOf(trade));
+    state.lastAlertedMarketKey = null;
   } else {
     const fresh = trades.filter(trade => !seen.has(idOf(trade))).reverse();
     for (const trade of fresh) {
+      const marketKey = marketKeyOf(trade);
+      if (marketKey && marketKey === state.lastAlertedMarketKey) {
+        seen.add(idOf(trade));
+        console.log(JSON.stringify({
+          level: "info", event: "leader_trade_alert_suppressed_consecutive_market_duplicate",
+          wallet: leader.wallet, activityId: idOf(trade), market: trade.title || trade.market || trade.slug || null,
+        }));
+        continue;
+      }
       await sendTelegram(tradeMessage(trade, leader));
       seen.add(idOf(trade));
+      if (marketKey) state.lastAlertedMarketKey = marketKey;
       console.log(JSON.stringify({ level: "info", event: "leader_trade_alert_sent", wallet: leader.wallet, activityId: idOf(trade), side: trade.side, eventUrl: eventUrlOf(trade) }));
     }
     for (const trade of trades) seen.add(idOf(trade));
