@@ -151,13 +151,14 @@ function decodeLiquidation(log) {
   } catch {
     return null;
   }
-  if (markPrice <= 0n || bustPrice <= 0n) return null;
+  if (markPrice <= 0n) return null;
 
-  // Current protocol price ranges: BTC is >= 500,000; ETH is below this boundary.
+  // Infer instrument from the mark price even if bustPrice is missing/zero;
+  // unknown direction must not prevent the liquidation from entering its summary.
   const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
-  // The event's markPrice is the observed mark and bustPrice is the liquidation threshold.
-  // A LONG is liquidated when markPrice falls below bustPrice; a SHORT when it rises above.
-  const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
+  const side = bustPrice > 0n
+    ? (markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null)
+    : null;
   return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
 }
 
