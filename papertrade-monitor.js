@@ -493,23 +493,22 @@ async function poll() {
     const btcSpan = btc ? liqSpanSeconds(btc) : 0;
     const ethSpan = eth ? liqSpanSeconds(eth) : 0;
 
-    // Alert only the instrument with the smaller LIQ SPAN.
-    // No other thresholds or filters apply; equal spans have no smaller winner.
-    if (btcSpan === ethSpan) {
+    // Send an alert only when exactly one instrument has LIQ SPAN = 0s
+    // and the other has LIQ SPAN > 0s. No other values affect selection.
+    if (!((btcSpan === 0 && ethSpan > 0) || (ethSpan === 0 && btcSpan > 0))) {
       for (const bucket of periodBuckets) bucket.alerted = true;
+      const reason = btcSpan === 0 && ethSpan === 0 ? 'both_liq_spans_zero' : 'both_liq_spans_positive';
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_period_suppressed',
         periodStart: new Date(periodStartMs).toISOString(),
-        reason: 'liq_span_equal',
+        reason,
         btcLiqSpan: btcSpan, ethLiqSpan: ethSpan,
       }));
       saveState();
       continue;
     }
 
-    const winner = btcSpan < ethSpan ? btc : eth;
-    const winnerSpan = Math.min(btcSpan, ethSpan);
-    const otherSpan = Math.max(btcSpan, ethSpan);
+    const winner = btcSpan === 0 ? btc : eth;
 
     await send(alertText(winner));
     alerts++;
@@ -519,7 +518,7 @@ async function poll() {
       level: 'info', event: 'liquidation_5m_alert_sent',
       instrument: String(winner.instrument || '').toUpperCase(),
       periodStart: new Date(periodStartMs).toISOString(),
-      btcLiqSpan: btcSpan, ethLiqSpan: ethSpan, winnerLiqSpan: winnerSpan, otherLiqSpan: otherSpan,
+      btcLiqSpan: btcSpan, ethLiqSpan: ethSpan,
       liqs: Number(winner.total || 0),
     }));
     saveState();
