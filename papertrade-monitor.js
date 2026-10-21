@@ -31,14 +31,12 @@ function loadState() {
       seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      consecutiveAlertPeriods: s.eventFilterVersion === 3 && Number.isSafeInteger(s.consecutiveAlertPeriods) ? s.consecutiveAlertPeriods : 0,
-      lastAlertPeriodStart: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastAlertPeriodStart) ? s.lastAlertPeriodStart : null,
       eventFilterVersion: 3,
       pending: [],
     };
   } catch (err) {
     if (err?.code === 'ENOENT') {
-      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, consecutiveAlertPeriods: 0, lastAlertPeriodStart: null, pending: [] };
+      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, pending: [] };
     }
     // Never silently reset deduplication or unsent alerts when persisted state is unreadable.
     throw new Error(`Cannot load persisted monitor state at ${STATE_PATH}: ${err instanceof Error ? err.message : String(err)}`);
@@ -68,8 +66,6 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
-    consecutiveAlertPeriods: state.consecutiveAlertPeriods || 0,
-    lastAlertPeriodStart: state.lastAlertPeriodStart ?? null,
     pending,
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -494,162 +490,40 @@ async function poll() {
     const byInstrument = new Map(periodBuckets.map(bucket => [String(bucket.instrument || '').toUpperCase(), bucket]));
     const btc = byInstrument.get('BTC');
     const eth = byInstrument.get('ETH');
-    const btcTotal = Number(btc?.total || 0);
-    const ethTotal = Number(eth?.total || 0);
+    const btcSeconds = btc && Array.isArray(btc.liquidationSeconds)
+      ? new Set(btc.liquidationSeconds).size : 0;
+    const ethSeconds = eth && Array.isArray(eth.liquidationSeconds)
+      ? new Set(eth.liquidationSeconds).size : 0;
 
-    // Ignore the entire 5m period if either instrument had no liquidations.
-    if (btcTotal === 0 || ethTotal === 0) {
+    // New rule: compare only distinct liquidation seconds for BTC and ETH.
+    // If either value is zero or both values are equal, suppress the whole period.
+    if (btcSeconds === 0 || ethSeconds === 0 || btcSeconds === ethSeconds) {
       for (const bucket of periodBuckets) bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_period_suppressed',
         periodStart: new Date(periodStartMs).toISOString(),
-        reason: 'btc_or_eth_zero_liquidations',
-        btcLiqs: btcTotal, ethLiqs: ethTotal,
+        reason: btcSeconds === 0 || ethSeconds === 0 ? 'seconds_zero' : 'seconds_equal',
+        btcSeconds, ethSeconds,
       }));
       saveState();
       continue;
     }
 
-    // BTC remains part of period-level filtering even though BTC alerts are disabled.
-    // If BTC has no cascade and no series, suppress the ETH alert for this same 5m period.
-    if (btc) {
-      const btcCascades = cascadeStats(btc);
-      if (btcCascades.maxCascade === 0 && btcCascades.cascadeCount === 0) {
-        for (const bucket of periodBuckets) bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_period_suppressed',
-          periodStart: new Date(periodStartMs).toISOString(),
-          reason: 'btc_cascade_and_series_zero',
-          btcLiqs: btcTotal, ethLiqs: ethTotal,
-          btcCascade: btcCascades.maxCascade, btcSeries: btcCascades.cascadeCount,
-        }));
-        saveState();
-        continue;
-      }
-    }
+    const winner = btcSeconds > ethSeconds ? btc : eth;
+    const winnerSeconds = Math.max(btcSeconds, ethSeconds);
+    const loserSeconds = Math.min(btcSeconds, ethSeconds);
 
-    // Preserve the existing rule: suppress both alerts if BTC and ETH qualify together.
-    const candidates = [btc, eth].filter(bucket =>
-      bucket && Number(bucket.long || 0) > 0 && Number(bucket.short || 0) > 0
-    );
-    if (candidates.length > 1) {
-      for (const bucket of periodBuckets) bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_period_suppressed',
-        periodStart: new Date(periodStartMs).toISOString(),
-        reason: 'both_btc_and_eth_qualify',
-        btcLiqs: btcTotal, ethLiqs: ethTotal,
-      }));
-      saveState();
-      continue;
-    }
-
-    for (const bucket of periodBuckets) {
-      const instrument = String(bucket.instrument || '').toUpperCase();
-      if (instrument !== 'BTC' && instrument !== 'ETH') {
-        bucket.alerted = true;
-        continue;
-      }
-
-      const totalLiqs = Number(bucket.total || 0);
-      const longLiqs = Number(bucket.long || 0);
-      const shortLiqs = Number(bucket.short || 0);
-      if (longLiqs === 0 || shortLiqs === 0) {
-        bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_alert_suppressed',
-          instrument, periodStart: new Date(bucket.start).toISOString(),
-          reason: 'long_or_short_zero', liqs: totalLiqs,
-          long: longLiqs, short: shortLiqs,
-        }));
-        continue;
-      }
-      if (!candidates.includes(bucket)) {
-        bucket.alerted = true;
-        continue;
-      }
-      if (instrument === 'BTC') {
-        bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_alert_suppressed',
-          instrument, periodStart: new Date(bucket.start).toISOString(),
-          reason: 'btc_alerts_disabled_by_request',
-          liqs: totalLiqs, long: longLiqs, short: shortLiqs,
-        }));
-        continue;
-      }
-
-      const unknownLiqs = Number(bucket.unknownSide || 0);
-      const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
-      const currentSpanSeconds = liqSpanSeconds(bucket);
-      const cascades = cascadeStats(bucket);
-      if (cascades.cascadeCount === 0) {
-        bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_alert_suppressed',
-          instrument, periodStart: new Date(bucket.start).toISOString(),
-          reason: 'series_zero', liqs: totalLiqs, series: cascades.cascadeCount,
-          cascade: cascades.maxCascade, long: longLiqs, short: shortLiqs,
-        }));
-        continue;
-      }
-      if (cascades.maxCascade === 0) {
-        bucket.alerted = true;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_alert_suppressed',
-          instrument, periodStart: new Date(bucket.start).toISOString(),
-          reason: 'cascade_zero', liqs: totalLiqs, series: cascades.cascadeCount,
-          cascade: cascades.maxCascade, long: longLiqs, short: shortLiqs,
-        }));
-        continue;
-      }
-
-      // Allow at most two consecutive 5-minute periods with ETH alerts.
-      // The third consecutive qualifying period is suppressed, then the streak resets.
-      if (Number(state.consecutiveAlertPeriods || 0) >= 2
-        && Number(state.lastAlertPeriodStart) === Number(bucket.start) - WINDOW_MS) {
-        bucket.alerted = true;
-        state.consecutiveAlertPeriods = 0;
-        state.lastAlertPeriodStart = null;
-        console.log(JSON.stringify({
-          level: 'info', event: 'liquidation_5m_alert_suppressed',
-          instrument, periodStart: new Date(bucket.start).toISOString(),
-          reason: 'third_consecutive_alert_period',
-          consecutiveAlertPeriods: 2, liqs: totalLiqs,
-          long: longLiqs, short: shortLiqs,
-        }));
-        saveState();
-        continue;
-      }
-
-      await send(alertText(bucket));
-      alerts++;
-      if (Number(state.lastAlertPeriodStart) === Number(bucket.start) - WINDOW_MS) {
-        state.consecutiveAlertPeriods = Number(state.consecutiveAlertPeriods || 0) + 1;
-      } else {
-        state.consecutiveAlertPeriods = 1;
-      }
-      state.lastAlertPeriodStart = Number(bucket.start);
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_sent',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longLiqs,
-        short: shortLiqs,
-        unknown: unknownLiqs,
-        liqSeconds,
-        liqSpanSeconds: currentSpanSeconds,
-        cascadeCount: cascades.cascadeCount,
-        cascadeEvents: cascades.cascadeEvents,
-        maxCascade: cascades.maxCascade,
-        maxGapMs: CASCADE_GAP_MS,
-        uniquePositions: Array.isArray(bucket.positionKeys) ? bucket.positionKeys.length : null,
-        eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
-      }));
-      bucket.alerted = true;
-      saveState();
-    }
+    await send(alertText(winner));
+    alerts++;
+    winner.alerted = true;
+    for (const bucket of periodBuckets) bucket.alerted = true;
+    console.log(JSON.stringify({
+      level: 'info', event: 'liquidation_5m_alert_sent',
+      instrument: String(winner.instrument || '').toUpperCase(),
+      periodStart: new Date(periodStartMs).toISOString(),
+      btcSeconds, ethSeconds, winnerSeconds, loserSeconds,
+      liqs: Number(winner.total || 0),
+    }));
     saveState();
   }
 
