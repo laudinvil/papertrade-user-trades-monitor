@@ -384,7 +384,17 @@ async function poll() {
       note: 'Counting starts with live on-chain Liquidated logs.',
     }));
   } else {
-    logs = liveLogs.slice();
+    // HTTP RPC polling is the reliable fallback when NodeFlare WebSocket is unavailable.
+    // Fetch every block since the last successful scan so a WS 502 cannot silently stop alerts.
+    latestBlock = await getBlockNumber();
+    const fromBlock = Number(state.lastScannedBlock) + 1;
+    const httpLogs = fromBlock <= latestBlock
+      ? await getLiquidationLogs(fromBlock, latestBlock)
+      : [];
+    logs = [...liveLogs, ...httpLogs];
+    if (!liveSocketConnected) {
+      liveSocketStatus = 'disconnected_http_fallback';
+    }
   }
 
   const blockTimestamps = new Map();
@@ -460,11 +470,14 @@ async function poll() {
     decoded++;
   }
 
-  if (logs.length) {
+  if (latestBlock != null && !firstScan) {
+    // Advance the cursor only after the HTTP log range was fetched and processed.
+    state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, latestBlock);
+  } else if (logs.length) {
     const highestLogBlock = Math.max(...logs.map(log => Number(BigInt(log.blockNumber))));
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestLogBlock);
   }
-  if (highestObservedBlock != null) {
+  if (highestObservedBlock != null && latestBlock == null) {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
@@ -535,7 +548,7 @@ async function poll() {
       level: 'info', event: 'monitor_summary',
       intervalMs: SUMMARY_INTERVAL_MS,
       latestBlock: highestObservedBlock ?? latestBlock,
-      source: firstScan ? 'initial_rpc_baseline' : 'websocket_logs',
+      source: firstScan ? 'initial_rpc_baseline' : (liveSocketConnected ? 'websocket_plus_http_rpc' : 'http_rpc_fallback'),
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
       invalidOnchainLogs: invalidLogs,
@@ -556,7 +569,7 @@ console.log(JSON.stringify({
   contract: CONTRACT,
   liquidationEventTopic: LIQUIDATED_TOPIC,
   chainId: '0x3e7',
-  endpoint: 'NodeFlare WebSocket Papertrade Exchange logs filtered to Liquidated event selector + reconnect gap recovery',
+  endpoint: 'NodeFlare HTTP RPC eth_getLogs fallback + optional WebSocket subscriptions',
   statePath: STATE_PATH,
 }));
 
