@@ -418,14 +418,20 @@ async function poll() {
   // For each completed 5-minute period, send at most one alert:
   // choose the instrument with the larger SHORT liquidation count.
   const winnerByPeriod = new Map();
+  const tiedPeriods = new Set();
   for (const bucket of completedWindows) {
     if (Number(bucket.short || 0) <= 0) continue;
     const key = String(bucket.start);
     const current = winnerByPeriod.get(key);
     if (!current || Number(bucket.short || 0) > Number(current.short || 0)) {
       winnerByPeriod.set(key, bucket);
+      tiedPeriods.delete(key);
+    } else if (Number(bucket.short || 0) === Number(current.short || 0)) {
+      tiedPeriods.add(key);
     }
   }
+  // A tie for the highest SHORT count means neither coin gets an alert.
+  for (const key of tiedPeriods) winnerByPeriod.delete(key);
 
   for (const bucket of completedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
