@@ -4,3 +4,5 @@ type: worker
 build:
   framework: dockerfile
   dockerfile: Dockerfile
+
+# Trigger a fresh GitHub push event for Deplexo auto-deploy.
