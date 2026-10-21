@@ -13,6 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-21-v1';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -502,6 +503,8 @@ async function poll() {
   if (summaryNow - lastSummaryAt >= SUMMARY_INTERVAL_MS) {
     console.log(JSON.stringify({
       level: 'info', event: 'monitor_summary',
+      monitorVersion: MONITOR_VERSION,
+      liquidationEventTopic: LIQUIDATED_TOPIC,
       intervalMs: SUMMARY_INTERVAL_MS,
       latestBlock,
       source: firstScan ? 'initial_rpc_baseline' : 'http_rpc_eth_getLogs',
@@ -519,6 +522,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info',
   event: 'monitor_started',
+  monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
   alertPolicy: 'summary_only_no_thresholds',
   pollMs: POLL_MS,
