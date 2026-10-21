@@ -449,6 +449,19 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
+    // Ignore completed periods with neither a cascade nor a series.
+    if (cascades.maxCascade === 0 && cascades.cascadeCount === 0) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_suppressed_no_cascade_or_series',
+        instrument, periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs, short: shortLiqs,
+        cascade: cascades.maxCascade, series: cascades.cascadeCount,
+      }));
+      continue;
+    }
+
     const winner = winnerByPeriod.get(String(bucket.start));
     if (shortLiqs > 0 && winner && winner !== bucket) {
       bucket.alerted = true;
