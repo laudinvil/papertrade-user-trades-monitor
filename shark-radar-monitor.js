@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-4-consecutive-market-dedupe";
+const VERSION = "shark-radar-standalone-5-no-top-trader-trade-heading";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
@@ -68,7 +68,7 @@ function tradeMessage(a, leader) {
   const value = Number.isFinite(size) && Number.isFinite(price) ? `\nValue: $${(size * price).toFixed(2)}` : "";
   const when = a.timestamp ? new Date(Number(a.timestamp) * 1000).toISOString() : "unknown";
   const marketUrl = eventUrlOf(a);
-  return `SHARK RADAR — TOP TRADER TRADE\nTrader: ${leader.name}\nWallet: ${leader.wallet}\nAction: ${action}${outcome}\nMarket: ${market}${value}\nTime: ${when}\n${marketUrl}\nProfile: ${leader.url}`;
+  return `SHARK RADAR\nTrader: ${leader.name}\nWallet: ${leader.wallet}\nAction: ${action}${outcome}\nMarket: ${market}${value}\nTime: ${when}\n${marketUrl}\nProfile: ${leader.url}`;
 }
 async function sendTelegram(text) {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
