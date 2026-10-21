@@ -449,6 +449,18 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
+    // Require at least 5 liquidations in a completed 5-minute period.
+    if (totalLiqs < 5) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_suppressed_below_min_liqs',
+        instrument, periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs, minimumLiqs: 5,
+      }));
+      continue;
+    }
+
     // Ignore weak liquidation activity when SERIES <= 1 AND CASCADE <= 2.
     if (cascades.cascadeCount <= 1 && cascades.maxCascade <= 2) {
       bucket.alerted = true;
