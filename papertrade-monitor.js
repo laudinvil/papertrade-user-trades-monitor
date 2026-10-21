@@ -496,8 +496,18 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // Send only the completed 5-minute liquidation summary in the established format.
-    // No SERIES/CASCADE/LIQS thresholds: every completed BTC/ETH liquidation bucket is eligible.
+    // Never send empty-period notifications: alerts are only for actual liquidation events.
+    // Keep all other liquidation metrics and the established 5m format unchanged.
+    if (totalLiqs <= 0) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_empty_period_skipped',
+        instrument, periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+      }));
+      continue;
+    }
     await send(alertText(bucket));
     alerts++;
     console.log(JSON.stringify({
