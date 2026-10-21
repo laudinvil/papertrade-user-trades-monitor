@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-21-v6-suppress-consecutive-alert-period';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v7-cascade-series-strictly-above-3';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -487,8 +487,8 @@ async function poll() {
       continue;
     }
 
-    // Require both SERIES >= 2 and CASCADE >= 3.
-    if (cascades.cascadeCount < 2 || cascades.maxCascade < 3) {
+    // Ignore CASCADE <= 3 or SERIES <= 3; both values must be strictly greater than 3.
+    if (cascades.cascadeCount <= 3 || cascades.maxCascade <= 3) {
       bucket.alerted = true;
       saveState();
       console.log(JSON.stringify({
@@ -496,7 +496,7 @@ async function poll() {
         instrument, periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs, short: shortLiqs,
         cascade: cascades.maxCascade, series: cascades.cascadeCount,
-        minimumSeriesToAlert: 2, minimumCascadeToAlert: 3,
+        minimumSeriesExclusive: 3, minimumCascadeExclusive: 3,
       }));
       continue;
     }
