@@ -490,28 +490,25 @@ async function poll() {
     const byInstrument = new Map(periodBuckets.map(bucket => [String(bucket.instrument || '').toUpperCase(), bucket]));
     const btc = byInstrument.get('BTC');
     const eth = byInstrument.get('ETH');
-    const btcSpan = liqSpanSeconds(btc);
-    const ethSpan = liqSpanSeconds(eth);
+    const btcShorts = Number(btc?.short || 0);
+    const ethShorts = Number(eth?.short || 0);
 
-    // A missing bucket/timestamp has an unknown span, not a zero span.
-    // Alert only when both instruments have measurable spans and exactly one is 0s.
-    if (!((btcSpan === 0 && ethSpan > 0) || (ethSpan === 0 && btcSpan > 0))) {
+    // New rule: alert only the instrument with strictly more SHORT liquidations.
+    // LIQ SPAN, SECONDS, CASCADE, SERIES, LONG and total LIQS do not affect selection.
+    if (btcShorts === ethShorts) {
       for (const bucket of periodBuckets) bucket.alerted = true;
-      let reason;
-      if (btcSpan == null || ethSpan == null) reason = 'liq_span_unknown';
-      else if (btcSpan === 0 && ethSpan === 0) reason = 'both_liq_spans_zero';
-      else reason = 'both_liq_spans_positive';
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_period_suppressed',
         periodStart: new Date(periodStartMs).toISOString(),
-        reason,
-        btcLiqSpan: btcSpan, ethLiqSpan: ethSpan,
+        reason: btcShorts === 0 ? 'no_short_liquidations' : 'short_liquidations_tied',
+        btcShorts, ethShorts,
       }));
       saveState();
       continue;
     }
 
-    const winner = btcSpan === 0 ? btc : eth;
+    const winner = btcShorts > ethShorts ? btc : eth;
+    const winnerShorts = Math.max(btcShorts, ethShorts);
 
     await send(alertText(winner));
     alerts++;
@@ -521,8 +518,7 @@ async function poll() {
       level: 'info', event: 'liquidation_5m_alert_sent',
       instrument: String(winner.instrument || '').toUpperCase(),
       periodStart: new Date(periodStartMs).toISOString(),
-      btcLiqSpan: btcSpan, ethLiqSpan: ethSpan,
-      liqs: Number(winner.total || 0),
+      btcShorts, ethShorts, winnerShorts,
     }));
     saveState();
   }
