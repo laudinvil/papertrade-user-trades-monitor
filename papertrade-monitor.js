@@ -384,6 +384,7 @@ async function poll() {
       note: 'Counting starts with live on-chain Liquidated logs.',
     }));
   } else {
+    // Keep the monitor live through NodeFlare WebSocket 502 outages by polling HTTP RPC.
     // HTTP RPC polling is the reliable fallback when NodeFlare WebSocket is unavailable.
     // Fetch every block since the last successful scan so a WS 502 cannot silently stop alerts.
     latestBlock = await getBlockNumber();
