@@ -549,7 +549,7 @@ async function poll() {
       level: 'info', event: 'monitor_summary',
       intervalMs: SUMMARY_INTERVAL_MS,
       latestBlock: highestObservedBlock ?? latestBlock,
-      source: firstScan ? 'initial_rpc_baseline' : 'websocket_logs',
+      source: firstScan ? 'initial_rpc_baseline' : 'http_rpc_eth_getLogs',
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
       invalidOnchainLogs: invalidLogs,
