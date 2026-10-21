@@ -224,13 +224,20 @@ function alertText(bucket) {
 }
 
 async function send(message) {
-  console.warn(JSON.stringify({
-    level: 'warn',
-    event: 'telegram_alerts_emergency_muted',
-    reason: 'Emergency mute enabled to stop alert spam',
-    messagePreview: String(message).slice(0, 80),
-  }));
-  return;
+  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: CHAT_ID,
+      text: message,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.ok !== true) {
+    throw new Error(`Telegram HTTP ${response.status}: ${body.description || 'send failed'}`);
+  }
 }
 
 async function getBlockNumber() {
@@ -489,26 +496,8 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // Send BTC and ETH summaries only when SERIES >= 12.
-    const minimumSeries = 12;
-    if (cascades.cascadeCount < minimumSeries) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_series_below_minimum',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longLiqs,
-        short: shortLiqs,
-        series: cascades.cascadeCount,
-        minimumSeries,
-        maxCascade: cascades.maxCascade,
-        maxGapMs: CASCADE_GAP_MS,
-      }));
-      saveState();
-      continue;
-    }
-
+    // Send only the completed 5-minute liquidation summary in the established format.
+    // No SERIES/CASCADE/LIQS thresholds: every completed BTC/ETH liquidation bucket is eligible.
     await send(alertText(bucket));
     alerts++;
     console.log(JSON.stringify({
