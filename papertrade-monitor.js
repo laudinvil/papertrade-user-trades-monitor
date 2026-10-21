@@ -456,6 +456,7 @@ console.log(JSON.stringify({
   level: 'info',
   event: 'monitor_started',
   mode: 'onchain_liquidations_only',
+  alertPolicy: 'summary_only_no_thresholds',
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
