@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-2";
+const VERSION = "shark-radar-standalone-3";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
@@ -50,8 +50,11 @@ function eventUrlOf(a) {
   if (typeof slug === "string" && slug.trim()) return `https://polymarket.com/event/${encodeURIComponent(slug.trim())}`;
   const direct = a.eventUrl || a.event_url || a.event?.url;
   if (typeof direct === "string" && /^https:\/\/polymarket\.com\/event\/[a-zA-Z0-9_-]+\/?$/.test(direct)) return direct;
-  // Never construct an event URL from a market-level `slug`.
-  return "https://polymarket.com";
+  // Keep the market slug visible as a search query rather than emit a broken event URL.
+  const marketSlug = a.slug || a.marketSlug || a.market_slug;
+  return typeof marketSlug === "string" && marketSlug.trim()
+    ? `https://polymarket.com/search?_q=${encodeURIComponent(marketSlug.trim())}`
+    : "https://polymarket.com";
 }
 function tradeMessage(a, leader) {
   const action = String(a.side || a.type || "TRADE").toUpperCase();
