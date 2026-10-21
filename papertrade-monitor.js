@@ -225,7 +225,7 @@ function alertText(bucket) {
   if (instrument !== 'BTC' && instrument !== 'ETH') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
-  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
+  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (2 * WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   const totalLiqs = Number(bucket.total || 0);
   const longLiqs = Number(bucket.long || 0);
@@ -431,15 +431,15 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // Never send empty-period notifications: alerts are only for actual liquidation events.
-    // Keep all other liquidation metrics and the established 5m format unchanged.
-    if (totalLiqs <= 0) {
+    // Only alert when at least one SHORT liquidation occurred in this completed period.
+    // Mark skipped periods as handled so they cannot produce delayed notifications.
+    if (shortLiqs <= 0) {
       bucket.alerted = true;
       saveState();
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_empty_period_skipped',
+        level: 'info', event: 'liquidation_5m_skipped_no_short',
         instrument, periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
+        liqs: totalLiqs, long: longLiqs, short: shortLiqs,
       }));
       continue;
     }
