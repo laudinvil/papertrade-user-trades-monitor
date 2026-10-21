@@ -490,28 +490,26 @@ async function poll() {
     const byInstrument = new Map(periodBuckets.map(bucket => [String(bucket.instrument || '').toUpperCase(), bucket]));
     const btc = byInstrument.get('BTC');
     const eth = byInstrument.get('ETH');
-    const btcSeconds = btc && Array.isArray(btc.liquidationSeconds)
-      ? new Set(btc.liquidationSeconds).size : 0;
-    const ethSeconds = eth && Array.isArray(eth.liquidationSeconds)
-      ? new Set(eth.liquidationSeconds).size : 0;
+    const btcSpan = btc ? liqSpanSeconds(btc) : 0;
+    const ethSpan = eth ? liqSpanSeconds(eth) : 0;
 
-    // New rule: compare only distinct liquidation seconds for BTC and ETH.
-    // If either value is zero or both values are equal, suppress the whole period.
-    if (btcSeconds === 0 || ethSeconds === 0 || btcSeconds === ethSeconds) {
+    // Alert only the instrument with the smaller LIQ SPAN.
+    // No other thresholds or filters apply; equal spans have no smaller winner.
+    if (btcSpan === ethSpan) {
       for (const bucket of periodBuckets) bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_period_suppressed',
         periodStart: new Date(periodStartMs).toISOString(),
-        reason: btcSeconds === 0 || ethSeconds === 0 ? 'seconds_zero' : 'seconds_equal',
-        btcSeconds, ethSeconds,
+        reason: 'liq_span_equal',
+        btcLiqSpan: btcSpan, ethLiqSpan: ethSpan,
       }));
       saveState();
       continue;
     }
 
-    const winner = btcSeconds > ethSeconds ? btc : eth;
-    const winnerSeconds = Math.max(btcSeconds, ethSeconds);
-    const loserSeconds = Math.min(btcSeconds, ethSeconds);
+    const winner = btcSpan < ethSpan ? btc : eth;
+    const winnerSpan = Math.min(btcSpan, ethSpan);
+    const otherSpan = Math.max(btcSpan, ethSpan);
 
     await send(alertText(winner));
     alerts++;
@@ -521,7 +519,7 @@ async function poll() {
       level: 'info', event: 'liquidation_5m_alert_sent',
       instrument: String(winner.instrument || '').toUpperCase(),
       periodStart: new Date(periodStartMs).toISOString(),
-      btcSeconds, ethSeconds, winnerSeconds, loserSeconds,
+      btcLiqSpan: btcSpan, ethLiqSpan: ethSpan, winnerLiqSpan: winnerSpan, otherLiqSpan: otherSpan,
       liqs: Number(winner.total || 0),
     }));
     saveState();
