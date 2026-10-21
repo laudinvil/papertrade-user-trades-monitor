@@ -423,26 +423,36 @@ async function poll() {
     const classified = decodeLiquidation(log);
     if (!classified) {
       invalidLogs++;
-      seen.add(key);
       console.warn(JSON.stringify({
-        level: 'warn', event: 'onchain_liquidation_decode_failed',
+        level: 'warn', event: 'onchain_liquidation_decode_failed_alerting_anyway',
         positionId: chainEvent.positionId, blockNumber,
         dataLength: String(log.data || '').length,
       }));
-      continue;
     }
 
-    // Reset alert rules: every unique, decoded on-chain liquidation event alerts immediately.
-    // Deduplicate only the exact chain log (transaction hash + log index); do not filter by
-    // position, side, 5-minute totals, LIQ SPAN, SECONDS, CASCADE, SERIES, or BTC/ETH comparison.
-    await send(alertText(classified.instrument, chainEvent.ts, chainEvent.positionId));
+    // Reset alert rules: alert every unique log matching the Liquidated contract topic.
+    // Decoding failure, side, position repetition, 5-minute totals, and BTC/ETH comparison
+    // must never suppress the event. Deduplication is only by transaction hash + log index.
+    const symbol = classified?.instrument || null;
+    const marketStart = periodStart(chainEvent.ts);
+    const marketId = Math.floor(marketStart / 1000) + (WINDOW_MS / 1000);
+    const eventMessage = symbol
+      ? alertText(symbol, chainEvent.ts, chainEvent.positionId)
+      : [
+          '<b>PAPERTRADE LIQUIDATION</b>',
+          `TIME: ${new Date(chainEvent.ts).toISOString()}`,
+          chainEvent.positionId == null ? null : `POSITION: ${esc(chainEvent.positionId)}`,
+          `BLOCK: ${blockNumber}`,
+          `TX: ${esc(chainEvent.transactionHash)}`,
+        ].filter(Boolean).join(String.fromCharCode(10));
+    await send(eventMessage);
     seen.add(key);
-    decoded++;
+    if (classified) decoded++;
     saveState();
     console.log(JSON.stringify({
       level: 'info', event: 'liquidation_event_alert_sent',
-      instrument: classified.instrument,
-      side: classified.side,
+      instrument: symbol || 'UNKNOWN',
+      side: classified?.side || 'UNKNOWN',
       positionId: chainEvent.positionId,
       blockNumber,
       transactionHash: chainEvent.transactionHash,
