@@ -433,13 +433,13 @@ async function poll() {
 
     // Only alert when at least one SHORT liquidation occurred in this completed period.
     // Mark skipped periods as handled so they cannot produce delayed notifications.
-    if (shortLiqs < 3) {
+    if (shortLiqs <= 0) {
       bucket.alerted = true;
       saveState();
       console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_skipped_short_below_minimum',
+        level: 'info', event: 'liquidation_5m_skipped_no_short',
         instrument, periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs, long: longLiqs, short: shortLiqs, minimumShort: 3,
+        liqs: totalLiqs, long: longLiqs, short: shortLiqs,
       }));
       continue;
     }
