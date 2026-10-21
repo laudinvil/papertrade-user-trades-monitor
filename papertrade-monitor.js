@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-21-v5-cascade3-series2-short4-span61';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-21-v6-suppress-consecutive-alert-period';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -32,11 +32,12 @@ function loadState() {
       windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
       eventFilterVersion: 3,
+      lastSentAlertPeriodStart: Number.isSafeInteger(s.lastSentAlertPeriodStart) ? s.lastSentAlertPeriodStart : null,
       pending: [],
     };
   } catch (err) {
     if (err?.code === 'ENOENT') {
-      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, pending: [] };
+      return { initialized: false, seenKeys: [], windows: {}, lastScannedBlock: null, lastSentAlertPeriodStart: null, pending: [] };
     }
     // Never silently reset deduplication or unsent alerts when persisted state is unreadable.
     throw new Error(`Cannot load persisted monitor state at ${STATE_PATH}: ${err instanceof Error ? err.message : String(err)}`);
@@ -60,6 +61,7 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
+    lastSentAlertPeriodStart: state.lastSentAlertPeriodStart ?? null,
     pending,
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -524,6 +526,21 @@ async function poll() {
       }));
       continue;
     }
+    // Suppress an alert if the immediately preceding 5-minute period also sent an alert.
+    // This is global across BTC/ETH because the monitor sends at most one alert per period.
+    const previousAlertPeriod = Number(state.lastSentAlertPeriodStart);
+    if (Number.isFinite(previousAlertPeriod) && Number(bucket.start) - previousAlertPeriod === WINDOW_MS) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_suppressed_consecutive_alert_period',
+        instrument, periodStart: new Date(bucket.start).toISOString(),
+        previousAlertPeriodStart: new Date(previousAlertPeriod).toISOString(),
+        reason: 'previous_5m_period_already_sent_alert',
+      }));
+      continue;
+    }
+
     // Diagnostic-only cross-check against Papertrade's public recent-trades feed.
     // It does not alter alert counts; at most one public API request is made per poll.
     if (recentTradeSides === null && recentTradeSidesError === null) {
@@ -572,6 +589,7 @@ async function poll() {
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
     }));
     bucket.alerted = true;
+    state.lastSentAlertPeriodStart = Number(bucket.start);
     saveState();
   }
 
