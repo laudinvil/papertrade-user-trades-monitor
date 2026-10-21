@@ -12,7 +12,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
-const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
+const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -148,8 +148,8 @@ async function getRecentLiquidationSides() {
 
 function decodeLiquidation(log) {
   // Liquidated(uint256 indexed positionId, address indexed user,
-  // uint64 markPrice, uint64 bustPrice, bool fromQueuedBalance,
-  // uint256 stakerFee, uint256 devFee). The two prices are the first ABI words.
+  // uint64 price, uint64 bustPrice, bool flag, uint256 feeA, uint256 feeB).
+  // The first two data words are price and bustPrice; do not use PositionClosed's topic.
   const data = String(log.data || '').replace(/^0x/, '');
   if (data.length < 5 * 64) return { error: 'data_too_short', dataLength: data.length + 2, dataWords: Math.floor(data.length / 64) };
   if (data.length % 64 !== 0) return { error: 'data_length_not_word_aligned', dataLength: data.length + 2, dataWords: Math.floor(data.length / 64) };
