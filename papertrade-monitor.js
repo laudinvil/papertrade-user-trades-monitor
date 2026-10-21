@@ -415,6 +415,18 @@ async function poll() {
     .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
     .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
 
+  // For each completed 5-minute period, send at most one alert:
+  // choose the instrument with the larger SHORT liquidation count.
+  const winnerByPeriod = new Map();
+  for (const bucket of completedWindows) {
+    if (Number(bucket.short || 0) <= 0) continue;
+    const key = String(bucket.start);
+    const current = winnerByPeriod.get(key);
+    if (!current || Number(bucket.short || 0) > Number(current.short || 0)) {
+      winnerByPeriod.set(key, bucket);
+    }
+  }
+
   for (const bucket of completedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
     if (instrument !== 'BTC' && instrument !== 'ETH') {
@@ -430,6 +442,19 @@ async function poll() {
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
+
+    const winner = winnerByPeriod.get(String(bucket.start));
+    if (shortLiqs > 0 && winner && winner !== bucket) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_suppressed_lower_short_count',
+        instrument, periodStart: new Date(bucket.start).toISOString(),
+        short: shortLiqs, selectedInstrument: winner.instrument,
+        selectedShort: Number(winner.short || 0),
+      }));
+      continue;
+    }
 
     // Only alert when at least one SHORT liquidation occurred in this completed period.
     // Mark skipped periods as handled so they cannot produce delayed notifications.
