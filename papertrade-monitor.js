@@ -260,6 +260,90 @@ async function send(message) {
   }
 }
 
+const SHARK_RADAR_MONITOR_VERSION = 'shark-radar-top-trader-2026-10-21-v1';
+const SHARK_RADAR_URL = 'https://sharkradar.app/polymarket-leaderboard';
+const POLYMARKET_TRADES_URL = 'https://data-api.polymarket.com/v2/trades';
+const SHARK_STATE_PATH = process.env.SHARK_STATE_PATH || '/data/shark-radar-state.json';
+const SHARK_POLL_MS = Math.max(15000, Number(process.env.SHARK_POLL_MS || 30000));
+let lastSharkPollAt = 0;
+
+function loadSharkState() {
+  try {
+    const value = JSON.parse(fs.readFileSync(SHARK_STATE_PATH, 'utf8'));
+    return { initialized: value.initialized === true, leaderWallet: String(value.leaderWallet || '').toLowerCase(), leaderName: String(value.leaderName || ''), seenTradeIds: Array.isArray(value.seenTradeIds) ? value.seenTradeIds.map(String).slice(-5000) : [] };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { initialized: false, leaderWallet: '', leaderName: '', seenTradeIds: [] };
+    throw new Error(`Cannot load Shark Radar state at ${SHARK_STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+let sharkState = loadSharkState();
+function saveSharkState() {
+  fs.mkdirSync(path.dirname(SHARK_STATE_PATH), { recursive: true });
+  const tempPath = `${SHARK_STATE_PATH}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(sharkState));
+  fs.renameSync(tempPath, SHARK_STATE_PATH);
+}
+async function fetchJson(url, label) {
+  const response = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'papertrade-monitor/1.0' }, signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error(`${label} HTTP ${response.status}`);
+  return response.json();
+}
+async function pollSharkRadar() {
+  const response = await fetch(SHARK_RADAR_URL, { headers: { accept: 'text/html', 'user-agent': 'Mozilla/5.0 papertrade-monitor/1.0' }, signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error(`Shark Radar leaderboard HTTP ${response.status}`);
+  const html = await response.text();
+  const rowsStart = html.indexOf('Polymarket leaderboard');
+  const htmlForRows = rowsStart >= 0 ? html.slice(rowsStart) : html;
+  const walletLink = htmlForRows.match(/href=["'](?:https?:\/\/sharkradar\.app)?\/wallet\/(0x[a-fA-F0-9]{40})["']/i);
+  if (!walletLink) throw new Error('Could not identify the #1 wallet from Shark Radar leaderboard HTML');
+  const leaderWallet = walletLink[1].toLowerCase();
+  const nameMatch = htmlForRows.match(/<a[^>]+href=["'](?:https?:\/\/sharkradar\.app)?\/wallet\/0x[a-fA-F0-9]{40}["'][^>]*>([\s\S]*?)<\/a>/i);
+  const leaderName = nameMatch ? nameMatch[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').trim() : leaderWallet;
+  const isBaseline = !sharkState.initialized;
+  const changedLeader = !isBaseline && sharkState.leaderWallet && leaderWallet !== sharkState.leaderWallet;
+  if (isBaseline) {
+    sharkState = { ...sharkState, initialized: true, leaderWallet, leaderName };
+    saveSharkState();
+    console.log(JSON.stringify({ level: 'info', event: 'shark_radar_baseline_initialized', version: SHARK_RADAR_MONITOR_VERSION, leader: leaderName, wallet: leaderWallet }));
+  } else if (changedLeader) {
+    await send(['<b>SHARK RADAR — NEW #1 LEADER</b>', `Previous: ${esc(sharkState.leaderName || sharkState.leaderWallet)}`, `New: ${esc(leaderName)}`, `Wallet: ${leaderWallet}`, SHARK_RADAR_URL].join(String.fromCharCode(10)));
+    console.log(JSON.stringify({ level: 'info', event: 'shark_radar_leader_changed', previousWallet: sharkState.leaderWallet, previousName: sharkState.leaderName, leaderWallet, leaderName }));
+    sharkState = { ...sharkState, leaderWallet, leaderName, seenTradeIds: [] };
+    saveSharkState();
+  } else if (leaderName && leaderName !== sharkState.leaderName) {
+    sharkState.leaderName = leaderName;
+    saveSharkState();
+  }
+  const payload = await fetchJson(`${POLYMARKET_TRADES_URL}?user=${encodeURIComponent(leaderWallet)}&limit=100`, 'Polymarket trades');
+  const trades = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.trades) ? payload.trades : null;
+  if (!trades) throw new Error('Polymarket trades response did not contain a trades array');
+  const seen = new Set(sharkState.seenTradeIds);
+  const normalized = trades.map(trade => ({ trade, id: String(trade?.id ?? trade?.transactionHash ?? trade?.transaction_hash ?? [trade?.proxyWallet, trade?.asset, trade?.timestamp, trade?.side, trade?.size, trade?.price].join(':')) })).filter(item => item.id && item.id !== ':::::');
+  if (isBaseline || changedLeader) {
+    for (const item of normalized) seen.add(item.id);
+    sharkState.seenTradeIds = [...seen].slice(-5000);
+    saveSharkState();
+    return;
+  }
+  const fresh = normalized.filter(item => !seen.has(item.id)).sort((a, b) => Number(a.trade?.timestamp || 0) - Number(b.trade?.timestamp || 0));
+  for (const item of fresh) {
+    const trade = item.trade || {};
+    const market = trade.title || trade.market || trade.eventTitle || trade.slug || 'Polymarket market';
+    const side = String(trade.side || 'TRADE').toUpperCase();
+    const outcome = trade.outcome || trade.outcome_name || '';
+    const size = Number(trade.size);
+    const price = Number(trade.price);
+    const amount = Number.isFinite(size) && Number.isFinite(price) ? (size * price).toFixed(2) : null;
+    const slug = trade.eventSlug || trade.slug || trade.event_slug;
+    const tradeUrl = slug ? `https://polymarket.com/event/${encodeURIComponent(slug)}` : '';
+    await send(['<b>SHARK RADAR #1 — NEW TRADE</b>', `Trader: ${esc(leaderName)}`, `${esc(side)}${outcome ? ` ${' '}${esc(outcome)}` : ''}`, `Market: ${esc(market)}`, `Price: ${Number.isFinite(price) ? (price * 100).toFixed(1) + '¢' : '—'}`, `Size: ${Number.isFinite(size) ? size.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—'} shares`, amount !== null ? `Approx. value: ${Number(amount).toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '', tradeUrl, `Wallet: ${leaderWallet}`].filter(Boolean).join(String.fromCharCode(10)));
+    seen.add(item.id);
+    sharkState.seenTradeIds = [...seen].slice(-5000);
+    saveSharkState();
+    console.log(JSON.stringify({ level: 'info', event: 'shark_radar_trade_alert_sent', leaderWallet, tradeId: item.id, side, market }));
+  }
+}
+
 async function getBlockNumber() {
   return Number(BigInt(await rpc('eth_blockNumber')));
 }
@@ -581,6 +665,11 @@ console.log(JSON.stringify({
 let lastPollError = null;
 while (true) {
   let delay = POLL_MS;
+  if (Date.now() - lastSharkPollAt >= SHARK_POLL_MS) {
+    lastSharkPollAt = Date.now();
+    try { await pollSharkRadar(); }
+    catch (error) { console.error(JSON.stringify({ level: 'error', event: 'shark_radar_poll_failed', version: SHARK_RADAR_MONITOR_VERSION, message: error instanceof Error ? error.message : String(error), retryInMs: SHARK_POLL_MS })); }
+  }
   try {
     await poll();
     lastPollError = null;
