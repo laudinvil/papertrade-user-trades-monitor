@@ -1,7 +1,8 @@
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package.json ./
+ENV STATE_PATH=/data/state.json
+ENV SHARK_RADAR_STATE_PATH=/data/shark-radar-state.json
 COPY papertrade-monitor.js shark-radar-monitor.js supervisor.js ./
-RUN mkdir -p /app/data && chmod 777 /app/data
+RUN mkdir -p /data && chmod 777 /data
 CMD ["node", "supervisor.js"]
