@@ -473,7 +473,7 @@ async function poll() {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
   }
 
-  // Send one summary for each instrument after its 5-minute period has ended.
+  // DEPLOYMENT_TRIGGER_2026_10_21: Send one summary for each instrument after its 5-minute period has ended.
   for (const bucket of Object.values(windows)) {
     if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
     const symbol = bucket.instrument;
