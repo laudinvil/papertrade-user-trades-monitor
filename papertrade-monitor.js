@@ -30,7 +30,7 @@ function loadState() {
     return {
       initialized: s.initialized === true,
       seenKeys: Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
-      windows: s.windows && typeof s.windows === 'object' ? s.windows : {},
+      windows: {},
       lastScannedBlock: Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
       eventFilterVersion: 4,
       pending: [],
@@ -151,14 +151,13 @@ function decodeLiquidation(log) {
   } catch {
     return null;
   }
-  if (markPrice <= 0n) return null;
+  if (markPrice <= 0n || bustPrice <= 0n) return null;
 
-  // Infer instrument from the mark price even if bustPrice is missing/zero;
-  // unknown direction must not prevent the liquidation from entering its summary.
+  // Current protocol price ranges: BTC is >= 500,000; ETH is below this boundary.
   const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
-  const side = bustPrice > 0n
-    ? (markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null)
-    : null;
+  // The event's markPrice is the observed mark and bustPrice is the liquidation threshold.
+  // A LONG is liquidated when markPrice falls below bustPrice; a SHORT when it rises above.
+  const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
   return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
 }
 
@@ -431,27 +430,27 @@ async function poll() {
       }));
     }
 
-    // Aggregate every uniquely observed liquidation into its 5-minute instrument bucket.
-    // No LIQS/side/span/cascade/series thresholds are used to decide whether to alert.
+    // Reset alert rules: alert every unique log matching the Liquidated contract topic.
+    // Decoding failure, side, position repetition, 5-minute totals, and BTC/ETH comparison
+    // must never suppress the event. Deduplication is only by transaction hash + log index.
     const symbol = classified?.instrument || null;
-    if (symbol) {
-      const start = periodStart(chainEvent.ts);
-      const bucket = getWindow(start, symbol);
-      bucket.total += 1;
-      if (classified.side === 'LONG') bucket.long += 1;
-      if (classified.side === 'SHORT') bucket.short += 1;
-      if (!Array.isArray(bucket.timestamps)) bucket.timestamps = [];
-      bucket.timestamps.push(chainEvent.ts);
-      if (bucket.firstLiquidationAt == null || chainEvent.ts < bucket.firstLiquidationAt) bucket.firstLiquidationAt = chainEvent.ts;
-      if (bucket.lastLiquidationAt == null || chainEvent.ts > bucket.lastLiquidationAt) bucket.lastLiquidationAt = chainEvent.ts;
-      if (!Array.isArray(bucket.positionIds)) bucket.positionIds = [];
-      bucket.positionIds.push(chainEvent.positionId);
-    }
+    const marketStart = periodStart(chainEvent.ts);
+    const marketId = Math.floor(marketStart / 1000) + (WINDOW_MS / 1000);
+    const eventMessage = symbol
+      ? alertText(symbol, chainEvent.ts, chainEvent.positionId)
+      : [
+          '<b>PAPERTRADE LIQUIDATION</b>',
+          `TIME: ${new Date(chainEvent.ts).toISOString()}`,
+          chainEvent.positionId == null ? null : `POSITION: ${esc(chainEvent.positionId)}`,
+          `BLOCK: ${blockNumber}`,
+          `TX: ${esc(chainEvent.transactionHash)}`,
+        ].filter(Boolean).join(String.fromCharCode(10));
+    await send(eventMessage);
     seen.add(key);
     if (classified) decoded++;
     saveState();
     console.log(JSON.stringify({
-      level: 'info', event: 'liquidation_event_aggregated',
+      level: 'info', event: 'liquidation_event_alert_sent',
       instrument: symbol || 'UNKNOWN',
       side: classified?.side || 'UNKNOWN',
       positionId: chainEvent.positionId,
@@ -471,39 +470,6 @@ async function poll() {
   }
   if (highestObservedBlock != null && latestBlock == null) {
     state.lastScannedBlock = Math.max(state.lastScannedBlock ?? 0, highestObservedBlock - WS_CURSOR_SAFETY_BLOCKS);
-  }
-
-  // DEPLOYMENT_TRIGGER_2026_10_21: Send one summary for each instrument after its 5-minute period has ended.
-  for (const bucket of Object.values(windows)) {
-    if (bucket.alerted || Number(bucket.start) + WINDOW_MS > now) continue;
-    const symbol = bucket.instrument;
-    const marketId = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
-    const timestamps = (Array.isArray(bucket.timestamps) ? bucket.timestamps : []).map(Number).sort((a,b) => a-b);
-    const seconds = new Set(timestamps.map(ts => Math.floor(ts / 2000))).size;
-    let cascade = 0;
-    let run = 0;
-    for (let i = 0; i < timestamps.length; i++) {
-      if (i === 0 || timestamps[i] - timestamps[i - 1] <= CASCADE_GAP_MS) run++;
-      else { if (run >= 2) cascade++; run = 1; }
-    }
-    if (run >= 2) cascade++;
-    const span = timestamps.length ? Math.max(0, Math.round((timestamps[timestamps.length - 1] - timestamps[0]) / 1000)) : 0;
-    const series = cascade;
-    const message = [
-      `<b>${esc(symbol)} 5m</b>`,
-      `LIQS: ${Number(bucket.total) || 0}`,
-      `LONG: ${Number(bucket.long) || 0}`,
-      `SHORT: ${Number(bucket.short) || 0}`,
-      `SECONDS: ${seconds}`,
-      `LIQ SPAN: ${span}s`,
-      `CASCADE: ${cascade}`,
-      `SERIES: ${series}`,
-      `https://polymarket.com/event/${symbol.toLowerCase()}-updown-5m-${marketId}`,
-    ].join(String.fromCharCode(10));
-    await send(message);
-    bucket.alerted = true;
-    saveState();
-    console.log(JSON.stringify({ level: 'info', event: 'liquidation_period_summary_sent', instrument: symbol, periodStart: bucket.start, liqs: bucket.total }));
   }
 
   const processedLogKeys = new Set(logs.map(eventKey));
@@ -531,7 +497,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info',
   event: 'monitor_started',
-  mode: 'unfiltered_5m_period_summary',
+  mode: 'every_unique_liquidation_event_immediate',
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
