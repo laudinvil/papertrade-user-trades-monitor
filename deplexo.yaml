@@ -5,4 +5,4 @@ build:
   framework: dockerfile
   dockerfile: Dockerfile
 
-# Trigger a fresh GitHub push event for Deplexo auto-deploy (long <= 6 filter update).
+# Trigger a fresh GitHub push event for Deplexo auto-deploy (prefer fewer BTC/ETH long liquidations).
