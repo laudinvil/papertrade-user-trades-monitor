@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v11-no-thresholds-current-market-link';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v12-no-backlog-alert-spam';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -419,9 +419,28 @@ async function poll() {
     .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
     .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
 
-  // No liquidation thresholds or distribution filters: send one summary for each
-  // completed BTC/ETH 5-minute window that has at least one liquidation.
+  // Never replay a backlog of old 5-minute alerts after downtime/restarts.
+  // Only send a window that just closed; older unalerted windows are permanently skipped.
+  const MAX_ALERT_DELAY_MS = 60_000;
   for (const bucket of completedWindows) {
+    const closedAt = Number(bucket.start) + WINDOW_MS;
+    if (now - closedAt > MAX_ALERT_DELAY_MS) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_stale',
+        instrument: bucket.instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        ageMs: now - closedAt,
+        maxAlertDelayMs: MAX_ALERT_DELAY_MS,
+      }));
+      saveState();
+    }
+  }
+
+  const freshCompletedWindows = completedWindows.filter(bucket => !bucket.alerted);
+  // No liquidation thresholds or distribution filters: send one summary for each
+  // freshly completed BTC/ETH 5-minute window that has at least one liquidation.
+  for (const bucket of freshCompletedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
     if (instrument !== 'BTC' && instrument !== 'ETH') {
       bucket.alerted = true;
