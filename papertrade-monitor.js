@@ -12,8 +12,8 @@ const WINDOW_MS = 5 * 60 * 1000;
 const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
-const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v8-correct-topic-cascade-series-above-3';
+const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v9-restore-btc-alert-era-logic';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -487,8 +487,8 @@ async function poll() {
       continue;
     }
 
-    // Ignore CASCADE <= 3 or SERIES <= 3; both values must be strictly greater than 3.
-    if (cascades.cascadeCount <= 3 || cascades.maxCascade <= 3) {
+    // Restore alert-era thresholds: SERIES >= 2 and CASCADE >= 3.
+    if (cascades.cascadeCount < 2 || cascades.maxCascade < 3) {
       bucket.alerted = true;
       saveState();
       console.log(JSON.stringify({
@@ -496,7 +496,7 @@ async function poll() {
         instrument, periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs, short: shortLiqs,
         cascade: cascades.maxCascade, series: cascades.cascadeCount,
-        minimumSeriesExclusive: 3, minimumCascadeExclusive: 3,
+        minimumSeries: 2, minimumCascade: 3,
       }));
       continue;
     }
@@ -526,21 +526,6 @@ async function poll() {
       }));
       continue;
     }
-    // Suppress an alert if the immediately preceding 5-minute period also sent an alert.
-    // This is global across BTC/ETH because the monitor sends at most one alert per period.
-    const previousAlertPeriod = Number(state.lastSentAlertPeriodStart);
-    if (Number.isFinite(previousAlertPeriod) && Number(bucket.start) - previousAlertPeriod === WINDOW_MS) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_suppressed_consecutive_alert_period',
-        instrument, periodStart: new Date(bucket.start).toISOString(),
-        previousAlertPeriodStart: new Date(previousAlertPeriod).toISOString(),
-        reason: 'previous_5m_period_already_sent_alert',
-      }));
-      continue;
-    }
-
     // Diagnostic-only cross-check against Papertrade's public recent-trades feed.
     // It does not alter alert counts; at most one public API request is made per poll.
     if (recentTradeSides === null && recentTradeSidesError === null) {
@@ -589,7 +574,6 @@ async function poll() {
       eventKeys: Array.isArray(bucket.eventKeys) ? bucket.eventKeys.length : null,
     }));
     bucket.alerted = true;
-    state.lastSentAlertPeriodStart = Number(bucket.start);
     saveState();
   }
 
