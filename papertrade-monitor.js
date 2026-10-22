@@ -437,6 +437,19 @@ async function poll() {
     }
 
     const longLiqs = Number(bucket.long || 0);
+    if (longLiqs <= 6) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_long_at_or_below_maximum',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        long: longLiqs,
+        maximumLong: 6,
+      }));
+      continue;
+    }
     const shortLiqs = Number(bucket.short || 0);
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
