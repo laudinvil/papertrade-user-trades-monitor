@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v19-span298-two-markets';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-23-v20-peak-liqs-per-second';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -194,6 +194,18 @@ function liqSpanSeconds(bucket) {
     : 0;
 }
 
+function peakLiqsPerSecond(bucket) {
+  const timestamps = (Array.isArray(bucket.liquidationTimestamps) ? bucket.liquidationTimestamps : [])
+    .map(Number)
+    .filter(ts => Number.isFinite(ts) && ts > 0);
+  const countsBySecond = new Map();
+  for (const ts of timestamps) {
+    const second = Math.floor(ts / 1000);
+    countsBySecond.set(second, (countsBySecond.get(second) || 0) + 1);
+  }
+  return countsBySecond.size ? Math.max(...countsBySecond.values()) : 0;
+}
+
 function cascadeStats(bucket) {
   const timestamps = (Array.isArray(bucket.liquidationTimestamps) ? bucket.liquidationTimestamps : [])
     .map(Number)
@@ -247,6 +259,7 @@ function alertText(bucket) {
     `SHORT: ${Number(bucket.short || 0)}`,
     `SECONDS: ${Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0}`,
     `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
+    `PEAK: ${peakLiqsPerSecond(bucket)} liqs/s`,
     `CASCADE: ${cascadeStats(bucket).maxCascade}`,
     `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     `<a href="${nextMarketUrl}">Начинающийся маркет</a>`,
