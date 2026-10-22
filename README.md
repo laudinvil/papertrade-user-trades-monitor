@@ -6,7 +6,7 @@ Independent, read-only Telegram monitor for liquidation events emitted by the co
 
 - NodeFlare HyperEVM JSON-RPC and WebSocket endpoints, authenticated with `NODEFLARE_API_KEY`.
 - Contract address: `0x6cd5661646289fb6e65ea5c032310fded797d0a2`.
-- Event signature topic: `0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8` (`Liquidated`).
+- Event signature topic: `0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf` (`Liquidated`).
 - The monitor subscribes to contract logs over WebSocket and recovers missed blocks through `eth_getLogs` after reconnects.
 - This implementation does **not** use the `get_recent_trades` API described by older documentation and does not subscribe to Hyperliquid exchange liquidation trades.
 
