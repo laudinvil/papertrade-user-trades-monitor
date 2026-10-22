@@ -1,17 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const LEADERBOARD_URL = "https://sharkradar.app/polymarket-leaderboard";
+const LEADERBOARD_URL = "https://sharkradar.app/polymarket-leaderboard".trim();
 const ACTIVITY_URL = "https://data-api.polymarket.com/activity";
 const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_000));
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-6-heading-removal-redeploy-check";
+const VERSION = "shark-radar-standalone-7-trim-request-url";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
 async function request(url, accept = "*/*") {
+  // Normalize accidental whitespace/newlines before making the HTTP request.
+  url = String(url).trim();
   const res = await fetch(url, {
     headers: { "user-agent": "Mozilla/5.0 SharkRadarLeaderMonitor/1.0", accept },
     signal: AbortSignal.timeout(20_000),
