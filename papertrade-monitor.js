@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v15-accept-zero-bust-price';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v16-max-six-liqs';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -445,8 +445,8 @@ async function poll() {
   }
 
   const freshCompletedWindows = completedWindows.filter(bucket => !bucket.alerted);
-  // Send only completed BTC/ETH 5-minute windows with zero or one liquidation.
-  // Side counts, cascade and series are informational; windows with 2+ liquidations are suppressed.
+  // Send only completed BTC/ETH 5-minute windows with at most six liquidations.
+  // Side counts, cascade and series are informational; windows with 7+ liquidations are suppressed.
   for (const bucket of freshCompletedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
     if (instrument !== 'BTC' && instrument !== 'ETH') {
@@ -456,14 +456,14 @@ async function poll() {
     }
 
     const totalLiqs = Number(bucket.total || 0);
-    if (totalLiqs > 5) {
+    if (totalLiqs > 6) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_above_maximum',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        maximumLiqs: 5,
+        maximumLiqs: 6,
       }));
       saveState();
       continue;
@@ -579,7 +579,7 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
-  alertPolicy: 'liquidations_0_or_1_only',
+  alertPolicy: 'liquidations_0_to_6',
   marketLinkOffsetPeriods: 2,
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
