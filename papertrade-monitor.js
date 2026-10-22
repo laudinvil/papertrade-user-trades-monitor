@@ -519,8 +519,9 @@ async function poll() {
           audit.mismatches++;
           // Prefer the explicit position side returned by Papertrade when a
           // position ID matches; update the bucket before composing the alert.
-          if (sample.inferredSide === 'LONG') bucket.long = Math.max(0, Number(bucket.long || 0) - 1);
-          else if (sample.inferredSide === 'SHORT') bucket.short = Math.max(0, Number(bucket.short || 0) - 1);
+          const previousSide = sample.inferredSide;
+          if (previousSide === 'LONG') bucket.long = Math.max(0, Number(bucket.long || 0) - 1);
+          else if (previousSide === 'SHORT') bucket.short = Math.max(0, Number(bucket.short || 0) - 1);
           else bucket.unknownSide = Math.max(0, Number(bucket.unknownSide || 0) - 1);
           if (apiSide === 'LONG') {
             bucket.long = Number(bucket.long || 0) + 1;
@@ -530,7 +531,7 @@ async function poll() {
             audit.correctedToShort++;
           }
           sample.inferredSide = apiSide;
-          if (audit.examples.length < 5) audit.examples.push({ positionId: sample.positionId, previousSide: sample.inferredSide, apiSide, markPrice: sample.markPrice, bustPrice: sample.bustPrice });
+          if (audit.examples.length < 5) audit.examples.push({ positionId: sample.positionId, previousSide, apiSide, markPrice: sample.markPrice, bustPrice: sample.bustPrice });
         }
       }
       console.log(JSON.stringify({ level: 'info', event: 'liquidation_side_audit', instrument, periodStart: new Date(bucket.start).toISOString(), ...audit, apiEventsAvailable: recentTradeSides.size, source: 'papertrade_public_recent_trades', mode: 'explicit_side_override' }));
