@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v16-max-six-liqs';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v17-count-events';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -383,13 +383,16 @@ async function poll() {
     const positionKey = positionId && chainEvent.user
       ? `${String(chainEvent.user).toLowerCase()}:${positionId}`
       : positionId;
-    if (bucket.eventKeys.includes(key) || (positionKey && bucket.positionKeys.includes(positionKey))) {
+    // Count each distinct on-chain Liquidated log as an event. Multiple
+    // liquidation logs for the same position are still separate events; the
+    // position key is retained only for a unique-position diagnostic.
+    if (bucket.eventKeys.includes(key)) {
       seen.add(key);
       continue;
     }
     bucket.eventKeys.push(key);
-    if (positionKey) bucket.positionKeys.push(positionKey);
-    if (positionId) bucket.positionIds.push(positionId);
+    if (positionKey && !bucket.positionKeys.includes(positionKey)) bucket.positionKeys.push(positionKey);
+    if (positionId && !bucket.positionIds.includes(positionId)) bucket.positionIds.push(positionId);
     if (!Array.isArray(bucket.liquidationSeconds)) bucket.liquidationSeconds = [];
     if (!Array.isArray(bucket.liquidationTimestamps)) bucket.liquidationTimestamps = [];
     bucket.liquidationTimestamps.push(chainEvent.ts);
@@ -561,7 +564,11 @@ async function poll() {
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
       decodedByInstrument,
-      liquidationWindowsByInstrument: {
+      currentFiveMinuteWindowByInstrument: {
+        BTC: Number(getWindow(currentStart, 'BTC').total || 0),
+        ETH: Number(getWindow(currentStart, 'ETH').total || 0),
+      },
+      retainedWindowsEventTotalsByInstrument: {
         BTC: Object.values(windows).filter(bucket => bucket.instrument === 'BTC').reduce((sum, bucket) => sum + Number(bucket.total || 0), 0),
         ETH: Object.values(windows).filter(bucket => bucket.instrument === 'ETH').reduce((sum, bucket) => sum + Number(bucket.total || 0), 0),
       },
