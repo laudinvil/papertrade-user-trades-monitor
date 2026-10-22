@@ -13,6 +13,7 @@ function start(service, restartCount = 0) {
   const child = spawn(process.execPath, [service.script], { stdio: "inherit", env: process.env });
   children.set(service.name, child);
   child.on("error", error => {
+    if (stopping) return;
     console.error(JSON.stringify({ level: "error", event: "service_spawn_error", service: service.name, message: error.message }));
   });
   child.on("exit", (code, signal) => {
@@ -29,11 +30,10 @@ function shutdown(signal) {
   if (stopping) return;
   stopping = true;
   console.log(JSON.stringify({ level: "info", event: "supervisor_stopping", signal }));
-  for (const child of children.values()) child.kill("SIGTERM");
-  setTimeout(() => {
-    for (const child of children.values()) child.kill("SIGKILL");
-    process.exit(0);
-  }, 8000).unref();
+  // Deplexo may deny signalling child processes (EACCES). During container shutdown,
+  // stop supervising immediately and let the platform terminate the container process group.
+  process.exitCode = 0;
+  setTimeout(() => process.exit(0), 100).unref();
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
