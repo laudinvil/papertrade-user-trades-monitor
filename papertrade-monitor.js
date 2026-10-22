@@ -456,14 +456,14 @@ async function poll() {
     }
 
     const totalLiqs = Number(bucket.total || 0);
-    if (totalLiqs > 4) {
+    if (totalLiqs > 5) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_above_maximum',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqs: totalLiqs,
-        maximumLiqs: 4,
+        maximumLiqs: 5,
       }));
       saveState();
       continue;
