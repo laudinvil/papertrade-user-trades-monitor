@@ -466,14 +466,14 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    if (currentSpanSeconds < 298) {
+    if (currentSpanSeconds < 0) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_liq_span_below_minimum',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         liqSpanSeconds: currentSpanSeconds,
-        minimumLiqSpanSeconds: 298,
+        minimumLiqSpanSeconds: 0,
         liqs: totalLiqs,
       }));
       saveState();
@@ -587,7 +587,7 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
-  alertPolicy: 'completed_btc_eth_5m_windows_liq_span_gte_298',
+  alertPolicy: 'completed_btc_eth_5m_windows_liq_span_gte_0',
   marketLinkOffsetsPeriods: [1, 3],
   minimumLiqSpanSeconds: 298,
   pollMs: POLL_MS,
