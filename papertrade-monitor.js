@@ -437,6 +437,29 @@ async function poll() {
     }
 
     const longLiqs = Number(bucket.long || 0);
+    const counterpartInstrument = instrument === 'BTC' ? 'ETH' : 'BTC';
+    const counterpart = windows[`${Number(bucket.start)}:${counterpartInstrument}`]
+      || Object.values(windows).find(candidate =>
+        Number(candidate.start) === Number(bucket.start)
+        && String(candidate.instrument || '').toUpperCase() === counterpartInstrument
+      );
+    const counterpartLongLiqs = Number(counterpart?.long || 0);
+    if (longLiqs > 0 && counterpartLongLiqs > 0 && longLiqs >= counterpartLongLiqs) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info',
+        event: longLiqs === counterpartLongLiqs
+          ? 'liquidation_5m_alert_suppressed_equal_btc_eth_longs'
+          : 'liquidation_5m_alert_suppressed_higher_btc_eth_longs',
+        instrument,
+        counterpartInstrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        long: longLiqs,
+        counterpartLong: counterpartLongLiqs,
+      }));
+      continue;
+    }
     if (longLiqs <= 6) {
       bucket.alerted = true;
       saveState();
