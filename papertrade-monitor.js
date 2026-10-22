@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v14-confirmed-topic-liqs-0-or-1-next-market';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v15-accept-zero-bust-price';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -164,9 +164,13 @@ function decodeLiquidation(log) {
   } catch {
     return { error: 'price_word_parse_failed', dataLength: data.length + 2, dataWords: data.length / 64, firstWords: [data.slice(0, 64), data.slice(64, 128)] };
   }
-  if (markPrice <= 0n || bustPrice <= 0n) {
+  // A zero bustPrice is present in live Liquidated logs. Do not discard the
+  // liquidation solely for that value: retain its count and leave direction unknown.
+  // Only markPrice is used to distinguish the instrument; side is inferred only
+  // when both prices are positive and comparable.
+  if (markPrice <= 0n) {
     return {
-      error: 'zero_or_negative_price',
+      error: 'zero_or_negative_mark_price',
       dataLength: data.length + 2,
       dataWords: data.length / 64,
       markPrice: markPrice.toString(),
@@ -177,8 +181,10 @@ function decodeLiquidation(log) {
 
   // Current protocol price ranges: BTC is >= 500,000; ETH is below this boundary.
   const instrument = markPrice >= 500000n ? 'BTC' : 'ETH';
-  // A LONG is liquidated when markPrice falls below bustPrice; a SHORT when it rises above.
-  const side = markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null;
+  // Do not guess LONG/SHORT when bustPrice is zero or unavailable.
+  const side = bustPrice > 0n
+    ? (markPrice < bustPrice ? 'LONG' : markPrice > bustPrice ? 'SHORT' : null)
+    : null;
   return { instrument, side, markPrice: markPrice.toString(), bustPrice: bustPrice.toString() };
 }
 
