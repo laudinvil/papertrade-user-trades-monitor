@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v10-no-liquidation-alert-filters';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v11-no-thresholds-current-market-link';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -227,7 +227,7 @@ function alertText(bucket) {
   if (instrument !== 'BTC' && instrument !== 'ETH') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
-  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (2 * WINDOW_MS / 1000);
+  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   const totalLiqs = Number(bucket.total || 0);
   const longLiqs = Number(bucket.long || 0);
@@ -436,43 +436,6 @@ async function poll() {
       continue;
     }
 
-    const longLiqs = Number(bucket.long || 0);
-    const counterpartInstrument = instrument === 'BTC' ? 'ETH' : 'BTC';
-    const counterpart = windows[`${Number(bucket.start)}:${counterpartInstrument}`]
-      || Object.values(windows).find(candidate =>
-        Number(candidate.start) === Number(bucket.start)
-        && String(candidate.instrument || '').toUpperCase() === counterpartInstrument
-      );
-    const counterpartLongLiqs = Number(counterpart?.long || 0);
-    if (longLiqs > 0 && counterpartLongLiqs > 0 && longLiqs >= counterpartLongLiqs) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info',
-        event: longLiqs === counterpartLongLiqs
-          ? 'liquidation_5m_alert_suppressed_equal_btc_eth_longs'
-          : 'liquidation_5m_alert_suppressed_higher_btc_eth_longs',
-        instrument,
-        counterpartInstrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        long: longLiqs,
-        counterpartLong: counterpartLongLiqs,
-      }));
-      continue;
-    }
-    if (longLiqs <= 6) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_long_at_or_below_maximum',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        long: longLiqs,
-        maximumLong: 6,
-      }));
-      continue;
-    }
     const shortLiqs = Number(bucket.short || 0);
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
