@@ -5,4 +5,4 @@ build:
   framework: dockerfile
   dockerfile: Dockerfile
 
-# Trigger a fresh GitHub push event for Deplexo auto-deploy.
+# Trigger a fresh GitHub push event for Deplexo auto-deploy (2026-10-22 diagnostics commit).
