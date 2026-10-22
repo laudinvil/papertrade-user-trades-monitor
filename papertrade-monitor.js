@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v15-accept-zero-bust-price';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v16-liqs-5-series-cascade-filter';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -445,8 +445,8 @@ async function poll() {
   }
 
   const freshCompletedWindows = completedWindows.filter(bucket => !bucket.alerted);
-  // Send only completed BTC/ETH 5-minute windows with zero or one liquidation.
-  // Side counts, cascade and series are informational; windows with 2+ liquidations are suppressed.
+  // Send only completed BTC/ETH 5-minute windows with at least five liquidations,
+  // excluding low-structure windows where SERIES <= 1 and max CASCADE <= 2.
   for (const bucket of freshCompletedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
     if (instrument !== 'BTC' && instrument !== 'ETH') {
@@ -456,24 +456,40 @@ async function poll() {
     }
 
     const totalLiqs = Number(bucket.total || 0);
-    if (totalLiqs > 1) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_alert_suppressed_above_maximum',
-        instrument,
-        periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs,
-        maximumLiqs: 1,
-      }));
-      saveState();
-      continue;
-    }
-
     const shortLiqs = Number(bucket.short || 0);
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
+
+    if (totalLiqs < 5) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_below_minimum',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        minimumLiqs: 5,
+      }));
+      saveState();
+      continue;
+    }
+
+    if (cascades.cascadeCount <= 1 && cascades.maxCascade <= 2) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_low_series_cascade',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        series: cascades.cascadeCount,
+        maxCascade: cascades.maxCascade,
+        minimumSeriesExclusive: 1,
+        minimumMaxCascadeExclusive: 2,
+      }));
+      saveState();
+      continue;
+    }
 
     // Side counts, seconds, span, cascade and series are informational only.
     // They do not filter alerts.
@@ -579,7 +595,7 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
-  alertPolicy: 'liquidations_0_or_1_only',
+  alertPolicy: 'liqs_5_plus_ignore_series_le_1_and_cascade_le_2',
   marketLinkOffsetPeriods: 2,
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
