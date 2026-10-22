@@ -251,7 +251,7 @@ function alertText(bucket) {
     `CASCADE: ${cascadeStats(bucket).maxCascade}`,
     `SERIES: ${cascadeStats(bucket).cascadeCount}`,
     `<a href="${marketStartUrl}">Начинающийся маркет</a>`,
-    `<a href="${marketAfterOneUrl}">Маркет через один</a>`,
+    `<a href="${marketAfterOneUrl}">Следующий маркет</a>`,
   ].join(String.fromCharCode(10));
 }
 
