@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v12-no-backlog-alert-spam';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v13-liqs-0-or-1-next-next-market';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -227,7 +227,8 @@ function alertText(bucket) {
   if (instrument !== 'BTC' && instrument !== 'ETH') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
-  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (WINDOW_MS / 1000);
+  // Link one complete 5-minute market period beyond the immediately next market.
+  const nextPeriodStartSeconds = Math.floor(Number(bucket.start) / 1000) + (2 * WINDOW_MS / 1000);
   const polymarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${nextPeriodStartSeconds}`;
   const totalLiqs = Number(bucket.total || 0);
   const longLiqs = Number(bucket.long || 0);
@@ -438,8 +439,8 @@ async function poll() {
   }
 
   const freshCompletedWindows = completedWindows.filter(bucket => !bucket.alerted);
-  // No liquidation thresholds or distribution filters: send one summary for each
-  // freshly completed BTC/ETH 5-minute window that has at least one liquidation.
+  // Send only completed BTC/ETH 5-minute windows with zero or one liquidation.
+  // Side counts, cascade and series are informational; windows with 2+ liquidations are suppressed.
   for (const bucket of freshCompletedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
     if (instrument !== 'BTC' && instrument !== 'ETH') {
@@ -449,8 +450,15 @@ async function poll() {
     }
 
     const totalLiqs = Number(bucket.total || 0);
-    if (totalLiqs <= 0) {
+    if (totalLiqs > 1) {
       bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_above_maximum',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        liqs: totalLiqs,
+        maximumLiqs: 1,
+      }));
       saveState();
       continue;
     }
@@ -565,7 +573,8 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
-  alertPolicy: 'no_liquidation_thresholds_or_distribution_filters',
+  alertPolicy: 'liquidations_0_or_1_only',
+  marketLinkOffsetPeriods: 2,
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
