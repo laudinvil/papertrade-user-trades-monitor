@@ -11,9 +11,8 @@ const SEEN_LIMIT = 10000;
 const WINDOW_MS = 5 * 60 * 1000;
 const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
-const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-23-v21-side-correction-peak';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-23-v22-rpc-only-side-audit';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -132,26 +131,6 @@ function getWindow(start, instrument) {
   return windows[key];
 }
 
-async function getRecentLiquidationSides() {
-  const response = await fetch(RECENT_TRADES_URL, {
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!response.ok) throw new Error(`Papertrade recent-trades HTTP ${response.status}`);
-  const payload = await response.json();
-  if (!Array.isArray(payload?.events)) throw new Error('Papertrade recent-trades response has no events array');
-  const sides = new Map();
-  for (const event of payload.events) {
-    // The recent-trades endpoint can label liquidation records differently (or
-    // omit kind). Match by position ID + explicit side instead of requiring one
-    // exact kind string.
-    const positionId = event?.positionId ?? event?.position_id;
-    if (positionId == null) continue;
-    const side = String(event.side || event.positionSide || event.position_side || '').toUpperCase();
-    if (side === 'LONG' || side === 'SHORT') sides.set(String(positionId), side);
-  }
-  return sides;
-}
 
 function decodeLiquidation(log) {
   // Liquidated(uint256 indexed positionId, address indexed user,
@@ -397,7 +376,6 @@ async function poll() {
     if (!Array.isArray(bucket.eventKeys)) bucket.eventKeys = [];
     if (!Array.isArray(bucket.positionIds)) bucket.positionIds = [];
     if (!Array.isArray(bucket.positionKeys)) bucket.positionKeys = [];
-    if (!Array.isArray(bucket.sideAuditSamples)) bucket.sideAuditSamples = [];
     const positionId = chainEvent.positionId == null ? null : String(chainEvent.positionId);
     const positionKey = positionId && chainEvent.user
       ? `${String(chainEvent.user).toLowerCase()}:${positionId}`
@@ -425,7 +403,6 @@ async function poll() {
     if (classified.side === 'LONG') bucket.long++;
     else if (classified.side === 'SHORT') bucket.short++;
     else bucket.unknownSide = Number(bucket.unknownSide || 0) + 1;
-    if (positionId) bucket.sideAuditSamples.push({ positionId, inferredSide: classified.side, markPrice: classified.markPrice, bustPrice: classified.bustPrice });
     seen.add(key);
     decoded++;
   }
@@ -442,8 +419,6 @@ async function poll() {
   saveState();
 
   let alerts = 0;
-  let recentTradeSides = null;
-  let recentTradeSidesError = null;
   const completedWindows = Object.values(windows)
     .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
     .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
@@ -467,7 +442,7 @@ async function poll() {
   }
 
   const freshCompletedWindows = completedWindows.filter(bucket => !bucket.alerted);
-  // Only send alerts when LIQ SPAN is at least 298 seconds.
+  // LIQ SPAN >= 0 is the configured alert condition; no API side correction is used.
   for (const bucket of freshCompletedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
     if (instrument !== 'BTC' && instrument !== 'ETH') {
@@ -495,48 +470,6 @@ async function poll() {
       }));
       saveState();
       continue;
-    }
-
-    // LIQ SPAN >= 298 seconds is the only alert threshold.
-    if (recentTradeSides === null && recentTradeSidesError === null) {
-      try {
-        recentTradeSides = await getRecentLiquidationSides();
-      } catch (error) {
-        recentTradeSidesError = String(error?.message || error);
-      }
-    }
-    if (recentTradeSides instanceof Map) {
-      const audit = { matched: 0, mismatches: 0, apiLong: 0, apiShort: 0, inferredLong: 0, inferredShort: 0, correctedToLong: 0, correctedToShort: 0, examples: [] };
-      for (const sample of (Array.isArray(bucket.sideAuditSamples) ? bucket.sideAuditSamples : [])) {
-        const apiSide = recentTradeSides.get(String(sample.positionId));
-        if (sample.inferredSide === 'LONG') audit.inferredLong++;
-        else if (sample.inferredSide === 'SHORT') audit.inferredShort++;
-        if (!apiSide) continue;
-        audit.matched++;
-        if (apiSide === 'LONG') audit.apiLong++;
-        else audit.apiShort++;
-        if (sample.inferredSide !== apiSide) {
-          audit.mismatches++;
-          // Prefer the explicit position side returned by Papertrade when a
-          // position ID matches; update the bucket before composing the alert.
-          const previousSide = sample.inferredSide;
-          if (previousSide === 'LONG') bucket.long = Math.max(0, Number(bucket.long || 0) - 1);
-          else if (previousSide === 'SHORT') bucket.short = Math.max(0, Number(bucket.short || 0) - 1);
-          else bucket.unknownSide = Math.max(0, Number(bucket.unknownSide || 0) - 1);
-          if (apiSide === 'LONG') {
-            bucket.long = Number(bucket.long || 0) + 1;
-            audit.correctedToLong++;
-          } else {
-            bucket.short = Number(bucket.short || 0) + 1;
-            audit.correctedToShort++;
-          }
-          sample.inferredSide = apiSide;
-          if (audit.examples.length < 5) audit.examples.push({ positionId: sample.positionId, previousSide, apiSide, markPrice: sample.markPrice, bustPrice: sample.bustPrice });
-        }
-      }
-      console.log(JSON.stringify({ level: 'info', event: 'liquidation_side_audit', instrument, periodStart: new Date(bucket.start).toISOString(), ...audit, apiEventsAvailable: recentTradeSides.size, source: 'papertrade_public_recent_trades', mode: 'explicit_side_override' }));
-    } else if (recentTradeSidesError) {
-      console.warn(JSON.stringify({ level: 'warn', event: 'liquidation_side_audit_unavailable', instrument, periodStart: new Date(bucket.start).toISOString(), reason: recentTradeSidesError }));
     }
 
     // Persist the per-window send claim BEFORE calling Telegram. This makes
@@ -626,7 +559,7 @@ console.log(JSON.stringify({
   contract: CONTRACT,
   liquidationEventTopic: LIQUIDATED_TOPIC,
   chainId: '0x3e7',
-  endpoint: 'NodeFlare HTTP RPC eth_getLogs only',
+  endpoint: 'NodeFlare HTTP RPC eth_getLogs only; side source: on-chain event only',
   statePath: STATE_PATH,
 }));
 
