@@ -490,7 +490,24 @@ async function poll() {
       console.warn(JSON.stringify({ level: 'warn', event: 'liquidation_side_audit_unavailable', instrument, periodStart: new Date(bucket.start).toISOString(), reason: recentTradeSidesError }));
     }
 
-    await send(alertText(bucket));
+    // Persist the per-window send claim BEFORE calling Telegram. This makes
+    // delivery at-most-once across restarts, preventing duplicate messages if
+    // Telegram accepts the message but the process exits before saving state.
+    bucket.alerted = true;
+    bucket.alertClaimedAt = Date.now();
+    saveState();
+    try {
+      await send(alertText(bucket));
+    } catch (error) {
+      console.error(JSON.stringify({
+        level: 'error', event: 'liquidation_5m_alert_send_failed',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        error: String(error?.message || error),
+        note: 'Window remains claimed to prevent duplicate Telegram alerts.',
+      }));
+      throw error;
+    }
     alerts++;
     console.log(JSON.stringify({
       level: 'info', event: 'liquidation_5m_alert_sent',
