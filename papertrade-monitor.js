@@ -233,11 +233,10 @@ function alertText(bucket) {
   if (instrument !== 'BTC' && instrument !== 'ETH') {
     throw new Error(`Unsupported liquidation instrument: ${instrument}`);
   }
-  // Link the market starting immediately after this window and the market
-  // after one intervening 5-minute market (period offsets +1 and +3).
+  // Link the immediately upcoming market and the market after one intervening 5-minute market.
   const windowStartSeconds = Math.floor(Number(bucket.start) / 1000);
-  const marketStartUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${windowStartSeconds + (WINDOW_MS / 1000)}`;
-  const marketAfterOneUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${windowStartSeconds + (3 * WINDOW_MS / 1000)}`;
+  const nextMarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${windowStartSeconds + (WINDOW_MS / 1000)}`;
+  const followingMarketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${windowStartSeconds + (2 * WINDOW_MS / 1000)}`;
   const totalLiqs = Number(bucket.total || 0);
   const longLiqs = Number(bucket.long || 0);
   const shortLiqs = Number(bucket.short || 0);
@@ -250,8 +249,8 @@ function alertText(bucket) {
     `LIQ SPAN: ${liqSpanSeconds(bucket)}s`,
     `CASCADE: ${cascadeStats(bucket).maxCascade}`,
     `SERIES: ${cascadeStats(bucket).cascadeCount}`,
-    `<a href="${marketStartUrl}">Начинающийся маркет</a>`,
-    `<a href="${marketAfterOneUrl}">Следующий маркет</a>`,
+    `<a href="${nextMarketUrl}">Начинающийся маркет</a>`,
+    `<a href="${followingMarketUrl}">Следующий маркет</a>`,
   ].join(String.fromCharCode(10));
 }
 
