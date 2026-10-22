@@ -74,22 +74,41 @@ jobs:
           fi
           SHA="${REQUESTED_SHA:-$PUSH_SHA}"
           echo "Requesting manual rebuild for $SHA"
-          RESPONSE="$(curl --silent --show-error \
-            -X POST \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
-            -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
-          BODY="${RESPONSE%$'\n'HTTP_STATUS:*}"
-          STATUS="${RESPONSE##*HTTP_STATUS:}"
+          BODY=""
+          STATUS="000"
+          for ATTEMPT in 1 2 3 4 5; do
+            RESPONSE="$(curl --silent --show-error \
+              -X POST \
+              -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              --data "$(jq -nc --arg sha "$SHA" '{commitSha:$sha}')" \
+              -w '\nHTTP_STATUS:%{http_code}' "$BASE/apps/$APP_ID/restart")"
+            BODY="${RESPONSE%
+\n'HTTP_STATUS:*}"
+            STATUS="${RESPONSE##*HTTP_STATUS:}"
+            printf 'Deplexo restart attempt %s/5 returned HTTP %s\n' "$ATTEMPT" "$STATUS"
+            if [[ "$STATUS" -ge 200 && "$STATUS" -lt 300 ]]; then
+              break
+            fi
+            if [[ "$STATUS" == "409" ]]; then
+              echo "::error::A deployment is already running. No cancellation was attempted."
+              exit 1
+            fi
+            if [[ "$STATUS" -lt 500 && "$STATUS" != "429" ]]; then
+              echo "::error::Non-retryable manual rebuild failure with HTTP $STATUS."
+              printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
+              exit 1
+            fi
+            if [[ "$ATTEMPT" -lt 5 ]]; then
+              DELAY=$((ATTEMPT * 10))
+              echo "Transient Deplexo error; retrying in ${DELAY}s."
+              sleep "$DELAY"
+            fi
+          done
           printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
-          if [[ "$STATUS" == "409" ]]; then
-            echo "::error::A deployment is already running. No cancellation was attempted."
-            exit 1
-          fi
           if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
-            echo "::error::Manual rebuild failed with HTTP $STATUS."
+            echo "::error::Manual rebuild failed after retries with HTTP $STATUS."
             exit 1
           fi
           echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
