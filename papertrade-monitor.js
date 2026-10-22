@@ -323,6 +323,7 @@ async function poll() {
   const now = Date.now();
   const currentStart = periodStart(now);
   let decoded = 0;
+  const decodedByInstrument = { BTC: 0, ETH: 0 };
   let skippedOldBaseline = 0;
   let invalidLogs = 0;
 
@@ -365,6 +366,7 @@ async function poll() {
       continue;
     }
 
+    decodedByInstrument[classified.instrument] = (decodedByInstrument[classified.instrument] || 0) + 1;
     const bucket = getWindow(periodStart(chainEvent.ts), classified.instrument);
     if (!Array.isArray(bucket.eventKeys)) bucket.eventKeys = [];
     if (!Array.isArray(bucket.positionIds)) bucket.positionIds = [];
@@ -509,6 +511,11 @@ async function poll() {
       source: firstScan ? 'initial_rpc_baseline' : 'http_rpc_eth_getLogs',
       onchainLiquidationsFound: logs.length,
       decodedOnchainLiquidations: decoded,
+      decodedByInstrument,
+      liquidationWindowsByInstrument: {
+        BTC: Object.values(windows).filter(bucket => bucket.instrument === 'BTC').reduce((sum, bucket) => sum + Number(bucket.total || 0), 0),
+        ETH: Object.values(windows).filter(bucket => bucket.instrument === 'ETH').reduce((sum, bucket) => sum + Number(bucket.total || 0), 0),
+      },
       invalidOnchainLogs: invalidLogs,
       skippedOldBaseline,
       alertsSent: alerts,
