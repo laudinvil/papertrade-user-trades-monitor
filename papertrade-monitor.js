@@ -13,7 +13,7 @@ const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const LIQUIDATED_TOPIC = '0x0c859bc5db091ba3b9dc10c00f8dfc78b1f0b7e2566d107253ae67c069ae5de8';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v9-restore-btc-alert-era-logic';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-22-v10-no-liquidation-alert-filters';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -417,24 +417,8 @@ async function poll() {
     .filter(bucket => Number(bucket.start) + WINDOW_MS <= now && bucket.alerted !== true)
     .sort((a, b) => Number(a.start) - Number(b.start) || String(a.instrument).localeCompare(String(b.instrument)));
 
-  // For each completed 5-minute period, send at most one alert:
-  // choose the instrument with the larger SHORT liquidation count.
-  const winnerByPeriod = new Map();
-  const tiedPeriods = new Set();
-  for (const bucket of completedWindows) {
-    if (Number(bucket.short || 0) <= 0) continue;
-    const key = String(bucket.start);
-    const current = winnerByPeriod.get(key);
-    if (!current || Number(bucket.short || 0) > Number(current.short || 0)) {
-      winnerByPeriod.set(key, bucket);
-      tiedPeriods.delete(key);
-    } else if (Number(bucket.short || 0) === Number(current.short || 0)) {
-      tiedPeriods.add(key);
-    }
-  }
-  // A tie for the highest SHORT count means neither coin gets an alert.
-  for (const key of tiedPeriods) winnerByPeriod.delete(key);
-
+  // No liquidation thresholds or distribution filters: send one summary for each
+  // completed BTC/ETH 5-minute window that has at least one liquidation.
   for (const bucket of completedWindows) {
     const instrument = String(bucket.instrument || '').toUpperCase();
     if (instrument !== 'BTC' && instrument !== 'ETH') {
@@ -444,6 +428,12 @@ async function poll() {
     }
 
     const totalLiqs = Number(bucket.total || 0);
+    if (totalLiqs <= 0) {
+      bucket.alerted = true;
+      saveState();
+      continue;
+    }
+
     const longLiqs = Number(bucket.long || 0);
     const shortLiqs = Number(bucket.short || 0);
     const unknownLiqs = Number(bucket.unknownSide || 0);
@@ -451,83 +441,8 @@ async function poll() {
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
 
-    // Require at least 5 liquidations in a completed 5-minute period.
-    if (totalLiqs < 5) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_suppressed_below_min_liqs',
-        instrument, periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs, minimumLiqs: 5,
-      }));
-      continue;
-    }
-
-    // Require at least 4 SHORT liquidations in a completed 5-minute period.
-    if (shortLiqs < 4) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_suppressed_short_below_minimum',
-        instrument, periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs, short: shortLiqs, minimumShort: 4,
-      }));
-      continue;
-    }
-
-    // Require liquidation span of at least 61 seconds (inclusive).
-    if (currentSpanSeconds < 61) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_suppressed_liq_span_below_minimum',
-        instrument, periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs, liqSpanSeconds: currentSpanSeconds, minimumLiqSpanSeconds: 61,
-      }));
-      continue;
-    }
-
-    // Restore alert-era thresholds: SERIES >= 2 and CASCADE >= 3.
-    if (cascades.cascadeCount < 2 || cascades.maxCascade < 3) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_suppressed_series_or_cascade_below_minimum',
-        instrument, periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs, short: shortLiqs,
-        cascade: cascades.maxCascade, series: cascades.cascadeCount,
-        minimumSeries: 2, minimumCascade: 3,
-      }));
-      continue;
-    }
-
-    const winner = winnerByPeriod.get(String(bucket.start));
-    if (shortLiqs > 0 && winner && winner !== bucket) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_suppressed_lower_short_count',
-        instrument, periodStart: new Date(bucket.start).toISOString(),
-        short: shortLiqs, selectedInstrument: winner.instrument,
-        selectedShort: Number(winner.short || 0),
-      }));
-      continue;
-    }
-
-    // Only alert when at least one SHORT liquidation occurred in this completed period.
-    // Mark skipped periods as handled so they cannot produce delayed notifications.
-    if (shortLiqs <= 0) {
-      bucket.alerted = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_5m_skipped_no_short',
-        instrument, periodStart: new Date(bucket.start).toISOString(),
-        liqs: totalLiqs, long: longLiqs, short: shortLiqs,
-      }));
-      continue;
-    }
-    // Diagnostic-only cross-check against Papertrade's public recent-trades feed.
-    // It does not alter alert counts; at most one public API request is made per poll.
+    // Side counts, seconds, span, cascade and series are informational only.
+    // They do not filter alerts.
     if (recentTradeSides === null && recentTradeSidesError === null) {
       try {
         recentTradeSides = await getRecentLiquidationSides();
@@ -554,6 +469,7 @@ async function poll() {
     } else if (recentTradeSidesError) {
       console.warn(JSON.stringify({ level: 'warn', event: 'liquidation_side_audit_unavailable', instrument, periodStart: new Date(bucket.start).toISOString(), reason: recentTradeSidesError }));
     }
+
     await send(alertText(bucket));
     alerts++;
     console.log(JSON.stringify({
@@ -607,7 +523,7 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
-  alertPolicy: 'summary_only_no_thresholds',
+  alertPolicy: 'no_liquidation_thresholds_or_distribution_filters',
   pollMs: POLL_MS,
   periodMs: WINDOW_MS,
   contract: CONTRACT,
