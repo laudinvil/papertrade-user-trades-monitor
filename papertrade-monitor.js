@@ -12,7 +12,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-23-v22-rpc-only-side-audit';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-23-v23-min-peak-3';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -457,6 +457,22 @@ async function poll() {
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
     const currentSpanSeconds = liqSpanSeconds(bucket);
     const cascades = cascadeStats(bucket);
+    const peakLiqs = peakLiqsPerSecond(bucket);
+
+    if (peakLiqs < 3) {
+      bucket.alerted = true;
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_5m_alert_suppressed_peak_below_minimum',
+        instrument,
+        periodStart: new Date(bucket.start).toISOString(),
+        peakLiqsPerSecond: peakLiqs,
+        minimumPeakLiqsPerSecond: 3,
+        liqs: totalLiqs,
+        liqSpanSeconds: currentSpanSeconds,
+      }));
+      saveState();
+      continue;
+    }
 
     if (currentSpanSeconds < 0) {
       bucket.alerted = true;
@@ -551,7 +567,7 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
-  alertPolicy: 'completed_btc_eth_5m_windows_liq_span_gte_0',
+  alertPolicy: 'completed_btc_eth_5m_windows_peak_liqs_per_second_gte_3',
   marketLinkOffsetsPeriods: [1, 3],
   minimumLiqSpanSeconds: 298,
   pollMs: POLL_MS,
