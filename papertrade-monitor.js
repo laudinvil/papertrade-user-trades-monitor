@@ -12,7 +12,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 const CASCADE_GAP_MS = 1000;
 const CONTRACT = '0x6cd5661646289fb6e65ea5c032310fded797d0a2';
 const LIQUIDATED_TOPIC = '0x87902ed2451849f465fc4d36a01d7f5c67b53af12f63ee85d2814a2d582f89bf';
-const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-23-v23-min-peak-3';
+const MONITOR_VERSION = 'http-rpc-liquidated-topic-2026-10-23-v24-unique-position-liqs';
 const INITIAL_LOOKBACK_BLOCKS = 400;
 const BLOCK_CHUNK = 100;
 
@@ -27,10 +27,12 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     return {
       initialized: s.initialized === true,
-      seenKeys: s.eventFilterVersion === 3 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
-      windows: s.eventFilterVersion === 3 && s.windows && typeof s.windows === 'object' ? s.windows : {},
-      lastScannedBlock: s.eventFilterVersion === 3 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
-      eventFilterVersion: 3,
+      // Version 4 changes LIQS from raw log count to unique position count.
+      // Reset old aggregates and establish a fresh baseline rather than mixing incompatible totals.
+      seenKeys: s.eventFilterVersion === 4 && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
+      windows: s.eventFilterVersion === 4 && s.windows && typeof s.windows === 'object' ? s.windows : {},
+      lastScannedBlock: s.eventFilterVersion === 4 && Number.isSafeInteger(s.lastScannedBlock) ? s.lastScannedBlock : null,
+      eventFilterVersion: 4,
       lastSentAlertPeriodStart: Number.isSafeInteger(s.lastSentAlertPeriodStart) ? s.lastSentAlertPeriodStart : null,
       pending: [],
     };
@@ -56,7 +58,7 @@ let lastRpcRequestAt = 0;
 function saveState() {
   const next = {
     initialized: true,
-    eventFilterVersion: 3,
+    eventFilterVersion: 4,
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastScannedBlock: state.lastScannedBlock,
@@ -380,15 +382,14 @@ async function poll() {
     const positionKey = positionId && chainEvent.user
       ? `${String(chainEvent.user).toLowerCase()}:${positionId}`
       : positionId;
-    // Count each distinct on-chain Liquidated log as an event. Multiple
-    // liquidation logs for the same position are still separate events; the
-    // position key is retained only for a unique-position diagnostic.
-    if (bucket.eventKeys.includes(key)) {
+    // LIQS represents unique liquidated positions, not raw event logs.
+    // A position is keyed by user + indexed positionId within this 5-minute bucket.
+    if (bucket.eventKeys.includes(key) || (positionKey && bucket.positionKeys.includes(positionKey))) {
       seen.add(key);
       continue;
     }
     bucket.eventKeys.push(key);
-    if (positionKey && !bucket.positionKeys.includes(positionKey)) bucket.positionKeys.push(positionKey);
+    if (positionKey) bucket.positionKeys.push(positionKey);
     if (positionId && !bucket.positionIds.includes(positionId)) bucket.positionIds.push(positionId);
     if (!Array.isArray(bucket.liquidationSeconds)) bucket.liquidationSeconds = [];
     if (!Array.isArray(bucket.liquidationTimestamps)) bucket.liquidationTimestamps = [];
@@ -543,14 +544,14 @@ async function poll() {
       intervalMs: SUMMARY_INTERVAL_MS,
       latestBlock,
       source: firstScan ? 'initial_rpc_baseline' : 'http_rpc_eth_getLogs',
-      onchainLiquidationsFound: logs.length,
-      decodedOnchainLiquidations: decoded,
+      onchainLiquidationLogsFound: logs.length,
+      decodedUniquePositionLiquidations: decoded,
       decodedByInstrument,
       currentFiveMinuteWindowByInstrument: {
         BTC: Number(getWindow(currentStart, 'BTC').total || 0),
         ETH: Number(getWindow(currentStart, 'ETH').total || 0),
       },
-      retainedWindowsEventTotalsByInstrument: {
+      retainedWindowsUniquePositionTotalsByInstrument: {
         BTC: Object.values(windows).filter(bucket => bucket.instrument === 'BTC').reduce((sum, bucket) => sum + Number(bucket.total || 0), 0),
         ETH: Object.values(windows).filter(bucket => bucket.instrument === 'ETH').reduce((sum, bucket) => sum + Number(bucket.total || 0), 0),
       },
@@ -558,6 +559,7 @@ async function poll() {
       skippedOldBaseline,
       alertsSent: alerts,
       sourceMode: 'http_rpc_only',
+      liqsCountingMode: 'unique_user_positionId_per_5m_window',
     }));
     lastSummaryAt = summaryNow;
   }
@@ -568,7 +570,7 @@ console.log(JSON.stringify({
   event: 'monitor_started',
   monitorVersion: MONITOR_VERSION,
   mode: 'onchain_liquidations_only',
-  alertPolicy: 'completed_btc_eth_5m_windows_peak_liqs_per_second_gte_3',
+  alertPolicy: 'completed_btc_eth_5m_windows_unique_positions_peak_liqs_per_second_gte_3',
   marketLinkOffsetsPeriods: [1, 3],
   minimumLiqSpanSeconds: 298,
   pollMs: POLL_MS,
