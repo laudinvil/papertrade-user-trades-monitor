@@ -264,7 +264,7 @@ async function poll() {
       continue;
     }
     const peak = peakPerSecond(bucket);
-    if (peak < 4) {
+    if (peak < 5) {
       bucket.alerted = true;
       saveState();
       continue;
