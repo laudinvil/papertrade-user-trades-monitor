@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liq-resilient-logs-v7';
+const MONITOR_VERSION = 'papertrade-sdk-liq-resilient-ignore-liqs-0-1-v8';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -248,6 +248,11 @@ async function poll() {
     .sort((a, b) => Number(a.start) - Number(b.start));
 
   for (const bucket of completed) {
+    if (bucket.total <= 1) {
+      bucket.alerted = true;
+      saveState();
+      continue;
+    }
     const peak = peakPerSecond(bucket);
     bucket.alerted = true;
     saveState();
