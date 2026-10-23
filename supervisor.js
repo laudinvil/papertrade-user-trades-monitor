@@ -1,10 +1,27 @@
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 
 const services = [
   { name: "liquidation-monitor", script: "papertrade-monitor.js" },
   { name: "shark-radar-monitor", script: "shark-radar-monitor.js" },
 ];
 const children = new Map();
+const port = Number(process.env.PORT || 8000);
+const healthServer = createServer((req, res) => {
+  if (req.url === "/health" || req.url === "/") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, services: services.map(service => ({
+      name: service.name,
+      running: children.has(service.name),
+    })) }));
+    return;
+  }
+  res.writeHead(404);
+  res.end("Not found");
+});
+healthServer.listen(port, "0.0.0.0", () => {
+  console.log(JSON.stringify({ level: "info", event: "health_server_started", host: "0.0.0.0", port }));
+});
 let stopping = false;
 
 function start(service, restartCount = 0) {
@@ -29,6 +46,7 @@ for (const service of services) start(service);
 function shutdown(signal) {
   if (stopping) return;
   stopping = true;
+  healthServer.close();
   console.log(JSON.stringify({ level: "info", event: "supervisor_stopping", signal }));
   // Deplexo may deny signalling child processes (EACCES). During container shutdown,
   // stop supervising immediately and let the platform terminate the container process group.
