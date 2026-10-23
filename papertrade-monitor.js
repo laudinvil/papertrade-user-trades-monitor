@@ -191,13 +191,14 @@ async function poll() {
       seen.add(key);
       continue;
     }
-    // Do not generate delayed alerts for older 5-minute periods.
-    if (Math.floor(ts / WINDOW_MS) !== currentStart / WINDOW_MS) {
+    // Retain the just-closed window briefly so the first poll after a 5-minute boundary can still capture it.
+    const eventPeriodStart = Math.floor(ts / WINDOW_MS) * WINDOW_MS;
+    if (ts < now - WINDOW_MS - 60000 || eventPeriodStart > currentStart) {
       seen.add(key);
       continue;
     }
 
-    const bucket = getWindow(Math.floor(ts / WINDOW_MS) * WINDOW_MS, instrument);
+    const bucket = getWindow(eventPeriodStart, instrument);
     if (bucket.positionKeys.includes(key)) {
       seen.add(key);
       continue;
