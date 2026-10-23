@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-9-429-backoff";
+const VERSION = "shark-radar-standalone-10-compact-logs";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
@@ -133,10 +133,6 @@ async function poll(state) {
       const marketKey = marketKeyOf(trade);
       if (marketKey && marketKey === state.lastAlertedMarketKey) {
         seen.add(idOf(trade));
-        console.log(JSON.stringify({
-          level: "info", event: "leader_trade_alert_suppressed_consecutive_market_duplicate",
-          wallet: leader.wallet, activityId: idOf(trade), market: trade.title || trade.market || trade.slug || null,
-        }));
         continue;
       }
       await sendTelegram(tradeMessage(trade, leader));
@@ -151,14 +147,20 @@ async function poll(state) {
   state.seenActivityIds = [...seen].slice(-1000);
   state.updatedAt = new Date().toISOString();
   await saveState(state);
-  console.log(JSON.stringify({ level: "info", event: "shark_radar_poll_ok", leader: leader.wallet, leaderName: leader.name, activityCount: activity.length, tradeCount: trades.length, changed, firstRun }));
 }
 async function main() {
   console.log(JSON.stringify({ level: "info", event: "shark_radar_started", version: VERSION, pollMs: POLL_MS, leaderboard: LEADERBOARD_URL, statePath: STATE_PATH }));
   let state = await loadState();
+  let lastError = null;
   while (true) {
-    try { await poll(state); }
-    catch (e) { console.error(JSON.stringify({ level: "error", event: "shark_radar_poll_failed", message: String(e?.stack || e) })); }
+    try { await poll(state); lastError = null; }
+    catch (e) {
+      const message = String(e?.message || e);
+      if (message !== lastError) {
+        console.error(JSON.stringify({ level: "error", event: "shark_radar_poll_failed", message }));
+        lastError = message;
+      }
+    }
     await new Promise(resolve => setTimeout(resolve, POLL_MS));
     state = await loadState();
   }
