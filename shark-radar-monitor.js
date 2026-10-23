@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const LEADERBOARD_URL = "https://sharkradar.app/polymarket-leaderboard".trim();
+const LEADERBOARD_URL = "https://sharkradar.app/polymarket-leaderboard".replace(/\\s+/g, "");
 const ACTIVITY_URL = "https://data-api.polymarket.com/activity";
 const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_000));
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
