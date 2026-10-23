@@ -76,7 +76,7 @@ jobs:
           echo "Requesting manual rebuild for $SHA"
           BODY=""
           STATUS="000"
-          for ATTEMPT in 1 2 3 4 5; do
+          for ATTEMPT in $(seq 1 15); do
             RESPONSE="$(curl --silent --show-error \
               -X POST \
               -H "Authorization: Bearer $DEPLEXO_TOKEN" \
@@ -91,23 +91,23 @@ jobs:
               break
             fi
             if [[ "$STATUS" == "409" ]]; then
-              echo "::error::A deployment is already running. No cancellation was attempted."
-              exit 1
+              echo "Deplexo reports a deployment already running; will wait and retry without cancelling it."
             fi
             if [[ "$STATUS" -lt 500 && "$STATUS" != "429" ]]; then
               echo "::error::Non-retryable manual rebuild failure with HTTP $STATUS."
               printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
               exit 1
             fi
-            if [[ "$ATTEMPT" -lt 5 ]]; then
+            if [[ "$ATTEMPT" -lt 15 ]]; then
               DELAY=$((ATTEMPT * 10))
-              echo "Transient Deplexo error; retrying in ${DELAY}s."
+              if [[ "$DELAY" -gt 120 ]]; then DELAY=120; fi
+              echo "Deplexo request failed with HTTP $STATUS; retry $((ATTEMPT + 1))/15 in ${DELAY}s."
               sleep "$DELAY"
             fi
           done
           printf '%s' "$BODY" | jq . || printf '%s\n' "$BODY"
           if [[ "$STATUS" -lt 200 || "$STATUS" -ge 300 ]]; then
-            echo "::error::Manual rebuild failed after retries with HTTP $STATUS."
+            echo "::error::Manual rebuild failed after 15 attempts with HTTP $STATUS. Deplexo did not accept this commit; deployment is NOT confirmed."
             exit 1
           fi
           echo "Deplexo accepted the manual rebuild request (HTTP $STATUS)."
