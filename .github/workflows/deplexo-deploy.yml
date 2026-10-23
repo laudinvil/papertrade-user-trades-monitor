@@ -1,34 +1,27 @@
-name: Verify Deplexo auto-deploy
+name: Deploy and verify Deplexo
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      commit_sha:
-        description: "Commit SHA to verify in Deplexo deployment history"
-        required: false
-        type: string
 
 permissions:
   contents: read
 
-# New pushes supersede stale verification runs; never leave an old deploy request looping.
 concurrency:
-  group: deplexo-autodeploy-${{ github.ref }}
+  group: deplexo-deploy-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify:
+  deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     steps:
-      - name: Verify GitHub push was deployed by Deplexo auto-deploy
+      - name: Request one Deplexo redeployment
         env:
           DEPLEXO_TOKEN: ${{ secrets.DEPLEXO_TOKEN }}
           APP_SLUG: merry-cascade-8098
           BASE: https://deplexo.com/user/api/v1
-          REQUESTED_SHA: ${{ inputs.commit_sha }}
           PUSH_SHA: ${{ github.sha }}
         shell: bash
         run: |
@@ -38,45 +31,37 @@ jobs:
             exit 1
           fi
 
-          APPS_RESPONSE="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" "$BASE/me")"
+          APPS_RESPONSE="$(curl --silent --show-error --fail-with-body \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" "$BASE/me")"
           APP_ID="$(printf '%s' "$APPS_RESPONSE" | jq -r --arg slug "$APP_SLUG" '
             first(.apps[]? | select(((.name // "") == $slug) or ((((.url // .domain // "") | tostring) | contains($slug)))) | (.id // .appId)) // empty
           ')"
           if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
-            echo "::error::Could not find target app '$APP_SLUG'."
+            echo "::error::Could not find Deplexo app '$APP_SLUG'."
             printf '%s' "$APPS_RESPONSE" | jq '{apps: [.apps[]? | {id,appId,name,url,domain,status}]}'
             exit 1
           fi
 
-          SHA="${REQUESTED_SHA:-$PUSH_SHA}"
-          echo "App: $APP_SLUG ($APP_ID)"
-          echo "Waiting for Deplexo auto-deploy to publish commit $SHA"
-          # Auto-deploy is enabled by the user. Do not call /restart: that manual
-          # endpoint was returning HTTP 503 and is not the GitHub auto-deploy path.
-          for ATTEMPT in $(seq 1 20); do
-            HISTORY="$(curl --fail-with-body --silent --show-error \
-              -H "Authorization: Bearer $DEPLEXO_TOKEN" -H "Accept: application/json" \
-              "$BASE/apps/$APP_ID/deployments?limit=20&offset=0")"
-            printf '%s' "$HISTORY" | jq -r '
-              (.data // .deployments // .items // [])[]? |
-              "deployment id=\(.id // "unknown") status=\(.status // .state // "unknown") sha=\(.commitSha // .commit_sha // "unknown") created=\(.createdAt // .created_at // "unknown")"
-            '
-            if printf '%s' "$HISTORY" | jq -e --arg sha "$SHA" '
-              any((.data // .deployments // .items // [])[]?;
-                ((.commitSha // .commit_sha // "") | ascii_downcase) == ($sha | ascii_downcase)
-                and (((.status // .state // "") | ascii_downcase) as $s
-                  | ($s == "success" or $s == "succeeded" or $s == "deployed" or $s == "running" or $s == "ready"))
-              )
-            ' >/dev/null; then
-              echo "Deplexo deployment history confirms commit $SHA."
-              exit 0
+          echo "Requesting a single rebuild for GitHub commit $PUSH_SHA (app $APP_ID)."
+          CODE="$(curl --silent --show-error \
+            -o /tmp/deplexo-response.json -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            --data '{}' "$BASE/apps/$APP_ID/restart")"
+          cat /tmp/deplexo-response.json | jq . 2>/dev/null || cat /tmp/deplexo-response.json
+          if [[ "$CODE" != "200" && "$CODE" != "201" && "$CODE" != "202" ]]; then
+            echo "::error::Deplexo rejected redeployment (HTTP $CODE). No retry loop was started."
+            if [[ "$CODE" == "503" ]]; then
+              echo "::error::Deplexo reports temporary service/deployment capacity unavailability. This must clear on the Deplexo side."
+            elif [[ "$CODE" == "403" ]]; then
+              echo "::error::Check that DEPLEXO_TOKEN includes app:restart scope."
             fi
-            if [[ "$ATTEMPT" -lt 20 ]]; then
-              echo "Commit not yet confirmed in Deplexo (check $ATTEMPT/20); waiting 30 seconds."
-              sleep 30
-            fi
-          done
+            exit 1
+          fi
 
-          echo "::error::Deplexo auto-deploy did not confirm commit $SHA after 10 minutes. No manual restart was attempted."
-          exit 1
+          echo "Deplexo accepted the redeployment request. Acceptance is not proof that the app is live."
+          echo "Requested source commit: $PUSH_SHA"
+          echo "Check Deplexo deployment history and runtime before treating this as deployed."
