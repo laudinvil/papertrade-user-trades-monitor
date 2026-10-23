@@ -13,9 +13,15 @@ on:
 permissions:
   contents: read
 
+# New pushes supersede stale verification runs; never leave an old deploy request looping.
+concurrency:
+  group: deplexo-autodeploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - name: Verify GitHub push was deployed by Deplexo auto-deploy
         env:
