@@ -7,19 +7,36 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-8-no-initial-leader-duplicate";
+const VERSION = "shark-radar-standalone-9-429-backoff";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
 async function request(url, accept = "*/*") {
   // Normalize accidental whitespace/newlines before making the HTTP request.
   url = String(url).trim();
-  const res = await fetch(url, {
-    headers: { "user-agent": "Mozilla/5.0 SharkRadarLeaderMonitor/1.0", accept },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res;
+  const max429Retries = 2;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0 SharkRadarLeaderMonitor/1.0", accept },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.ok) return res;
+    if (res.status === 429 && attempt < max429Retries) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(60_000, retryAfter * 1000)
+        : (15_000 * (attempt + 1));
+      console.warn(JSON.stringify({
+        level: "warn", event: "shark_radar_rate_limited",
+        url, attempt: attempt + 1, maxRetries: max429Retries,
+        retryInMs: waitMs,
+      }));
+      await res.body?.cancel().catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      continue;
+    }
+    throw new Error(`HTTP ${res.status} for ${url}`);
+  }
 }
 function decode(s) {
   return s.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
