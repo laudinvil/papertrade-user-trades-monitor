@@ -264,7 +264,7 @@ async function poll() {
       continue;
     }
     const cascade = cascadeStats(bucket);
-    if (cascade.maxCascade === 0 && cascade.series === 0) {
+    if (cascade.series < 2) {
       bucket.alerted = true;
       saveState();
       continue;
