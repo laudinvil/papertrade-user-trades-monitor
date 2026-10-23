@@ -76,6 +76,68 @@ jobs:
             echo "::error::Deplexo did not accept redeployment after 20 attempts (last HTTP $CODE)."
             exit 1
           fi
-          echo "Deplexo accepted the redeployment request. Acceptance is not proof that the app is live."
+          DEPLOYMENT_ID="$(jq -r '.deploymentId // empty' /tmp/deplexo-response.json)"
+          if [[ -z "$DEPLOYMENT_ID" || "$DEPLOYMENT_ID" == "null" ]]; then
+            echo "::error::Deplexo accepted the request but returned no deploymentId; cannot verify deployment."
+            exit 1
+          fi
+
+          echo "Accepted deployment $DEPLOYMENT_ID for requested source commit $PUSH_SHA."
+          echo "Polling the exact deployment until it succeeds or fails (maximum 20 minutes)."
+          DEPLOY_STATUS=""
+          for ATTEMPT in $(seq 1 40); do
+            LOG_CODE="$(curl --silent --show-error -o /tmp/deplexo-deployment-logs.json -w '%{http_code}' \
+              -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+              -H "Accept: application/json" \
+              "$BASE/deployments/$DEPLOYMENT_ID/logs")" || LOG_CODE="000"
+            if [[ "$LOG_CODE" == "200" ]]; then
+              DEPLOY_STATUS="$(jq -r '.status // .deployment.status // empty' /tmp/deplexo-deployment-logs.json)"
+              echo "Deployment status: ${DEPLOY_STATUS:-unknown} (poll $ATTEMPT/40)"
+              if [[ "$DEPLOY_STATUS" == "success" || "$DEPLOY_STATUS" == "succeeded" || "$DEPLOY_STATUS" == "ready" ]]; then
+                break
+              fi
+              if [[ "$DEPLOY_STATUS" == "failed" || "$DEPLOY_STATUS" == "error" || "$DEPLOY_STATUS" == "cancelled" ]]; then
+                jq '{status, errorMessage, buildLogs}' /tmp/deplexo-deployment-logs.json 2>/dev/null || cat /tmp/deplexo-deployment-logs.json
+                echo "::error::Deplexo deployment $DEPLOYMENT_ID ended with status '$DEPLOY_STATUS'."
+                exit 1
+              fi
+            else
+              echo "Could not read deployment status yet (HTTP $LOG_CODE; poll $ATTEMPT/40)."
+              cat /tmp/deplexo-deployment-logs.json 2>/dev/null || true
+            fi
+            if [[ "$ATTEMPT" -lt 40 ]]; then sleep 30; fi
+          done
+
+          if [[ "$DEPLOY_STATUS" != "success" && "$DEPLOY_STATUS" != "succeeded" && "$DEPLOY_STATUS" != "ready" ]]; then
+            echo "::error::Deployment did not reach a confirmed successful status within 20 minutes."
+            exit 1
+          fi
+
+          echo "Build/deployment reports success. Checking runtime logs for both supervised monitors."
+          RUNTIME_OK="false"
+          for ATTEMPT in $(seq 1 12); do
+            RUNTIME_CODE="$(curl --silent --show-error -o /tmp/deplexo-runtime.json -w '%{http_code}' \
+              -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+              -H "Accept: application/json" \
+              "$BASE/apps/$APP_ID/logs/runtime?limit=1000")" || RUNTIME_CODE="000"
+            if [[ "$RUNTIME_CODE" == "200" ]]; then
+              cat /tmp/deplexo-runtime.json | jq -r '.lines[]? | if type == "string" then . else tostring end' > /tmp/deplexo-runtime-lines.txt
+              if grep -q '"event":"monitor_started"' /tmp/deplexo-runtime-lines.txt && grep -q 'shark-radar' /tmp/deplexo-runtime-lines.txt; then
+                RUNTIME_OK="true"
+                break
+              fi
+            else
+              echo "Runtime log read returned HTTP $RUNTIME_CODE (check $ATTEMPT/12)."
+            fi
+            if [[ "$ATTEMPT" -lt 12 ]]; then sleep 10; fi
+          done
+
+          if [[ "$RUNTIME_OK" != "true" ]]; then
+            echo "::error::Deployment reports success, but runtime logs do not confirm both monitors started."
+            echo "Recent runtime response:"
+            jq '{lines, nextSince}' /tmp/deplexo-runtime.json 2>/dev/null || cat /tmp/deplexo-runtime.json 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Verified: deployment $DEPLOYMENT_ID succeeded and runtime logs show monitor startup."
           echo "Requested source commit: $PUSH_SHA"
-          echo "Check Deplexo deployment history and runtime before treating this as deployed."
