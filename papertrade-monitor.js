@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liq-resilient-ignore-liqs-0-1-v8';
+const MONITOR_VERSION = 'papertrade-sdk-liq-market-dedupe-v9';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -26,6 +26,7 @@ function loadState() {
       seenKeys: valid && Array.isArray(s.seenKeys) ? s.seenKeys.map(String).slice(-SEEN_LIMIT) : [],
       windows: valid && s.windows && typeof s.windows === 'object' ? s.windows : {},
       lastSentAlertPeriodStart: valid && Number.isSafeInteger(s.lastSentAlertPeriodStart) ? s.lastSentAlertPeriodStart : null,
+      lastFollowingMarket: valid && s.lastFollowingMarket && typeof s.lastFollowingMarket === 'object' ? s.lastFollowingMarket : {},
     };
   } catch (err) {
     if (err?.code === 'ENOENT') return { initialized: false, seenKeys: [], windows: {}, lastSentAlertPeriodStart: null };
@@ -34,6 +35,7 @@ function loadState() {
 }
 
 let state = loadState();
+state.lastFollowingMarket ||= {};
 const seen = new Set(state.seenKeys);
 const windows = state.windows;
 
@@ -44,6 +46,7 @@ function saveState() {
     seenKeys: [...seen].slice(-SEEN_LIMIT),
     windows,
     lastSentAlertPeriodStart: state.lastSentAlertPeriodStart ?? null,
+    lastFollowingMarket: state.lastFollowingMarket || {},
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
   const tmp = `${STATE_PATH}.tmp`;
@@ -253,10 +256,19 @@ async function poll() {
       saveState();
       continue;
     }
+    const startSeconds = Math.floor(Number(bucket.start) / 1000);
+    const startingMarket = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 300}`;
+    if (state.lastFollowingMarket[bucket.instrument] === startingMarket) {
+      bucket.alerted = true;
+      saveState();
+      continue;
+    }
     const peak = peakPerSecond(bucket);
     bucket.alerted = true;
     saveState();
     await send(alertText(bucket));
+    state.lastFollowingMarket[bucket.instrument] = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 600}`;
+    saveState();
     alertsSent++;
     console.log(JSON.stringify({
       level: 'info', event: 'liquidation_alert_sent',
