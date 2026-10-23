@@ -15,7 +15,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 25
     steps:
       - name: Request one Deplexo redeployment
         env:
@@ -45,8 +45,8 @@ jobs:
 
           echo "Requesting a single rebuild for GitHub commit $PUSH_SHA (app $APP_ID)."
           CODE="000"
-          for ATTEMPT in 1 2 3 4 5 6; do
-            echo "Deplexo redeployment attempt $ATTEMPT/6 for commit $PUSH_SHA."
+          for ATTEMPT in $(seq 1 20); do
+            echo "Deplexo redeployment attempt $ATTEMPT/20 for commit $PUSH_SHA."
             CODE="$(curl --silent --show-error \
               -o /tmp/deplexo-response.json -w '%{http_code}' \
               -X POST \
@@ -65,15 +65,15 @@ jobs:
               fi
               exit 1
             fi
-            if [[ "$ATTEMPT" -lt 6 ]]; then
-              WAIT=$((ATTEMPT * 10))
+            if [[ "$ATTEMPT" -lt 20 ]]; then
+              WAIT=60
               echo "Temporary Deplexo/API unavailability or deployment already in progress (HTTP $CODE); retrying in ${WAIT}s."
               sleep "$WAIT"
             fi
           done
 
           if [[ "$CODE" != "200" && "$CODE" != "201" && "$CODE" != "202" ]]; then
-            echo "::error::Deplexo did not accept redeployment after 6 attempts (last HTTP $CODE)."
+            echo "::error::Deplexo did not accept redeployment after 20 attempts (last HTTP $CODE)."
             exit 1
           fi
           echo "Deplexo accepted the redeployment request. Acceptance is not proof that the app is live."
