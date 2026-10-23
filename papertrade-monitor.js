@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liq-compact-logs-v6';
+const MONITOR_VERSION = 'papertrade-sdk-liq-resilient-logs-v7';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -57,16 +57,29 @@ function saveState() {
 }
 
 async function fetchRecentTrades() {
-  const response = await fetch(`${API_URL}/query/protocol/trades/recent`, {
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!response.ok) throw new Error(`Papertrade recentTrades HTTP ${response.status}`);
-  const body = await response.json();
-  if (body?.ok !== true || !Array.isArray(body.events)) {
-    throw new Error('Papertrade recentTrades returned an unexpected response schema');
+  const url = `${API_URL}/query/protocol/trades/recent`;
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error(`Papertrade HTTP ${response.status}`);
+      }
+      const body = await response.json();
+      if (body?.ok !== true || !Array.isArray(body.events)) {
+        throw new Error('Papertrade API response schema invalid');
+      }
+      return body.events;
+    } catch (err) {
+      lastError = err;
+      if (attempt < 2) await sleep(1000 * (attempt + 1));
+    }
   }
-  return body.events;
+  throw new Error(`Papertrade request failed after 3 attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 function eventIdentity(e) {
@@ -132,7 +145,7 @@ function alertText(bucket) {
     `LIQS: ${bucket.total}`,
     `LONG: ${bucket.long}`,
     `SHORT: ${bucket.short}`,
-    `UNKNOWN SIDE: ${bucket.unknownSide}`,
+
     `SECONDS: ${seconds}`,
     `LIQ SPAN: ${span}s`,
     `PEAK: ${peakPerSecond(bucket)} liqs/s`,
