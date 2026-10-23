@@ -452,6 +452,7 @@ async function poll() {
     }
 
     const totalLiqs = Number(bucket.total || 0);
+    const longLiqs = Number(bucket.long || 0);
     const shortLiqs = Number(bucket.short || 0);
     const unknownLiqs = Number(bucket.unknownSide || 0);
     const liqSeconds = Array.isArray(bucket.liquidationSeconds) ? new Set(bucket.liquidationSeconds).size : 0;
