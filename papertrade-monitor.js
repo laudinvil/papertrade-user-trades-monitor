@@ -8,8 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MIN_PEAK_LIQS_PER_SECOND = 5;
-const MONITOR_VERSION = 'papertrade-sdk-recent-trades-confirmed-liquidations-v1';
+const MONITOR_VERSION = 'papertrade-sdk-recent-trades-confirmed-liquidations-no-thresholds-v2';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -193,7 +192,7 @@ async function poll() {
     }
     // Retain the just-closed window briefly so the first poll after a 5-minute boundary can still capture it.
     const eventPeriodStart = Math.floor(ts / WINDOW_MS) * WINDOW_MS;
-    if (ts < now - WINDOW_MS - 60000 || eventPeriodStart > currentStart) {
+    if (eventPeriodStart > currentStart) {
       seen.add(key);
       continue;
     }
@@ -221,22 +220,7 @@ async function poll() {
     .sort((a, b) => Number(a.start) - Number(b.start));
 
   for (const bucket of completed) {
-    const ageMs = now - (Number(bucket.start) + WINDOW_MS);
-    if (ageMs > 60000) {
-      bucket.alerted = true;
-      continue;
-    }
     const peak = peakPerSecond(bucket);
-    if (peak < MIN_PEAK_LIQS_PER_SECOND) {
-      bucket.alerted = true;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_alert_suppressed_peak_below_minimum',
-        instrument: bucket.instrument, periodStart: new Date(bucket.start).toISOString(),
-        confirmedUniqueLiquidations: bucket.total, peakLiqsPerSecond: peak,
-        minimumPeakLiqsPerSecond: MIN_PEAK_LIQS_PER_SECOND,
-      }));
-      continue;
-    }
     bucket.alerted = true;
     saveState();
     await send(alertText(bucket));
@@ -262,7 +246,6 @@ async function poll() {
     recentEventsReturned: events.length, ignoredNonLiquidationEvents: ignoredNonLiquidations,
     newlyConfirmedUniqueLiquidations: newlyConfirmed, alertsSent,
     sourceMode: 'protocol_confirmed_recent_trades_api_only',
-    minimumPeakLiqsPerSecond: MIN_PEAK_LIQS_PER_SECOND,
     note: 'Endpoint returns only the 50 most recent protocol events; polling gaps may miss events if more than 50 events arrive between successful polls.',
   }));
 }
@@ -273,7 +256,6 @@ console.log(JSON.stringify({
   source: 'Papertrade SDK recentTrades endpoint; filters kind=liquidation only',
   endpoint: `${API_URL}/query/protocol/trades/recent`,
   pollMs: POLL_MS, periodMs: WINDOW_MS,
-  minimumPeakLiqsPerSecond: MIN_PEAK_LIQS_PER_SECOND,
   statePath: STATE_PATH,
 }));
 
