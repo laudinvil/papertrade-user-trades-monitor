@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liquidation-kind-diagnostic-v3';
+const MONITOR_VERSION = 'papertrade-sdk-recognize-liq-kind-v4';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -160,7 +160,7 @@ async function poll() {
   // First run establishes a clean baseline. Do not send alerts for history accumulated before startup.
   if (!state.initialized) {
     for (const e of events) {
-      if (String(e.kind || '').toLowerCase() === 'liquidation' && e.positionId != null) seen.add(eventIdentity(e));
+      if (['liq', 'liquidation'].includes(String(e.kind || '').trim().toLowerCase()) && e.positionId != null) seen.add(eventIdentity(e));
     }
     saveState();
     console.log(JSON.stringify({
@@ -180,7 +180,7 @@ async function poll() {
   }
   for (const e of events) {
     // This API includes opens, ordinary closes and liquidations. Only its explicit liquidation kind is authoritative.
-    if (String(e.kind || '').toLowerCase() !== 'liquidation') {
+    if (!['liq', 'liquidation'].includes(String(e.kind || '').trim().toLowerCase())) {
       ignoredNonLiquidations++;
       continue;
     }
@@ -261,7 +261,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'monitor_started', monitorVersion: MONITOR_VERSION,
   mode: 'confirmed_protocol_liquidations_only',
-  source: 'Papertrade SDK recentTrades endpoint; filters kind=liquidation only',
+  source: 'Papertrade SDK recentTrades endpoint; filters kind=liq or liquidation only',
   endpoint: `${API_URL}/query/protocol/trades/recent`,
   pollMs: POLL_MS, periodMs: WINDOW_MS,
   statePath: STATE_PATH,
