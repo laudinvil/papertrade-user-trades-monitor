@@ -263,22 +263,12 @@ async function poll() {
       saveState();
       continue;
     }
-    const cascade = cascadeStats(bucket);
-    if (cascade.series < 2) {
-      bucket.alerted = true;
-      saveState();
-      continue;
-    }
-    const timestamps = (bucket.timestamps || []).map(Number).filter(Number.isFinite);
-    const liqSpanSeconds = timestamps.length > 1
-      ? Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 1000)
-      : 0;
-    if (liqSpanSeconds < 44) {
-      bucket.alerted = true;
-      saveState();
-      continue;
-    }
     const peak = peakPerSecond(bucket);
+    if (peak < 3) {
+      bucket.alerted = true;
+      saveState();
+      continue;
+    }
     bucket.alerted = true;
     saveState();
     await send(alertText(bucket));
