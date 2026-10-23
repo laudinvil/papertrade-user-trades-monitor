@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liq-market-dedupe-v9';
+const MONITOR_VERSION = 'papertrade-sdk-liq-ignore-zero-cascade-series-v10';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -259,6 +259,12 @@ async function poll() {
     const startSeconds = Math.floor(Number(bucket.start) / 1000);
     const startingMarket = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 300}`;
     if (state.lastFollowingMarket[bucket.instrument] === startingMarket) {
+      bucket.alerted = true;
+      saveState();
+      continue;
+    }
+    const cascade = cascadeStats(bucket);
+    if (cascade.maxCascade === 0 && cascade.series === 0) {
       bucket.alerted = true;
       saveState();
       continue;
