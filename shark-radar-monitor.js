@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_00
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
-const VERSION = "shark-radar-standalone-7-trim-request-url";
+const VERSION = "shark-radar-standalone-8-no-initial-leader-duplicate";
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set.");
 
@@ -96,9 +96,11 @@ async function poll(state) {
   const leader = await getLeader();
   const firstRun = !state.leaderWallet;
   const changed = Boolean(state.leaderWallet && state.leaderWallet !== leader.wallet);
-  if (firstRun || changed) {
-    await sendTelegram(`SHARK RADAR — ${firstRun ? "INITIAL TOP LEADER" : "TOP LEADER CHANGED"}\nTrader: ${leader.name}\nWallet: ${leader.wallet}\nLeaderboard: ${LEADERBOARD_URL}\nProfile: ${leader.url}`);
-    console.log(JSON.stringify({ level: "info", event: firstRun ? "initial_leader_alert_sent" : "leader_changed_alert_sent", previousWallet: state.leaderWallet || null, leader }));
+  if (changed) {
+    await sendTelegram(`SHARK RADAR — TOP LEADER CHANGED\nTrader: ${leader.name}\nWallet: ${leader.wallet}\nLeaderboard: ${LEADERBOARD_URL}\nProfile: ${leader.url}`);
+    console.log(JSON.stringify({ level: "info", event: "leader_changed_alert_sent", previousWallet: state.leaderWallet || null, leader }));
+  } else if (firstRun) {
+    console.log(JSON.stringify({ level: "info", event: "initial_leader_baseline_only", leader, note: "Initial top-leader alert suppressed to avoid duplicate notification." }));
   }
 
   const activity = await getActivity(leader.wallet);
