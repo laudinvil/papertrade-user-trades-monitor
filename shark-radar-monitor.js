@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const LEADERBOARD_URL = "https://sharkradar.app/polymarket-leaderboard".replace(/\\s+/g, "");
+const LEADERBOARD_URL = "https://sharkradar.app/polymarket-leaderboard";
 const ACTIVITY_URL = "https://data-api.polymarket.com/activity";
 const POLL_MS = Math.max(30_000, Number(process.env.SHARK_RADAR_POLL_MS || 60_000));
 const STATE_PATH = process.env.SHARK_RADAR_STATE_PATH || "/data/shark-radar-state.json";
@@ -14,21 +14,21 @@ if (!BOT_TOKEN || !CHAT_ID) throw new Error("Shark Radar: TELEGRAM_BOT_TOKEN and
 async function request(url, accept = "*/*") {
   // Normalize accidental whitespace/newlines before making the HTTP request.
   url = String(url).trim();
-  const max429Retries = 2;
+  const maxRetries = 4;
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
       headers: { "user-agent": "Mozilla/5.0 SharkRadarLeaderMonitor/1.0", accept },
       signal: AbortSignal.timeout(20_000),
     });
     if (res.ok) return res;
-    if (res.status === 429 && attempt < max429Retries) {
+    if ([429, 500, 502, 503, 504].includes(res.status) && attempt < maxRetries) {
       const retryAfter = Number(res.headers.get("retry-after"));
       const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(60_000, retryAfter * 1000)
-        : (15_000 * (attempt + 1));
+        ? Math.min(120_000, retryAfter * 1000)
+        : Math.min(60_000, 5_000 * (2 ** attempt));
       console.warn(JSON.stringify({
-        level: "warn", event: "shark_radar_rate_limited",
-        url, attempt: attempt + 1, maxRetries: max429Retries,
+        level: "warn", event: "shark_radar_upstream_retry",
+        status: res.status, url, attempt: attempt + 1, maxRetries,
         retryInMs: waitMs,
       }));
       await res.body?.cancel().catch(() => {});
