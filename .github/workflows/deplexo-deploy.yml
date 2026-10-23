@@ -58,7 +58,7 @@ jobs:
             if [[ "$CODE" == "200" || "$CODE" == "201" || "$CODE" == "202" ]]; then
               break
             fi
-            if [[ "$CODE" != "503" && "$CODE" != "000" ]]; then
+            if [[ "$CODE" != "503" && "$CODE" != "409" && "$CODE" != "000" ]]; then
               echo "::error::Deplexo rejected redeployment (HTTP $CODE)."
               if [[ "$CODE" == "403" ]]; then
                 echo "::error::Check that DEPLEXO_TOKEN includes app:restart scope."
@@ -67,7 +67,7 @@ jobs:
             fi
             if [[ "$ATTEMPT" -lt 6 ]]; then
               WAIT=$((ATTEMPT * 10))
-              echo "Temporary Deplexo/API unavailability (HTTP $CODE); retrying in ${WAIT}s."
+              echo "Temporary Deplexo/API unavailability or deployment already in progress (HTTP $CODE); retrying in ${WAIT}s."
               sleep "$WAIT"
             fi
           done
