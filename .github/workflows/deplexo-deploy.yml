@@ -65,8 +65,8 @@ jobs:
             if printf '%s' "$HISTORY" | jq -e --arg sha "$SHA" '
               any((.data // .deployments // .items // [])[]?;
                 ((.commitSha // .commit_sha // "") | ascii_downcase) == ($sha | ascii_downcase)
-                and ((.status // .state // "") | ascii_downcase) as $s
-                | ($s == "success" or $s == "succeeded" or $s == "deployed" or $s == "running" or $s == "ready")
+                and (((.status // .state // "") | ascii_downcase) as $s
+                  | ($s == "success" or $s == "succeeded" or $s == "deployed" or $s == "running" or $s == "ready"))
               )
             ' >/dev/null; then
               echo "Deplexo deployment history confirms commit $SHA."
