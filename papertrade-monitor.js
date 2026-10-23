@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-recognize-liq-kind-v4';
+const MONITOR_VERSION = 'papertrade-sdk-liq-skip-diagnostics-v5';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -173,6 +173,12 @@ async function poll() {
 
   let newlyConfirmed = 0;
   let ignoredNonLiquidations = 0;
+  const liquidationSkipReasons = { already_seen: 0, missing_position_id: 0, invalid_fields: 0, future_period: 0, already_in_window: 0 };
+  const liquidationSamples = [];
+  const recordLiq = (e, reason) => {
+    liquidationSkipReasons[reason]++;
+    if (liquidationSamples.length < 10) liquidationSamples.push({ reason, seq: e.seq ?? null, ts: e.ts ?? null, positionId: e.positionId ?? null, instrument: e.instrument ?? null, instrumentId: e.instrumentId ?? null, side: e.side ?? null });
+  };
   const kindCounts = {};
   for (const e of events) {
     const kind = String(e?.kind ?? e?.type ?? e?.eventType ?? '(missing)').toLowerCase();
@@ -184,26 +190,29 @@ async function poll() {
       ignoredNonLiquidations++;
       continue;
     }
-    if (e.positionId == null) continue;
+    if (e.positionId == null) { recordLiq(e, 'missing_position_id'); continue; }
     const key = eventIdentity(e);
-    if (seen.has(key)) continue;
+    if (seen.has(key)) { recordLiq(e, 'already_seen'); continue; }
 
     const instrument = instrumentSymbol(e);
     const ts = Number(e.ts);
     if (!instrument || !Number.isFinite(ts) || ts <= 0) {
       console.warn(JSON.stringify({ level: 'warn', event: 'confirmed_liquidation_missing_fields', positionId: String(e.positionId), instrument: e.instrument, ts: e.ts }));
+      recordLiq(e, 'invalid_fields');
       seen.add(key);
       continue;
     }
     // Retain the just-closed window briefly so the first poll after a 5-minute boundary can still capture it.
     const eventPeriodStart = Math.floor(ts / WINDOW_MS) * WINDOW_MS;
     if (eventPeriodStart > currentStart) {
+      recordLiq(e, 'future_period');
       seen.add(key);
       continue;
     }
 
     const bucket = getWindow(eventPeriodStart, instrument);
     if (bucket.positionKeys.includes(key)) {
+      recordLiq(e, 'already_in_window');
       seen.add(key);
       continue;
     }
@@ -250,6 +259,7 @@ async function poll() {
     endpoint: `${API_URL}/query/protocol/trades/recent`,
     recentEventsReturned: events.length, ignoredNonLiquidationEvents: ignoredNonLiquidations,
     observedKindCounts: kindCounts,
+    liquidationSkipReasons, liquidationSamples,
     sampleEventKeys: events[0] && typeof events[0] === 'object' ? Object.keys(events[0]).slice(0, 30) : [],
     sampleEventKind: events[0]?.kind ?? events[0]?.type ?? events[0]?.eventType ?? null,
     newlyConfirmedUniqueLiquidations: newlyConfirmed, alertsSent,
