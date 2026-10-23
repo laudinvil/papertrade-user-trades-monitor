@@ -8,7 +8,9 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liq-skip-diagnostics-v5';
+const MONITOR_VERSION = 'papertrade-sdk-liq-compact-logs-v6';
+const SUMMARY_LOG_MS = 60_000;
+let lastSummaryLogAt = 0;
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -133,7 +135,7 @@ function alertText(bucket) {
     `UNKNOWN SIDE: ${bucket.unknownSide}`,
     `SECONDS: ${seconds}`,
     `LIQ SPAN: ${span}s`,
-    `PEAK: ${peakPerSecond(bucket)} confirmed liqs/s`,
+    `PEAK: ${peakPerSecond(bucket)} liqs/s`,
     `CASCADE: ${cascade.maxCascade}`,
     `SERIES: ${cascade.series}`,
     `<a href="${nextUrl}">Начинающийся маркет</a>`,
@@ -197,7 +199,6 @@ async function poll() {
     const instrument = instrumentSymbol(e);
     const ts = Number(e.ts);
     if (!instrument || !Number.isFinite(ts) || ts <= 0) {
-      console.warn(JSON.stringify({ level: 'warn', event: 'confirmed_liquidation_missing_fields', positionId: String(e.positionId), instrument: e.instrument, ts: e.ts }));
       recordLiq(e, 'invalid_fields');
       seen.add(key);
       continue;
@@ -240,7 +241,7 @@ async function poll() {
     await send(alertText(bucket));
     alertsSent++;
     console.log(JSON.stringify({
-      level: 'info', event: 'confirmed_liquidation_alert_sent',
+      level: 'info', event: 'liquidation_alert_sent',
       instrument: bucket.instrument, periodStart: new Date(bucket.start).toISOString(),
       confirmedUniqueLiquidations: bucket.total, long: bucket.long, short: bucket.short,
       unknownSide: bucket.unknownSide, peakLiqsPerSecond: peak,
@@ -253,19 +254,15 @@ async function poll() {
   }
   saveState();
 
-  console.log(JSON.stringify({
-    level: 'info', event: 'monitor_summary', monitorVersion: MONITOR_VERSION,
-    source: 'Papertrade SDK documented recentTrades endpoint',
-    endpoint: `${API_URL}/query/protocol/trades/recent`,
-    recentEventsReturned: events.length, ignoredNonLiquidationEvents: ignoredNonLiquidations,
-    observedKindCounts: kindCounts,
-    liquidationSkipReasons, liquidationSamples,
-    sampleEventKeys: events[0] && typeof events[0] === 'object' ? Object.keys(events[0]).slice(0, 30) : [],
-    sampleEventKind: events[0]?.kind ?? events[0]?.type ?? events[0]?.eventType ?? null,
-    newlyConfirmedUniqueLiquidations: newlyConfirmed, alertsSent,
-    sourceMode: 'protocol_confirmed_recent_trades_api_only',
-    note: 'Endpoint returns only the 50 most recent protocol events; polling gaps may miss events if more than 50 events arrive between successful polls.',
-  }));
+  if (alertsSent > 0 || Date.now() - lastSummaryLogAt >= SUMMARY_LOG_MS) {
+    console.log(JSON.stringify({
+      level: 'info', event: 'monitor_summary', monitorVersion: MONITOR_VERSION,
+      recentEventsReturned: events.length,
+      liquidationEventsSkipped: Object.values(liquidationSkipReasons).reduce((sum, count) => sum + count, 0),
+      newLiquidations: newlyConfirmed, alertsSent,
+    }));
+    lastSummaryLogAt = Date.now();
+  }
 }
 
 console.log(JSON.stringify({
