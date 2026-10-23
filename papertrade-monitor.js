@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-recent-trades-confirmed-liquidations-no-thresholds-v2';
+const MONITOR_VERSION = 'papertrade-sdk-liquidation-kind-diagnostic-v3';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -173,6 +173,11 @@ async function poll() {
 
   let newlyConfirmed = 0;
   let ignoredNonLiquidations = 0;
+  const kindCounts = {};
+  for (const e of events) {
+    const kind = String(e?.kind ?? e?.type ?? e?.eventType ?? '(missing)').toLowerCase();
+    kindCounts[kind] = (kindCounts[kind] || 0) + 1;
+  }
   for (const e of events) {
     // This API includes opens, ordinary closes and liquidations. Only its explicit liquidation kind is authoritative.
     if (String(e.kind || '').toLowerCase() !== 'liquidation') {
@@ -244,6 +249,9 @@ async function poll() {
     source: 'Papertrade SDK documented recentTrades endpoint',
     endpoint: `${API_URL}/query/protocol/trades/recent`,
     recentEventsReturned: events.length, ignoredNonLiquidationEvents: ignoredNonLiquidations,
+    observedKindCounts: kindCounts,
+    sampleEventKeys: events[0] && typeof events[0] === 'object' ? Object.keys(events[0]).slice(0, 30) : [],
+    sampleEventKind: events[0]?.kind ?? events[0]?.type ?? events[0]?.eventType ?? null,
     newlyConfirmedUniqueLiquidations: newlyConfirmed, alertsSent,
     sourceMode: 'protocol_confirmed_recent_trades_api_only',
     note: 'Endpoint returns only the 50 most recent protocol events; polling gaps may miss events if more than 50 events arrive between successful polls.',
