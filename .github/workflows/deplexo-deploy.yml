@@ -44,24 +44,38 @@ jobs:
           fi
 
           echo "Requesting a single rebuild for GitHub commit $PUSH_SHA (app $APP_ID)."
-          CODE="$(curl --silent --show-error \
-            -o /tmp/deplexo-response.json -w '%{http_code}' \
-            -X POST \
-            -H "Authorization: Bearer $DEPLEXO_TOKEN" \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            --data '{}' "$BASE/apps/$APP_ID/restart")"
-          cat /tmp/deplexo-response.json | jq . 2>/dev/null || cat /tmp/deplexo-response.json
-          if [[ "$CODE" != "200" && "$CODE" != "201" && "$CODE" != "202" ]]; then
-            echo "::error::Deplexo rejected redeployment (HTTP $CODE). No retry loop was started."
-            if [[ "$CODE" == "503" ]]; then
-              echo "::error::Deplexo reports temporary service/deployment capacity unavailability. This must clear on the Deplexo side."
-            elif [[ "$CODE" == "403" ]]; then
-              echo "::error::Check that DEPLEXO_TOKEN includes app:restart scope."
+          CODE="000"
+          for ATTEMPT in 1 2 3 4 5 6; do
+            echo "Deplexo redeployment attempt $ATTEMPT/6 for commit $PUSH_SHA."
+            CODE="$(curl --silent --show-error \
+              -o /tmp/deplexo-response.json -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: Bearer $DEPLEXO_TOKEN" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              --data '{}' "$BASE/apps/$APP_ID/restart")" || CODE="000"
+            cat /tmp/deplexo-response.json | jq . 2>/dev/null || cat /tmp/deplexo-response.json
+            if [[ "$CODE" == "200" || "$CODE" == "201" || "$CODE" == "202" ]]; then
+              break
             fi
+            if [[ "$CODE" != "503" && "$CODE" != "000" ]]; then
+              echo "::error::Deplexo rejected redeployment (HTTP $CODE)."
+              if [[ "$CODE" == "403" ]]; then
+                echo "::error::Check that DEPLEXO_TOKEN includes app:restart scope."
+              fi
+              exit 1
+            fi
+            if [[ "$ATTEMPT" -lt 6 ]]; then
+              WAIT=$((ATTEMPT * 10))
+              echo "Temporary Deplexo/API unavailability (HTTP $CODE); retrying in ${WAIT}s."
+              sleep "$WAIT"
+            fi
+          done
+
+          if [[ "$CODE" != "200" && "$CODE" != "201" && "$CODE" != "202" ]]; then
+            echo "::error::Deplexo did not accept redeployment after 6 attempts (last HTTP $CODE)."
             exit 1
           fi
-
           echo "Deplexo accepted the redeployment request. Acceptance is not proof that the app is live."
           echo "Requested source commit: $PUSH_SHA"
           echo "Check Deplexo deployment history and runtime before treating this as deployed."
