@@ -461,14 +461,14 @@ async function poll() {
     const cascades = cascadeStats(bucket);
     const peakLiqs = peakLiqsPerSecond(bucket);
 
-    if (peakLiqs < 3) {
+    if (peakLiqs < 5) {
       bucket.alerted = true;
       console.log(JSON.stringify({
         level: 'info', event: 'liquidation_5m_alert_suppressed_peak_below_minimum',
         instrument,
         periodStart: new Date(bucket.start).toISOString(),
         peakLiqsPerSecond: peakLiqs,
-        minimumPeakLiqsPerSecond: 3,
+        minimumPeakLiqsPerSecond: 5,
         liqs: totalLiqs,
         liqSpanSeconds: currentSpanSeconds,
       }));
