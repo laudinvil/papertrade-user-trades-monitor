@@ -250,7 +250,6 @@ async function poll() {
     .filter(b => Number(b.start) + WINDOW_MS <= now && b.alerted !== true)
     .sort((a, b) => Number(a.start) - Number(b.start));
 
-  const eligible = [];
   for (const bucket of completed) {
     if (bucket.total <= 1) {
       bucket.alerted = true;
@@ -265,43 +264,24 @@ async function poll() {
       continue;
     }
     const peak = peakPerSecond(bucket);
-    if (peak < 5) {
+    if (peak < 6) {
       bucket.alerted = true;
       saveState();
       continue;
     }
-    eligible.push({ bucket, peak, startSeconds });
-  }
-
-  // If BTC and ETH both qualify in the same evaluation, suppress both alerts.
-  const eligibleInstruments = new Set(eligible.map(item => String(item.bucket.instrument).toUpperCase()));
-  if (eligibleInstruments.has('BTC') && eligibleInstruments.has('ETH')) {
-    for (const { bucket } of eligible) {
-      bucket.alerted = true;
-      saveState();
-    }
+    bucket.alerted = true;
+    saveState();
+    await send(alertText(bucket));
+    state.lastFollowingMarket[bucket.instrument] = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 600}`;
+    saveState();
+    alertsSent++;
     console.log(JSON.stringify({
-      level: 'info', event: 'liquidation_alerts_suppressed_both_instruments_qualified',
-      instruments: ['BTC', 'ETH'],
-      periodStarts: eligible.map(item => ({ instrument: item.bucket.instrument, periodStart: new Date(item.bucket.start).toISOString() })),
-      peaks: eligible.map(item => ({ instrument: item.bucket.instrument, peak: item.peak })),
+      level: 'info', event: 'liquidation_alert_sent',
+      instrument: bucket.instrument, periodStart: new Date(bucket.start).toISOString(),
+      confirmedUniqueLiquidations: bucket.total, long: bucket.long, short: bucket.short,
+      unknownSide: bucket.unknownSide, peakLiqsPerSecond: peak,
+      uniquePositions: bucket.positionKeys.length,
     }));
-  } else {
-    for (const { bucket, peak, startSeconds } of eligible) {
-      bucket.alerted = true;
-      saveState();
-      await send(alertText(bucket));
-      state.lastFollowingMarket[bucket.instrument] = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 600}`;
-      saveState();
-      alertsSent++;
-      console.log(JSON.stringify({
-        level: 'info', event: 'liquidation_alert_sent',
-        instrument: bucket.instrument, periodStart: new Date(bucket.start).toISOString(),
-        confirmedUniqueLiquidations: bucket.total, long: bucket.long, short: bucket.short,
-        unknownSide: bucket.unknownSide, peakLiqsPerSecond: peak,
-        uniquePositions: bucket.positionKeys.length,
-      }));
-    }
   }
 
   for (const [key, bucket] of Object.entries(windows)) {
