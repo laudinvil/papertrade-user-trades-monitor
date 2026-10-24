@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-api-only-cascade0-series0-v13';
+const MONITOR_VERSION = 'papertrade-api-only-cascade0-series0-v14-log-cascade-series';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -291,6 +291,9 @@ async function poll() {
       confirmedUniqueLiquidations: bucket.total, long: bucket.long, short: bucket.short,
       unknownSide: bucket.unknownSide,
       uniquePositions: bucket.positionKeys.length,
+      cascade: cascade.maxCascade,
+      series: cascade.series,
+      filter: 'LIQS>0,CASCADE=0,SERIES=0',
     }));
   }
 
