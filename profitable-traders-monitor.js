@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v5-alert-gross-pnl-at-least-5000';
+const VERSION = 'papertrade-closed-pnl-5m-v6-window-diagnostics';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -196,16 +196,37 @@ async function poll() {
   let alertsSent = 0;
   for (const window of completed) {
     const key = `${window.periodStart}:${window.instrument}`;
-    if (alertedWindows.has(key) || window.closedTrades <= 0) continue;
+    const grossPnl = Number(window.grossPnl);
+    const diagnostic = {
+      level: 'info', event: 'papertrade_closed_pnl_window_diagnostic',
+      version: VERSION, windowKey: key, instrument: window.instrument,
+      periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
+      closedTrades: Number(window.closedTrades), grossPnl: Number.isFinite(grossPnl) ? Number(grossPnl.toFixed(2)) : null,
+      fees: Number(Number(window.fees || 0).toFixed(2)),
+      netPnl: Number(Number(window.netPnl || 0).toFixed(2)),
+      thresholdUsd: 5000, thresholdMet: Number.isFinite(grossPnl) && grossPnl >= 5000,
+      alreadyAlerted: alertedWindows.has(key),
+    };
+    if (alertedWindows.has(key)) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'already_alerted' }));
+      continue;
+    }
+    if (Number(window.closedTrades) <= 0) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'no_closed_trades' }));
+      continue;
+    }
     // Send only when the displayed aggregate PnL reaches the $5,000 threshold.
-    if (Number(window.grossPnl) < 5000) {
+    if (!Number.isFinite(grossPnl) || grossPnl < 5000) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'gross_pnl_below_threshold' }));
       alertedWindows.add(key);
       continue;
     }
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'threshold_met' }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
     saveState();
+    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted' }));
   }
 
   // Retain only the last 48 hours of window data; keep alert keys for deduplication.
