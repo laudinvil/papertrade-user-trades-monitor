@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-no-alert-thresholds-no-peak-v12';
+const MONITOR_VERSION = 'papertrade-api-only-cascade0-series0-v13';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -259,6 +259,19 @@ async function poll() {
     .sort((a, b) => Number(a.start) - Number(b.start));
 
   for (const bucket of completed) {
+    const cascade = cascadeStats(bucket);
+    // Only alert when there are liquidations but both cascade and series are zero.
+    // All other completed windows are marked handled and ignored.
+    if (bucket.total <= 0 || cascade.maxCascade !== 0 || cascade.series !== 0) {
+      bucket.alerted = true;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info', event: 'liquidation_alert_ignored_by_cascade_series_filter',
+        instrument: bucket.instrument, periodStart: new Date(bucket.start).toISOString(),
+        liqs: bucket.total, cascade: cascade.maxCascade, series: cascade.series,
+      }));
+      continue;
+    }
     const startSeconds = Math.floor(Number(bucket.start) / 1000);
     const startingMarket = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 300}`;
     if (state.lastFollowingMarket[bucket.instrument] === startingMarket) {
@@ -305,7 +318,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'monitor_started', monitorVersion: MONITOR_VERSION,
   mode: 'confirmed_protocol_liquidations_only',
-  source: 'Papertrade SDK recentTrades endpoint; no alert thresholds; deduplicates repeated poll results',
+  source: 'Papertrade SDK recentTrades endpoint; alerts only when LIQS > 0, CASCADE = 0 and SERIES = 0; deduplicates repeated poll results',
   endpoint: `${API_URL}/query/protocol/trades/recent`,
   pollMs: POLL_MS, periodMs: WINDOW_MS,
   statePath: STATE_PATH,
