@@ -154,7 +154,7 @@ function alertText(window) {
     `Плюсовых сделок: ${window.wins}`,
     `Минусовых сделок: ${window.losses}`,
     `В ноль: ${window.breakeven}`,
-    `PnL: ${esc(money(window.grossPnl))}`,
+    `PnL: ${esc(money(window.grossPnl))}${positive ? ' ⬆️' : negative ? ' ⬇️' : ''}`,
 
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
     `<a href="${nextUrl}">Следующий маркет</a>`,
