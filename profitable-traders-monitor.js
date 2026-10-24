@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v21-negative-alerts-16000';
+const VERSION = 'papertrade-closed-pnl-5m-v22-min-14-closed-trades';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -210,7 +210,7 @@ async function poll() {
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
-    if (Number(window.closedTrades) < 11) {
+    if (Number(window.closedTrades) < 14) {
       alertedWindows.add(key);
       console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'fewer_than_11_closed_trades' }));
       continue;
