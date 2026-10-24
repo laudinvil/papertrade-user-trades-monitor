@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v17-percentages-per-result-row';
+const VERSION = 'papertrade-closed-pnl-5m-v18-ignore-breakeven-over-30pct';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -211,6 +211,12 @@ async function poll() {
     };
     if (alertedWindows.has(key)) continue;
     if (Number(window.closedTrades) <= 0) continue;
+    const breakevenPercent = Number(window.breakeven) / Number(window.closedTrades) * 100;
+    if (breakevenPercent > 30) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, breakevenPercent: Number(breakevenPercent.toFixed(1)), decision: 'ignored', reason: 'breakeven_over_30_percent' }));
+      continue;
+    }
     // Send at +$6,500 gross profit or -$7,200 gross loss.
     if (!Number.isFinite(grossPnl) || (grossPnl < 6500 && grossPnl > -7200)) {
       alertedWindows.add(key);
