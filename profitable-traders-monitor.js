@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v6-window-diagnostics';
+const VERSION = 'papertrade-closed-pnl-5m-v7-positive-negative-5000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -204,7 +204,7 @@ async function poll() {
       closedTrades: Number(window.closedTrades), grossPnl: Number.isFinite(grossPnl) ? Number(grossPnl.toFixed(2)) : null,
       fees: Number(Number(window.fees || 0).toFixed(2)),
       netPnl: Number(Number(window.netPnl || 0).toFixed(2)),
-      thresholdUsd: 5000, thresholdMet: Number.isFinite(grossPnl) && grossPnl >= 5000,
+      thresholdUsd: 5000, thresholdMet: Number.isFinite(grossPnl) && Math.abs(grossPnl) >= 5000,
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) {
@@ -215,13 +215,13 @@ async function poll() {
       console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'no_closed_trades' }));
       continue;
     }
-    // Send only when the displayed aggregate PnL reaches the $5,000 threshold.
-    if (!Number.isFinite(grossPnl) || grossPnl < 5000) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'gross_pnl_below_threshold' }));
+    // Send when aggregate gross PnL reaches either +$5,000 profit or -$5,000 loss.
+    if (!Number.isFinite(grossPnl) || Math.abs(grossPnl) < 5000) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'gross_pnl_within_threshold' }));
       alertedWindows.add(key);
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'threshold_met' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'absolute_threshold_met' }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
