@@ -186,9 +186,29 @@ async function poll() {
     if (liquidationSamples.length < 10) liquidationSamples.push({ reason, seq: e.seq ?? null, ts: e.ts ?? null, positionId: e.positionId ?? null, instrument: e.instrument ?? null, instrumentId: e.instrumentId ?? null, side: e.side ?? null });
   };
   const kindCounts = {};
+  const eventShapeSamples = [];
   for (const e of events) {
     const kind = String(e?.kind ?? e?.type ?? e?.eventType ?? '(missing)').trim().toLowerCase();
     kindCounts[kind] = (kindCounts[kind] || 0) + 1;
+    // Capture actual API fields from ordinary open/close events to diagnose whether
+    // liquidation metadata is present under a different field name.
+    if (eventShapeSamples.length < 5) {
+      eventShapeSamples.push({
+        keys: Object.keys(e || {}),
+        kind: e?.kind ?? null,
+        type: e?.type ?? null,
+        eventType: e?.eventType ?? null,
+        seq: e?.seq ?? null,
+        ts: e?.ts ?? null,
+        positionId: e?.positionId ?? null,
+        instrument: e?.instrument ?? null,
+        side: e?.side ?? null,
+        entry: e?.entry ?? null,
+        exit: e?.exit ?? null,
+        pnlUsd: e?.pnlUsd ?? null,
+        intentId: e?.intentId ?? null,
+      });
+    }
   }
   for (const e of events) {
     // This API includes opens, ordinary closes and liquidations. Only its explicit liquidation kind is authoritative.
@@ -271,6 +291,7 @@ async function poll() {
       level: 'info', event: 'monitor_summary', monitorVersion: MONITOR_VERSION,
       recentEventsReturned: events.length,
       eventKindCounts: kindCounts,
+      eventShapeSamples,
       ignoredNonLiquidations,
       skipReasons: liquidationSkipReasons,
       sampleSkippedEvents: liquidationSamples,
