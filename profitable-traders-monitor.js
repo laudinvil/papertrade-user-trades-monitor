@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v18-ignore-breakeven-over-30pct';
+const VERSION = 'papertrade-closed-pnl-5m-v19-min-11-closed-trades';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -210,7 +210,11 @@ async function poll() {
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
-    if (Number(window.closedTrades) <= 0) continue;
+    if (Number(window.closedTrades) < 11) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'fewer_than_11_closed_trades' }));
+      continue;
+    }
     const breakevenPercent = Number(window.breakeven) / Number(window.closedTrades) * 100;
     if (breakevenPercent > 30) {
       alertedWindows.add(key);
