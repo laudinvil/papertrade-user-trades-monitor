@@ -31,7 +31,7 @@ These criteria screen for historical performance; they do not guarantee future p
 
 - `PAPERTRADE_API_BASE_URL` (default `https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools`)
 - `POLL_MS` (default 60000; minimum 30000)
-- `STATE_PATH` (default `/data/profitable-traders-state.json`)
+- `PROFITABLE_TRADERS_STATE_PATH` (default `/data/profitable-traders-state.json`)
 - `LEADERBOARD_WINDOW` (default `7d`; supported: `24h`, `7d`, `30d`, `all`)
 - `CANDIDATE_LIMIT` (default 10; range 5–25)
 - `HISTORY_PAGES` (default 4; range 1–10; 75 trades per page)

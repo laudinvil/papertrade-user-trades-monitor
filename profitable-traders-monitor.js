@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/+$/, '');
 const POLL_MS = Math.max(30_000, Number(process.env.POLL_MS || 60_000));
-const STATE_PATH = process.env.STATE_PATH || '/data/profitable-traders-state.json';
+const STATE_PATH = process.env.PROFITABLE_TRADERS_STATE_PATH || '/data/profitable-traders-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const LEADERBOARD_WINDOW = process.env.LEADERBOARD_WINDOW || '7d';
@@ -179,11 +179,14 @@ async function poll() {
   }
 
   state.qualified = nextQualified;
-  if (newlyQualified.length) {
-    const lines = newlyQualified.slice(0, 10).map(({ wallet, name, stats }) =>
-      `• <a href="https://explorer.hyperEVM.org/address/${wallet}">${esc(name || shortWallet(wallet))}</a> — ${esc(money(stats.netPnl))}, ${stats.closedTrades} trades, win ${(stats.winRate * 100).toFixed(1)}%, PF ${stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2)}`);
-    await send(`<b>${firstRun ? 'Profitable Papertrade traders found' : 'New profitable Papertrade trader'}</b>\nWindow: ${esc(LEADERBOARD_WINDOW)}\nCriteria: ${MIN_CLOSED_TRADES}+ closed trades, win rate ≥ ${(MIN_WIN_RATE * 100).toFixed(0)}%, PF ≥ ${MIN_PROFIT_FACTOR.toFixed(2)}\n\n${lines.join('\n')}`);
-    for (const item of newlyQualified) alertedQualified.add(item.wallet);
+  for (let offset = 0; offset < newlyQualified.length; offset += 10) {
+    const batch = newlyQualified.slice(offset, offset + 10);
+    const lines = batch.map(({ wallet, name, stats }) =>
+      `• <a href="https://hyperevmscan.io/address/${wallet}">${esc(name || shortWallet(wallet))}</a> — ${esc(money(stats.netPnl))}, ${stats.closedTrades} trades, win ${(stats.winRate * 100).toFixed(1)}%, PF ${stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2)}`);
+    const batchLabel = newlyQualified.length > 10 ? ` (${Math.floor(offset / 10) + 1}/${Math.ceil(newlyQualified.length / 10)})` : '';
+    await send(`<b>${firstRun ? 'Profitable Papertrade traders found' : 'New profitable Papertrade trader'}${batchLabel}</b>\nWindow: ${esc(LEADERBOARD_WINDOW)}\nCriteria: ${MIN_CLOSED_TRADES}+ closed trades, win rate ≥ ${(MIN_WIN_RATE * 100).toFixed(0)}%, PF ≥ ${MIN_PROFIT_FACTOR.toFixed(2)}\n\n${lines.join('\n')}`);
+    for (const item of batch) alertedQualified.add(item.wallet);
+    saveState();
   }
 
   let tradeAlerts = 0;
@@ -195,7 +198,7 @@ async function poll() {
     if (!firstRun && stats && String(event.kind || '').toLowerCase() === 'open') {
       await send([
         '<b>New trade — profitable Papertrade trader</b>',
-        `Trader: <a href="https://explorer.hyperEVM.org/address/${wallet}">${esc(stats.name || shortWallet(wallet))}</a>`,
+        `Trader: <a href="https://hyperevmscan.io/address/${wallet}">${esc(stats.name || shortWallet(wallet))}</a>`,
         `Market: ${esc(event.instrument)} ${esc(String(event.side || '').toUpperCase())}`,
         `Leverage: ${esc(event.leverage)}x`,
         `Notional: ${esc(money(event.notionalUsd))}`,
