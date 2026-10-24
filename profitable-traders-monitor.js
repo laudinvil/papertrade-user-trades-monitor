@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v8-positive-5000-negative-5100';
+const VERSION = 'papertrade-closed-pnl-5m-v9-positive-5200-negative-5100';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -204,17 +204,17 @@ async function poll() {
       closedTrades: Number(window.closedTrades), grossPnl: Number.isFinite(grossPnl) ? Number(grossPnl.toFixed(2)) : null,
       fees: Number(Number(window.fees || 0).toFixed(2)),
       netPnl: Number(Number(window.netPnl || 0).toFixed(2)),
-      positiveThresholdUsd: 5000, negativeThresholdUsd: 5100, thresholdMet: Number.isFinite(grossPnl) && (grossPnl >= 5000 || grossPnl <= -5100),
+      positiveThresholdUsd: 5200, negativeThresholdUsd: 5100, thresholdMet: Number.isFinite(grossPnl) && (grossPnl >= 5200 || grossPnl <= -5100),
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
     if (Number(window.closedTrades) <= 0) continue;
-    // Send at +$5,000 gross profit or -$5,100 gross loss.
-    if (!Number.isFinite(grossPnl) || (grossPnl < 5000 && grossPnl > -5100)) {
+    // Send at +$5,200 gross profit or -$5,100 gross loss.
+    if (!Number.isFinite(grossPnl) || (grossPnl < 5200 && grossPnl > -5100)) {
       alertedWindows.add(key);
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: grossPnl >= 5000 ? 'positive_threshold_met' : 'negative_threshold_met' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: grossPnl >= 5200 ? 'positive_threshold_met' : 'negative_threshold_met' }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
