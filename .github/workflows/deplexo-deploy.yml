@@ -43,7 +43,7 @@ jobs:
             exit 1
           fi
 
-          echo "Requesting a single rebuild for GitHub commit $PUSH_SHA (app $APP_ID)."
+          echo "Requesting a rebuild of the exact GitHub commit $PUSH_SHA (app $APP_ID)."
           CODE="000"
           for ATTEMPT in $(seq 1 20); do
             echo "Deplexo redeployment attempt $ATTEMPT/20 for commit $PUSH_SHA."
@@ -53,7 +53,7 @@ jobs:
               -H "Authorization: Bearer $DEPLEXO_TOKEN" \
               -H "Accept: application/json" \
               -H "Content-Type: application/json" \
-              --data '{}' "$BASE/apps/$APP_ID/restart")" || CODE="000"
+              --data "$(jq -cn --arg sha "$PUSH_SHA" '{commitSha:$sha}')" "$BASE/apps/$APP_ID/restart")" || CODE="000"
             cat /tmp/deplexo-response.json | jq . 2>/dev/null || cat /tmp/deplexo-response.json
             if [[ "$CODE" == "200" || "$CODE" == "201" || "$CODE" == "202" ]]; then
               break
@@ -61,7 +61,7 @@ jobs:
             if [[ "$CODE" != "503" && "$CODE" != "409" && "$CODE" != "000" ]]; then
               echo "::error::Deplexo rejected redeployment (HTTP $CODE)."
               if [[ "$CODE" == "403" ]]; then
-                echo "::error::Check that DEPLEXO_TOKEN includes app:restart scope."
+                echo "::error::Check that DEPLEXO_TOKEN includes both app:restart and app:deploy scopes; commitSha rebuilds require both."
               fi
               exit 1
             fi
