@@ -3,7 +3,6 @@ import { createServer } from "node:http";
 
 const services = [
   { name: "liquidation-monitor", script: "papertrade-monitor.js" },
-  { name: "shark-radar-monitor", script: "shark-radar-monitor.js" },
 ];
 const children = new Map();
 const port = Number(process.env.PORT || 8000);
