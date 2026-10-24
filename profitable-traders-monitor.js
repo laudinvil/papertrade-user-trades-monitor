@@ -207,17 +207,10 @@ async function poll() {
       thresholdUsd: 5000, thresholdMet: Number.isFinite(grossPnl) && Math.abs(grossPnl) >= 5000,
       alreadyAlerted: alertedWindows.has(key),
     };
-    if (alertedWindows.has(key)) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'already_alerted' }));
-      continue;
-    }
-    if (Number(window.closedTrades) <= 0) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'no_closed_trades' }));
-      continue;
-    }
+    if (alertedWindows.has(key)) continue;
+    if (Number(window.closedTrades) <= 0) continue;
     // Send when aggregate gross PnL reaches either +$5,000 profit or -$5,000 loss.
     if (!Number.isFinite(grossPnl) || Math.abs(grossPnl) < 5000) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'gross_pnl_within_threshold' }));
       alertedWindows.add(key);
       continue;
     }
@@ -236,12 +229,7 @@ async function poll() {
   }
   state.initialized = true;
   saveState();
-  console.log(JSON.stringify({
-    level: 'info', event: 'papertrade_closed_pnl_summary', version: VERSION, pollMs: POLL_MS,
-    eventsFetched: events.length, newClosedTrades: newClosed, ignoredClosedEvents: ignored,
-    trackedWindows: Object.keys(state.windows).length, completedWindows: completed.length,
-    alertsSent, currentPeriodStart, firstRun,
-  }));
+  // Routine poll summaries are intentionally suppressed to keep runtime logs minimal.
 }
 
 console.log(JSON.stringify({
