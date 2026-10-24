@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v4-remove-period-net-pnl-lines';
+const VERSION = 'papertrade-closed-pnl-5m-v5-alert-gross-pnl-at-least-5000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -197,6 +197,11 @@ async function poll() {
   for (const window of completed) {
     const key = `${window.periodStart}:${window.instrument}`;
     if (alertedWindows.has(key) || window.closedTrades <= 0) continue;
+    // Send only when the displayed aggregate PnL reaches the $5,000 threshold.
+    if (Number(window.grossPnl) < 5000) {
+      alertedWindows.add(key);
+      continue;
+    }
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
