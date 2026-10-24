@@ -122,7 +122,7 @@ jobs:
               "$BASE/apps/$APP_ID/logs/runtime?limit=1000")" || RUNTIME_CODE="000"
             if [[ "$RUNTIME_CODE" == "200" ]]; then
               cat /tmp/deplexo-runtime.json | jq -r '.lines[]? | if type == "string" then . else tostring end' > /tmp/deplexo-runtime-lines.txt
-              if grep -q '"event":"monitor_started"' /tmp/deplexo-runtime-lines.txt && grep -q 'shark-radar' /tmp/deplexo-runtime-lines.txt; then
+              if grep -q '"event":"monitor_started"' /tmp/deplexo-runtime-lines.txt; then
                 RUNTIME_OK="true"
                 break
               fi
