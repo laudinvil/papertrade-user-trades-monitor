@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-api-only-cascade0-series0-v14-log-cascade-series';
+const MONITOR_VERSION = 'papertrade-api-only-cascade0-series0-v15-retry-alert-send-log-liq-pnl';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -192,7 +192,7 @@ async function poll() {
     kindCounts[kind] = (kindCounts[kind] || 0) + 1;
     // Capture actual API fields from ordinary open/close events to diagnose whether
     // liquidation metadata is present under a different field name.
-    if (eventShapeSamples.length < 5) {
+    if (eventShapeSamples.length < 5 || (['liq', 'liquidation'].includes(kind) && eventShapeSamples.filter(s => ['liq', 'liquidation'].includes(String(s.kind ?? s.type ?? s.eventType ?? '').toLowerCase())).length < 5)) {
       eventShapeSamples.push({
         keys: Object.keys(e || {}),
         kind: e?.kind ?? null,
@@ -279,9 +279,10 @@ async function poll() {
       saveState();
       continue;
     }
-    bucket.alerted = true;
-    saveState();
+    // Do not mark the window handled until Telegram confirms delivery.
+    // If sending fails, poll() throws and this window is retried on the next poll.
     await send(alertText(bucket));
+    bucket.alerted = true;
     state.lastFollowingMarket[bucket.instrument] = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 600}`;
     saveState();
     alertsSent++;
