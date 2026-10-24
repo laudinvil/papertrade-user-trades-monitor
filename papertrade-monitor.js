@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liq-ignore-zero-cascade-series-v10';
+const MONITOR_VERSION = 'papertrade-sdk-liq-kind-alias-fix-v11';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -178,7 +178,7 @@ async function poll() {
   // First run establishes a clean baseline. Do not send alerts for history accumulated before startup.
   if (!state.initialized) {
     for (const e of events) {
-      if (['liq', 'liquidation'].includes(String(e.kind || '').trim().toLowerCase()) && e.positionId != null) seen.add(eventIdentity(e));
+      if (['liq', 'liquidation'].includes(String(e?.kind ?? e?.type ?? e?.eventType ?? '').trim().toLowerCase()) && e.positionId != null) seen.add(eventIdentity(e));
     }
     saveState();
     console.log(JSON.stringify({
@@ -199,12 +199,12 @@ async function poll() {
   };
   const kindCounts = {};
   for (const e of events) {
-    const kind = String(e?.kind ?? e?.type ?? e?.eventType ?? '(missing)').toLowerCase();
+    const kind = String(e?.kind ?? e?.type ?? e?.eventType ?? '(missing)').trim().toLowerCase();
     kindCounts[kind] = (kindCounts[kind] || 0) + 1;
   }
   for (const e of events) {
     // This API includes opens, ordinary closes and liquidations. Only its explicit liquidation kind is authoritative.
-    if (!['liq', 'liquidation'].includes(String(e.kind || '').trim().toLowerCase())) {
+    if (!['liq', 'liquidation'].includes(String(e?.kind ?? e?.type ?? e?.eventType ?? '').trim().toLowerCase())) {
       ignoredNonLiquidations++;
       continue;
     }
@@ -288,6 +288,10 @@ async function poll() {
     console.log(JSON.stringify({
       level: 'info', event: 'monitor_summary', monitorVersion: MONITOR_VERSION,
       recentEventsReturned: events.length,
+      eventKindCounts: kindCounts,
+      ignoredNonLiquidations,
+      skipReasons: liquidationSkipReasons,
+      sampleSkippedEvents: liquidationSamples,
       liquidationEventsSkipped: Object.values(liquidationSkipReasons).reduce((sum, count) => sum + count, 0),
       newLiquidations: newlyConfirmed, alertsSent,
     }));
