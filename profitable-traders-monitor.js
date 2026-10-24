@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v14-breakeven-margin-2';
+const VERSION = 'papertrade-closed-pnl-5m-v15-breakeven-deficit-2';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -206,13 +206,13 @@ async function poll() {
       netPnl: Number(Number(window.netPnl || 0).toFixed(2)),
       positiveThresholdUsd: 6500, negativeThresholdUsd: 7200,
       wins: Number(window.wins), losses: Number(window.losses), breakeven: Number(window.breakeven),
-      breakevenDominates: Number(window.breakeven) - Number(window.wins) > 2 || Number(window.breakeven) - Number(window.losses) > 2, thresholdMet: Number.isFinite(grossPnl) && (grossPnl >= 6500 || grossPnl <= -7200),
+      breakevenDeficitSuppresses: Number(window.wins) - Number(window.breakeven) >= 2 || Number(window.losses) - Number(window.breakeven) >= 2, thresholdMet: Number.isFinite(grossPnl) && (grossPnl >= 6500 || grossPnl <= -7200),
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
     if (Number(window.closedTrades) <= 0) continue;
-    // Suppress the alert if breakeven trades outnumber either wins or losses.
-    if (Number(window.breakeven) > Number(window.wins) || Number(window.breakeven) > Number(window.losses)) {
+    // Suppress the alert if breakeven trades are at least two fewer than wins or losses.
+    if (Number(window.wins) - Number(window.breakeven) >= 2 || Number(window.losses) - Number(window.breakeven) >= 2) {
       alertedWindows.add(key);
       continue;
     }
