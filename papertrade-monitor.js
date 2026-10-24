@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const WINDOW_MS = 5 * 60 * 1000;
 const SEEN_LIMIT = 5000;
-const MONITOR_VERSION = 'papertrade-sdk-liq-kind-alias-fix-v11';
+const MONITOR_VERSION = 'papertrade-sdk-no-alert-thresholds-no-peak-v12';
 const SUMMARY_LOG_MS = 60_000;
 let lastSummaryLogAt = 0;
 
@@ -109,17 +109,6 @@ function getWindow(start, instrument) {
   return windows[key];
 }
 
-function peakPerSecond(bucket) {
-  const counts = new Map();
-  for (const value of bucket.timestamps || []) {
-    const ts = Number(value);
-    if (!Number.isFinite(ts) || ts <= 0) continue;
-    const second = Math.floor(ts / 1000);
-    counts.set(second, (counts.get(second) || 0) + 1);
-  }
-  return counts.size ? Math.max(...counts.values()) : 0;
-}
-
 function cascadeStats(bucket) {
   const timestamps = (bucket.timestamps || []).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
   let run = 0, series = 0, maxCascade = 0;
@@ -151,7 +140,6 @@ function alertText(bucket) {
 
     `SECONDS: ${seconds}`,
     `LIQ SPAN: ${span}s`,
-    `PEAK: ${peakPerSecond(bucket)} liqs/s`,
     `CASCADE: ${cascade.maxCascade}`,
     `SERIES: ${cascade.series}`,
     `<a href="${nextUrl}">Начинающийся маркет</a>`,
@@ -251,11 +239,6 @@ async function poll() {
     .sort((a, b) => Number(a.start) - Number(b.start));
 
   for (const bucket of completed) {
-    if (bucket.total <= 1) {
-      bucket.alerted = true;
-      saveState();
-      continue;
-    }
     const startSeconds = Math.floor(Number(bucket.start) / 1000);
     const startingMarket = `https://polymarket.com/event/${bucket.instrument.toLowerCase()}-updown-5m-${startSeconds + 300}`;
     if (state.lastFollowingMarket[bucket.instrument] === startingMarket) {
@@ -263,7 +246,6 @@ async function poll() {
       saveState();
       continue;
     }
-    const peak = peakPerSecond(bucket);
     bucket.alerted = true;
     saveState();
     await send(alertText(bucket));
@@ -274,7 +256,7 @@ async function poll() {
       level: 'info', event: 'liquidation_alert_sent',
       instrument: bucket.instrument, periodStart: new Date(bucket.start).toISOString(),
       confirmedUniqueLiquidations: bucket.total, long: bucket.long, short: bucket.short,
-      unknownSide: bucket.unknownSide, peakLiqsPerSecond: peak,
+      unknownSide: bucket.unknownSide,
       uniquePositions: bucket.positionKeys.length,
     }));
   }
@@ -302,7 +284,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'monitor_started', monitorVersion: MONITOR_VERSION,
   mode: 'confirmed_protocol_liquidations_only',
-  source: 'Papertrade SDK recentTrades endpoint; filters kind=liq or liquidation only',
+  source: 'Papertrade SDK recentTrades endpoint; no alert thresholds; deduplicates repeated poll results',
   endpoint: `${API_URL}/query/protocol/trades/recent`,
   pollMs: POLL_MS, periodMs: WINDOW_MS,
   statePath: STATE_PATH,
