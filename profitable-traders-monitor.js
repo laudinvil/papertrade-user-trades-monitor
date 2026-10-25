@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v33-loss-majority-period-boundary';
+const VERSION = 'papertrade-closed-pnl-5m-v34-boundary-only-max-2s';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -182,10 +182,13 @@ function lossMajorityAlertText(window) {
 }
 
 async function poll() {
-  const now = Math.floor(Date.now() / 1000);
-  const currentPeriodStart = periodStartFor(now);
+  let now = Math.floor(Date.now() / 1000);
+  let currentPeriodStart = periodStartFor(now);
   const firstRun = !state.initialized;
   const result = await callTool('get_recent_trades');
+  // Anchor the alert deadline to the time the API response is received.
+  now = Math.floor(Date.now() / 1000);
+  currentPeriodStart = periodStartFor(now);
   const events = Array.isArray(result.events) ? result.events : [];
   let newClosed = 0;
   let ignored = 0;
@@ -229,35 +232,28 @@ async function poll() {
     };
     const periodStart = Number(window.periodStart);
 
-    // Evaluate the newest completed window per instrument, not only the exact prior
-    // boundary. If the API briefly lags or a poll fails across a 5-minute boundary,
-    // the alert can still be sent when the window data arrives. Ignore windows older
-    // than 10 minutes to prevent stale/backlog alerts.
-    const recentCompletedWindows = completed.filter(item =>
-      Number(item.periodStart) >= currentPeriodStart - 2 * PERIOD_SECONDS
-    );
-    const latestCompletedByInstrument = new Map();
-    for (const item of recentCompletedWindows) {
-      const existing = latestCompletedByInstrument.get(item.instrument);
-      if (!existing || Number(item.periodStart) > Number(existing.periodStart)) {
-        latestCompletedByInstrument.set(item.instrument, item);
-      }
-    }
-    const latestCompleted = latestCompletedByInstrument.get(window.instrument);
+    // Loss-majority alerts are allowed only at the immediately following 5-minute boundary,
+    // with a hard 2-second deadline. Never catch up or send stale alerts.
     if (
-      latestCompleted &&
-      Number(latestCompleted.periodStart) === periodStart &&
+      periodStart === currentPeriodStart - PERIOD_SECONDS &&
+      now - currentPeriodStart <= 2 &&
       !lossMajorityAlertedWindows.has(key) &&
       Number(window.losses) > Number(window.wins)
     ) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_LATEST_COMPLETED_WINDOW' }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
       await send(lossMajorityAlertText(window));
       lossMajorityAlertedWindows.add(key);
       saveState();
-      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS_LATEST_COMPLETED_WINDOW' }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
     }
 
     if (alertedWindows.has(key)) continue;
+    // Both alert paths are boundary-only: if this isn't the just-finished period,
+    // or the API response arrived more than 2 seconds after the boundary, never send.
+    if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
+      alertedWindows.add(key);
+      continue;
+    }
     const netPnl = Number(window.netPnl || 0);
     // Alert each instrument independently only when the completed 5-minute net PnL is at least $15,000.
     if (netPnl < 15_000) {
