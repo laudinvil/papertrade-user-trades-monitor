@@ -178,7 +178,7 @@ function lossMajorityAlertText(window) {
     `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
     `PnL: ${esc(money(window.grossPnl))}`,
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function poll() {
