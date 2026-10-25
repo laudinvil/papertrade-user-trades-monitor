@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v36-extra-link-spacing';
+const VERSION = 'papertrade-closed-pnl-v37-dual-coin-loss-majority-arrow';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -166,13 +166,13 @@ function alertText(window, previousClosedTrades) {
   ].join('\n');
 }
 
-function lossMajorityAlertText(window) {
+function lossMajorityAlertText(window, addBigDownArrow = false) {
   const start = Number(window.periodStart);
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const total = Number(window.closedTrades);
   return [
-    `<b>МИНУСОВЫХ СДЕЛОК БОЛЬШЕ — ${esc(window.instrument)}</b>`,
+    `<b>МИНУСОВЫХ СДЕЛОК БОЛЬШЕ — ${esc(window.instrument)}${addBigDownArrow ? ' ⬇️' : ''}</b>`,
     `CLOSED: ${total}`,
     `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
@@ -219,6 +219,20 @@ async function poll() {
     .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart) || a.instrument.localeCompare(b.instrument));
 
+  // Add a down arrow when both BTC and ETH qualify for this strategy in the same period.
+  const lossMajorityByPeriod = new Map();
+  for (const window of completed) {
+    const periodStart = Number(window.periodStart);
+    const eligible =
+      periodStart === currentPeriodStart - PERIOD_SECONDS &&
+      now - currentPeriodStart <= 2 &&
+      !lossMajorityAlertedWindows.has(`${window.periodStart}:${window.instrument}`) &&
+      Number(window.losses) > Number(window.wins);
+    if (!eligible) continue;
+    if (!lossMajorityByPeriod.has(periodStart)) lossMajorityByPeriod.set(periodStart, new Set());
+    lossMajorityByPeriod.get(periodStart).add(window.instrument);
+  }
+
   let alertsSent = 0;
   for (const window of completed) {
     const key = `${window.periodStart}:${window.instrument}`;
@@ -244,7 +258,9 @@ async function poll() {
       Number(window.losses) > Number(window.wins)
     ) {
       console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
-      await send(lossMajorityAlertText(window));
+      const qualifyingCoins = lossMajorityByPeriod.get(periodStart);
+      const addBigDownArrow = qualifyingCoins?.has('BTC') && qualifyingCoins?.has('ETH');
+      await send(lossMajorityAlertText(window, addBigDownArrow));
       lossMajorityAlertedWindows.add(key);
       saveState();
       console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
