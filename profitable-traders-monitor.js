@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v28-positive-net-pnl-25000';
+const VERSION = 'papertrade-closed-pnl-5m-v29-positive-net-pnl-15000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -213,10 +213,10 @@ async function poll() {
     if (alertedWindows.has(key)) continue;
     const periodStart = Number(window.periodStart);
     const netPnl = Number(window.netPnl || 0);
-    // Alert each instrument independently only when the completed 5-minute net PnL is at least $25,000.
-    if (netPnl < 25_000) {
+    // Alert each instrument independently only when the completed 5-minute net PnL is at least $15,000.
+    if (netPnl < 15_000) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_25000', netPnl, minimumNetPnl: 25_000 }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_15000', netPnl, minimumNetPnl: 15_000 }));
       continue;
     }
     const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`];
