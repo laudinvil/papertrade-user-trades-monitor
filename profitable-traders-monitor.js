@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v37-dual-coin-loss-majority-arrow';
+const VERSION = 'papertrade-closed-pnl-v38-single-up-dual-down-breakeven-31';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -170,7 +170,7 @@ function lossMajorityAlertText(window, addBigDownArrow = false) {
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const total = Number(window.closedTrades);
   return [
-    `<b>МИНУСОВЫХ БОЛЬШЕ — ${esc(window.instrument)} ⬆️${addBigDownArrow ? ' ⬇️' : ''}</b>`,
+    `<b>МИНУСОВЫХ БОЛЬШЕ — ${esc(window.instrument)} ${addBigDownArrow ? '⬇️' : '⬆️'}</b>`,
     `CLOSED: ${total}`,
     `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
@@ -226,7 +226,7 @@ async function poll() {
       !lossMajorityAlertedWindows.has(`${window.periodStart}:${window.instrument}`) &&
       Number(window.losses) > Number(window.wins) &&
       Number(window.closedTrades) > 0 &&
-      Number(window.breakeven) / Number(window.closedTrades) <= 0.40;
+      Number(window.breakeven) / Number(window.closedTrades) <= 0.31;
     if (!eligible) continue;
     if (!lossMajorityByPeriod.has(periodStart)) lossMajorityByPeriod.set(periodStart, new Set());
     lossMajorityByPeriod.get(periodStart).add(window.instrument);
@@ -261,10 +261,10 @@ async function poll() {
       const closedTrades = Number(window.closedTrades);
       const losingShare = closedTrades > 0 ? Number(window.losses) / closedTrades : 0;
       const breakevenShare = closedTrades > 0 ? Number(window.breakeven) / closedTrades : 1;
-      const passesBreakevenFilter = closedTrades > 0 && breakevenShare <= 0.40;
+      const passesBreakevenFilter = closedTrades > 0 && breakevenShare <= 0.31;
       const passesLossShareFilter = losingShare <= 0.54;
       if (!passesBreakevenFilter) {
-        console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'BREAKEVEN_SHARE_ABOVE_40_PERCENT', breakevenShare: Number((breakevenShare * 100).toFixed(1)) }));
+        console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'BREAKEVEN_SHARE_ABOVE_31_PERCENT', breakevenShare: Number((breakevenShare * 100).toFixed(1)) }));
       } else if (!passesLossShareFilter && !addBigDownArrow) {
         console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'LOSING_SHARE_ABOVE_54_PERCENT_WITHOUT_DUAL_COIN_ARROW', losingShare: Number((losingShare * 100).toFixed(1)) }));
       } else {
