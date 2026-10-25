@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v27-opposite-btc-eth-periods';
+const VERSION = 'papertrade-closed-pnl-5m-v28-positive-net-pnl-25000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -212,17 +212,11 @@ async function poll() {
     };
     if (alertedWindows.has(key)) continue;
     const periodStart = Number(window.periodStart);
-    const btcWindow = state.windows[`${periodStart}:BTC`];
-    const ethWindow = state.windows[`${periodStart}:ETH`];
-    // Require both BTC and ETH to finish the same 5-minute period with matching non-zero PnL signs.
-    if (!btcWindow || !ethWindow) continue;
-    const btcNetPnl = Number(btcWindow.netPnl || 0);
-    const ethNetPnl = Number(ethWindow.netPnl || 0);
-    const oppositeDirection = (btcNetPnl > 0 && ethNetPnl < 0) || (btcNetPnl < 0 && ethNetPnl > 0);
-    if (!oppositeDirection) {
-      alertedWindows.add(`${periodStart}:BTC`);
-      alertedWindows.add(`${periodStart}:ETH`);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'BTC_ETH_NOT_OPPOSITE_PNL_DIRECTIONS', btcNetPnl, ethNetPnl }));
+    const netPnl = Number(window.netPnl || 0);
+    // Alert each instrument independently only when the completed 5-minute net PnL is at least $25,000.
+    if (netPnl < 25_000) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_25000', netPnl, minimumNetPnl: 25_000 }));
       continue;
     }
     const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`];
