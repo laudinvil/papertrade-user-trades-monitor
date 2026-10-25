@@ -1,8 +1,8 @@
 name: Deploy and verify Deplexo
 
+# Automatic deployment is handled by Deplexo Auto Deploy.
+# Keep this workflow available only for explicit manual recovery.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
