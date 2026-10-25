@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v40-ignore-any-dual-loss-alert';
+const VERSION = 'papertrade-closed-pnl-v41-lowercase-bolshe';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -170,7 +170,7 @@ function lossMajorityAlertText(window) {
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const total = Number(window.closedTrades);
   return [
-    `<b>МИНУСОВЫХ БОЛЬШЕ — ${esc(window.instrument)} ⬆️</b>`,
+    `<b>МИНУСОВЫХ больше — ${esc(window.instrument)} ⬆️</b>`,
     `CLOSED: ${total}`,
     `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
