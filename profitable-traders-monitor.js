@@ -229,19 +229,32 @@ async function poll() {
     };
     const periodStart = Number(window.periodStart);
 
-    // Independent rule: evaluate only the immediately preceding, fully completed 5-minute period.
-    // This prevents historical backlog bursts and sends at most one loss-majority alert per instrument/window.
-    const justCompletedPeriodStart = currentPeriodStart - PERIOD_SECONDS;
+    // Evaluate the newest completed window per instrument, not only the exact prior
+    // boundary. If the API briefly lags or a poll fails across a 5-minute boundary,
+    // the alert can still be sent when the window data arrives. Ignore windows older
+    // than 10 minutes to prevent stale/backlog alerts.
+    const recentCompletedWindows = completed.filter(item =>
+      Number(item.periodStart) >= currentPeriodStart - 2 * PERIOD_SECONDS
+    );
+    const latestCompletedByInstrument = new Map();
+    for (const item of recentCompletedWindows) {
+      const existing = latestCompletedByInstrument.get(item.instrument);
+      if (!existing || Number(item.periodStart) > Number(existing.periodStart)) {
+        latestCompletedByInstrument.set(item.instrument, item);
+      }
+    }
+    const latestCompleted = latestCompletedByInstrument.get(window.instrument);
     if (
-      periodStart === justCompletedPeriodStart &&
+      latestCompleted &&
+      Number(latestCompleted.periodStart) === periodStart &&
       !lossMajorityAlertedWindows.has(key) &&
       Number(window.losses) > Number(window.wins)
     ) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AT_PERIOD_BOUNDARY' }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_LATEST_COMPLETED_WINDOW' }));
       await send(lossMajorityAlertText(window));
       lossMajorityAlertedWindows.add(key);
       saveState();
-      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS_AT_PERIOD_BOUNDARY' }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS_LATEST_COMPLETED_WINDOW' }));
     }
 
     if (alertedWindows.has(key)) continue;
