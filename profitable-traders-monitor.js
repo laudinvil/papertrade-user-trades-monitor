@@ -172,7 +172,7 @@ function lossMajorityAlertText(window, addBigDownArrow = false) {
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const total = Number(window.closedTrades);
   return [
-    `<b>МИНУСОВЫХ СДЕЛОК БОЛЬШЕ — ${esc(window.instrument)}${addBigDownArrow ? ' ⬇️' : ''}</b>`,
+    `<b>МИНУСОВЫХ БОЛЬШЕ — ${esc(window.instrument)} ⬆️${addBigDownArrow ? ' ⬇️' : ''}</b>`,
     `CLOSED: ${total}`,
     `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
