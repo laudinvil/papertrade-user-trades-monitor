@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v35-clean-alert-headings-link-spacing';
+const VERSION = 'papertrade-closed-pnl-v36-extra-link-spacing';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -178,6 +178,7 @@ function lossMajorityAlertText(window) {
     `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
     `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
     `PnL: ${esc(money(window.grossPnl))}`,
+    '',
     '',
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
   ].join('\n');
