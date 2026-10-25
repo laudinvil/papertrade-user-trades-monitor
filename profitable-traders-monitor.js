@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v26-two-second-boundary-poll';
+const VERSION = 'papertrade-closed-pnl-5m-v27-opposite-btc-eth-periods';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -218,11 +218,11 @@ async function poll() {
     if (!btcWindow || !ethWindow) continue;
     const btcNetPnl = Number(btcWindow.netPnl || 0);
     const ethNetPnl = Number(ethWindow.netPnl || 0);
-    const sameDirection = (btcNetPnl > 0 && ethNetPnl > 0) || (btcNetPnl < 0 && ethNetPnl < 0);
-    if (!sameDirection) {
+    const oppositeDirection = (btcNetPnl > 0 && ethNetPnl < 0) || (btcNetPnl < 0 && ethNetPnl > 0);
+    if (!oppositeDirection) {
       alertedWindows.add(`${periodStart}:BTC`);
       alertedWindows.add(`${periodStart}:ETH`);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'BTC_ETH_NOT_BOTH_PROFITABLE_OR_BOTH_LOSING', btcNetPnl, ethNetPnl }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'BTC_ETH_NOT_OPPOSITE_PNL_DIRECTIONS', btcNetPnl, ethNetPnl }));
       continue;
     }
     const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`];
