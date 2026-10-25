@@ -228,7 +228,7 @@ async function poll() {
       !lossMajorityAlertedWindows.has(`${window.periodStart}:${window.instrument}`) &&
       Number(window.losses) > Number(window.wins) &&
       Number(window.closedTrades) > 0 &&
-      Number(window.losses) / Number(window.closedTrades) <= 0.70;
+      Number(window.losses) / Number(window.closedTrades) <= 0.54;
     if (!eligible) continue;
     if (!lossMajorityByPeriod.has(periodStart)) lossMajorityByPeriod.set(periodStart, new Set());
     lossMajorityByPeriod.get(periodStart).add(window.instrument);
@@ -258,7 +258,7 @@ async function poll() {
       !lossMajorityAlertedWindows.has(key) &&
       Number(window.losses) > Number(window.wins) &&
       Number(window.closedTrades) > 0 &&
-      Number(window.losses) / Number(window.closedTrades) <= 0.70
+      Number(window.losses) / Number(window.closedTrades) <= 0.54
     ) {
       console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
       const qualifyingCoins = lossMajorityByPeriod.get(periodStart);
