@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v31-independent-loss-majority-alerts';
+const VERSION = 'papertrade-closed-pnl-5m-v32-loss-majority-alerts-disabled';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -227,15 +227,6 @@ async function poll() {
       wins: Number(window.wins), losses: Number(window.losses), breakeven: Number(window.breakeven),
       alreadyAlerted: alertedWindows.has(key),
     };
-    // Independent rule: alert on every completed period where losing trades outnumber winning trades.
-    // This has its own deduplication set and is not blocked by the $15,000 PnL rule.
-    if (!lossMajorityAlertedWindows.has(key) && Number(window.losses) > Number(window.wins)) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS' }));
-      await send(lossMajorityAlertText(window));
-      lossMajorityAlertedWindows.add(key);
-      saveState();
-      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS' }));
-    }
     if (alertedWindows.has(key)) continue;
     const periodStart = Number(window.periodStart);
     const netPnl = Number(window.netPnl || 0);
