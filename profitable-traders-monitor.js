@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v24-min-51-closed-trades';
+const VERSION = 'papertrade-closed-pnl-5m-v25-no-thresholds-closed-trend';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -140,8 +140,11 @@ function formatPeriod(start) {
   return new Date(start * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
 
-function alertText(window) {
+function alertText(window, previousClosedTrades) {
   const start = Number(window.periodStart);
+  const closedTrades = Number(window.closedTrades);
+  const previous = Number(previousClosedTrades);
+  const closedArrow = Number.isFinite(previous) ? (closedTrades > previous ? ' ↑' : closedTrades < previous ? ' ↓' : '') : '';
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const nextUrl = `https://polymarket.com/event/${slug}${start + 2 * PERIOD_SECONDS}`;
@@ -150,7 +153,7 @@ function alertText(window) {
   const result = positive ? 'ПЛЮСОВОЙ' : negative ? 'МИНУСОВОЙ' : 'В НОЛЬ';
   return [
     `<b>${result} период — ${esc(window.instrument)} 5m</b>`,
-    `CLOSED: ${window.closedTrades}`,
+    `CLOSED: ${window.closedTrades}${closedArrow}`,
     `Плюсовых сделок: ${window.wins} (+${window.closedTrades > 0 ? (window.wins / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (-${window.closedTrades > 0 ? (window.losses / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
     `В ноль: ${window.breakeven} (${window.closedTrades > 0 ? (window.breakeven / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
@@ -204,30 +207,14 @@ async function poll() {
       closedTrades: Number(window.closedTrades), grossPnl: Number.isFinite(grossPnl) ? Number(grossPnl.toFixed(2)) : null,
       fees: Number(Number(window.fees || 0).toFixed(2)),
       netPnl: Number(Number(window.netPnl || 0).toFixed(2)),
-      positiveThresholdUsd: 10000, negativeThresholdUsd: 16000,
       wins: Number(window.wins), losses: Number(window.losses), breakeven: Number(window.breakeven),
-      thresholdMet: Number.isFinite(grossPnl) && (grossPnl >= 10000 || grossPnl <= -16000),
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
-    if (Number(window.closedTrades) < 51) {
-      alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'fewer_than_11_closed_trades' }));
-      continue;
-    }
-    const breakevenPercent = Number(window.breakeven) / Number(window.closedTrades) * 100;
-    if (breakevenPercent > 30) {
-      alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, breakevenPercent: Number(breakevenPercent.toFixed(1)), decision: 'ignored', reason: 'breakeven_over_30_percent' }));
-      continue;
-    }
-    // Send at +$6,500 gross profit or -$7,200 gross loss.
-    if (!Number.isFinite(grossPnl) || (grossPnl < 10000 && grossPnl > -16000)) {
-      alertedWindows.add(key);
-      continue;
-    }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: grossPnl >= 6500 ? 'positive_threshold_met' : 'negative_threshold_met' }));
-    await send(alertText(window));
+    const previousWindow = state.windows[`${Number(window.periodStart) - PERIOD_SECONDS}:${window.instrument}`];
+    const previousClosedTrades = previousWindow ? Number(previousWindow.closedTrades) : null;
+    console.log(JSON.stringify({ ...diagnostic, previousClosedTrades, decision: 'send_attempt', reason: 'completed_5m_window' }));
+    await send(alertText(window, previousClosedTrades));
     alertedWindows.add(key);
     alertsSent++;
     saveState();
