@@ -226,9 +226,7 @@ async function poll() {
       periodStart === currentPeriodStart - PERIOD_SECONDS &&
       now - currentPeriodStart <= 2 &&
       !lossMajorityAlertedWindows.has(`${window.periodStart}:${window.instrument}`) &&
-      Number(window.losses) > Number(window.wins) &&
-      Number(window.closedTrades) > 0 &&
-      Number(window.losses) / Number(window.closedTrades) <= 0.54;
+      Number(window.losses) > Number(window.wins);
     if (!eligible) continue;
     if (!lossMajorityByPeriod.has(periodStart)) lossMajorityByPeriod.set(periodStart, new Set());
     lossMajorityByPeriod.get(periodStart).add(window.instrument);
@@ -256,17 +254,23 @@ async function poll() {
       periodStart === currentPeriodStart - PERIOD_SECONDS &&
       now - currentPeriodStart <= 2 &&
       !lossMajorityAlertedWindows.has(key) &&
-      Number(window.losses) > Number(window.wins) &&
-      Number(window.closedTrades) > 0 &&
-      Number(window.losses) / Number(window.closedTrades) <= 0.54
+      Number(window.losses) > Number(window.wins)
     ) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
       const qualifyingCoins = lossMajorityByPeriod.get(periodStart);
       const addBigDownArrow = qualifyingCoins?.has('BTC') && qualifyingCoins?.has('ETH');
+      const losingShare = Number(window.closedTrades) > 0
+        ? Number(window.losses) / Number(window.closedTrades)
+        : 0;
+      const passesLossShareFilter = losingShare <= 0.54;
+      if (!passesLossShareFilter && !addBigDownArrow) {
+        console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'LOSING_SHARE_ABOVE_54_PERCENT_WITHOUT_DUAL_COIN_ARROW', losingShare: Number((losingShare * 100).toFixed(1)) }));
+      } else {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: addBigDownArrow ? 'DUAL_COIN_DOWN_ARROW_EXEMPT_FROM_54_PERCENT_FILTER' : 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
       await send(lossMajorityAlertText(window, addBigDownArrow));
       lossMajorityAlertedWindows.add(key);
       saveState();
-      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: addBigDownArrow ? 'DUAL_COIN_DOWN_ARROW_EXEMPT_FROM_54_PERCENT_FILTER' : 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S' }));
+      }
     }
 
     if (alertedWindows.has(key)) continue;
