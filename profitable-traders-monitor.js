@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v30-remove-next-market-link';
+const VERSION = 'papertrade-closed-pnl-5m-v31-independent-loss-majority-alerts';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -47,9 +47,10 @@ function loadState() {
       seenEvents: Array.isArray(saved.seenEvents) ? saved.seenEvents.map(String).slice(-MAX_SEEN) : [],
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
+      lossMajorityAlertedWindows: Array.isArray(saved.lossMajorityAlertedWindows) ? saved.lossMajorityAlertedWindows.map(String) : [],
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [] };
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lossMajorityAlertedWindows: [] };
     throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -57,6 +58,7 @@ function loadState() {
 let state = loadState();
 const seenEvents = new Set(state.seenEvents);
 const alertedWindows = new Set(state.alertedWindows);
+const lossMajorityAlertedWindows = new Set(state.lossMajorityAlertedWindows || []);
 
 function saveState() {
   const next = {
@@ -65,6 +67,7 @@ function saveState() {
     seenEvents: [...seenEvents].slice(-MAX_SEEN),
     windows: state.windows,
     alertedWindows: [...alertedWindows].slice(-5000),
+    lossMajorityAlertedWindows: [...lossMajorityAlertedWindows].slice(-5000),
     savedAt: new Date().toISOString(),
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -162,6 +165,22 @@ function alertText(window, previousClosedTrades) {
   ].join('\n');
 }
 
+function lossMajorityAlertText(window) {
+  const start = Number(window.periodStart);
+  const slug = window.instrument.toLowerCase() + '-updown-5m-';
+  const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
+  const total = Number(window.closedTrades);
+  return [
+    `<b>МИНУСОВЫХ СДЕЛОК БОЛЬШЕ — ${esc(window.instrument)} 5m</b>`,
+    `CLOSED: ${total}`,
+    `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
+    `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
+    `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
+    `PnL: ${esc(money(window.grossPnl))}`,
+    `<a href="${firstUrl}">Начинающийся маркет</a>`,
+  ].join('\\n');
+}
+
 async function poll() {
   const now = Math.floor(Date.now() / 1000);
   const currentPeriodStart = periodStartFor(now);
@@ -208,6 +227,15 @@ async function poll() {
       wins: Number(window.wins), losses: Number(window.losses), breakeven: Number(window.breakeven),
       alreadyAlerted: alertedWindows.has(key),
     };
+    // Independent rule: alert on every completed period where losing trades outnumber winning trades.
+    // This has its own deduplication set and is not blocked by the $15,000 PnL rule.
+    if (!lossMajorityAlertedWindows.has(key) && Number(window.losses) > Number(window.wins)) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS' }));
+      await send(lossMajorityAlertText(window));
+      lossMajorityAlertedWindows.add(key);
+      saveState();
+      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS' }));
+    }
     if (alertedWindows.has(key)) continue;
     const periodStart = Number(window.periodStart);
     const netPnl = Number(window.netPnl || 0);
