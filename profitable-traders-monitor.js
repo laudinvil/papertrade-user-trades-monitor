@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v22-min-14-closed-trades';
+const VERSION = 'papertrade-closed-pnl-5m-v23-positive-alerts-10000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -204,9 +204,9 @@ async function poll() {
       closedTrades: Number(window.closedTrades), grossPnl: Number.isFinite(grossPnl) ? Number(grossPnl.toFixed(2)) : null,
       fees: Number(Number(window.fees || 0).toFixed(2)),
       netPnl: Number(Number(window.netPnl || 0).toFixed(2)),
-      positiveThresholdUsd: 6500, negativeThresholdUsd: 16000,
+      positiveThresholdUsd: 10000, negativeThresholdUsd: 16000,
       wins: Number(window.wins), losses: Number(window.losses), breakeven: Number(window.breakeven),
-      thresholdMet: Number.isFinite(grossPnl) && (grossPnl >= 6500 || grossPnl <= -16000),
+      thresholdMet: Number.isFinite(grossPnl) && (grossPnl >= 10000 || grossPnl <= -16000),
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
@@ -222,7 +222,7 @@ async function poll() {
       continue;
     }
     // Send at +$6,500 gross profit or -$7,200 gross loss.
-    if (!Number.isFinite(grossPnl) || (grossPnl < 6500 && grossPnl > -16000)) {
+    if (!Number.isFinite(grossPnl) || (grossPnl < 10000 && grossPnl > -16000)) {
       alertedWindows.add(key);
       continue;
     }
