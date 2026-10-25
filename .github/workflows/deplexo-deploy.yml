@@ -3,6 +3,9 @@ name: Deploy and verify Deplexo
 # Automatic deployment is handled by Deplexo Auto Deploy.
 # Keep this workflow available only for explicit manual recovery.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -113,7 +116,7 @@ jobs:
             exit 1
           fi
 
-          echo "Build/deployment reports success. Checking runtime logs for both supervised monitors."
+          echo "Build/deployment reports success. Checking runtime logs for the required v33 closed-PnL monitor."
           RUNTIME_OK="false"
           for ATTEMPT in $(seq 1 12); do
             RUNTIME_CODE="$(curl --silent --show-error -o /tmp/deplexo-runtime.json -w '%{http_code}' \
@@ -122,7 +125,7 @@ jobs:
               "$BASE/apps/$APP_ID/logs/runtime?limit=1000")" || RUNTIME_CODE="000"
             if [[ "$RUNTIME_CODE" == "200" ]]; then
               cat /tmp/deplexo-runtime.json | jq -r '.lines[]? | if type == "string" then . else tostring end' > /tmp/deplexo-runtime-lines.txt
-              if grep -q '"event":"monitor_started"' /tmp/deplexo-runtime-lines.txt; then
+              if grep -q 'papertrade-closed-pnl-5m-v33-loss-majority-period-boundary' /tmp/deplexo-runtime-lines.txt; then
                 RUNTIME_OK="true"
                 break
               fi
@@ -133,11 +136,11 @@ jobs:
           done
 
           if [[ "$RUNTIME_OK" != "true" ]]; then
-            echo "::error::Deployment reports success, but runtime logs do not confirm both monitors started."
+            echo "::error::Deployment reports success, but runtime logs do not confirm the required v33 closed-PnL monitor started."
             echo "Recent runtime response:"
             jq '{lines, nextSince}' /tmp/deplexo-runtime.json 2>/dev/null || cat /tmp/deplexo-runtime.json 2>/dev/null || true
             exit 1
           fi
 
-          echo "Verified: deployment $DEPLOYMENT_ID succeeded and runtime logs show monitor startup."
+          echo "Verified: deployment $DEPLOYMENT_ID succeeded and runtime logs show papertrade-closed-pnl-5m-v33-loss-majority-period-boundary."
           echo "Requested source commit: $PUSH_SHA"
