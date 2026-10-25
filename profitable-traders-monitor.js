@@ -212,7 +212,7 @@ async function poll() {
     };
     if (alertedWindows.has(key)) continue;
     // Send alerts only with at least 9 closed trades and zero breakeven trades.
-    if (Number(window.closedTrades) < 14) {
+    if (Number(window.closedTrades) < 18) {
       console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'closed_trades_below_9' }));
       alertedWindows.add(key);
       continue;
