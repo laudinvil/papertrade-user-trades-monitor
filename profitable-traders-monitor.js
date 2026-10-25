@@ -2,13 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/+$/, '');
-const POLL_MS = Math.max(10_000, Number(process.env.POLL_MS || 15_000));
+const POLL_MS = Math.max(1_000, Number(process.env.POLL_MS || 2_000));
 const STATE_PATH = process.env.PAPERTRADE_CLOSED_PNL_STATE_PATH || '/data/papertrade-closed-pnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v25-no-thresholds-closed-trend';
+const VERSION = 'papertrade-closed-pnl-5m-v26-two-second-boundary-poll';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
