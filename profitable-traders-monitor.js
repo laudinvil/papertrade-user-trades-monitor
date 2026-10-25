@@ -211,7 +211,12 @@ async function poll() {
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
-    // Send alerts only when there are zero breakeven trades in this 5-minute window.
+    // Send alerts only with at least 9 closed trades and zero breakeven trades.
+    if (Number(window.closedTrades) < 9) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'closed_trades_below_9' }));
+      alertedWindows.add(key);
+      continue;
+    }
     if (Number(window.breakeven) !== 0) {
       console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'breakeven_trades_not_zero' }));
       alertedWindows.add(key);
