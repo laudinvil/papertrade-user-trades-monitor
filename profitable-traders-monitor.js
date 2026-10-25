@@ -211,7 +211,21 @@ async function poll() {
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
-    const previousWindow = state.windows[`${Number(window.periodStart) - PERIOD_SECONDS}:${window.instrument}`];
+    const periodStart = Number(window.periodStart);
+    const btcWindow = state.windows[`${periodStart}:BTC`];
+    const ethWindow = state.windows[`${periodStart}:ETH`];
+    // Require both BTC and ETH to finish the same 5-minute period with matching non-zero PnL signs.
+    if (!btcWindow || !ethWindow) continue;
+    const btcNetPnl = Number(btcWindow.netPnl || 0);
+    const ethNetPnl = Number(ethWindow.netPnl || 0);
+    const sameDirection = (btcNetPnl > 0 && ethNetPnl > 0) || (btcNetPnl < 0 && ethNetPnl < 0);
+    if (!sameDirection) {
+      alertedWindows.add(`${periodStart}:BTC`);
+      alertedWindows.add(`${periodStart}:ETH`);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'BTC_ETH_NOT_BOTH_PROFITABLE_OR_BOTH_LOSING', btcNetPnl, ethNetPnl }));
+      continue;
+    }
+    const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`];
     const previousClosedTrades = previousWindow ? Number(previousWindow.closedTrades) : null;
     console.log(JSON.stringify({ ...diagnostic, previousClosedTrades, decision: 'send_attempt', reason: 'completed_5m_window' }));
     await send(alertText(window, previousClosedTrades));
