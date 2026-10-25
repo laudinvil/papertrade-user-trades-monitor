@@ -162,7 +162,6 @@ function alertText(window, previousClosedTrades) {
     `PnL: ${esc(money(window.grossPnl))}${positive ? ' ⬆️' : negative ? ' ⬇️' : ''}`,
 
     '',
-    '',
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
   ].join('\n');
 }
