@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v32-loss-majority-alerts-disabled';
+const VERSION = 'papertrade-closed-pnl-5m-v33-loss-majority-period-boundary';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -227,8 +227,24 @@ async function poll() {
       wins: Number(window.wins), losses: Number(window.losses), breakeven: Number(window.breakeven),
       alreadyAlerted: alertedWindows.has(key),
     };
-    if (alertedWindows.has(key)) continue;
     const periodStart = Number(window.periodStart);
+
+    // Independent rule: evaluate only the immediately preceding, fully completed 5-minute period.
+    // This prevents historical backlog bursts and sends at most one loss-majority alert per instrument/window.
+    const justCompletedPeriodStart = currentPeriodStart - PERIOD_SECONDS;
+    if (
+      periodStart === justCompletedPeriodStart &&
+      !lossMajorityAlertedWindows.has(key) &&
+      Number(window.losses) > Number(window.wins)
+    ) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AT_PERIOD_BOUNDARY' }));
+      await send(lossMajorityAlertText(window));
+      lossMajorityAlertedWindows.add(key);
+      saveState();
+      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'LOSSES_EXCEED_WINS_AT_PERIOD_BOUNDARY' }));
+    }
+
+    if (alertedWindows.has(key)) continue;
     const netPnl = Number(window.netPnl || 0);
     // Alert each instrument independently only when the completed 5-minute net PnL is at least $15,000.
     if (netPnl < 15_000) {
