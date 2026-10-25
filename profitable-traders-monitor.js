@@ -143,23 +143,21 @@ function formatPeriod(start) {
   return new Date(start * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
 
-function alertText(window, previousClosedTrades) {
+function alertText(window) {
   const start = Number(window.periodStart);
-  const closedTrades = Number(window.closedTrades);
-  const previous = Number(previousClosedTrades);
-  const closedArrow = Number.isFinite(previous) ? (closedTrades > previous ? ' ↑' : closedTrades < previous ? ' ↓' : '') : '';
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const positive = window.netPnl > 0;
   const negative = window.netPnl < 0;
   const result = positive ? 'ПЛЮСОВОЙ' : negative ? 'МИНУСОВОЙ' : 'В НОЛЬ';
+  const pnlArrow = positive ? ' ⬆️' : negative ? ' ⬇️' : '';
   return [
-    `<b>${result} период — ${esc(window.instrument)}</b>`,
-    `CLOSED: ${window.closedTrades}${closedArrow}`,
+    `<b>${result} период — ${esc(window.instrument)}${pnlArrow}</b>`,
+    `CLOSED: ${window.closedTrades}`,
     `Плюсовых сделок: ${window.wins} (+${window.closedTrades > 0 ? (window.wins / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (-${window.closedTrades > 0 ? (window.losses / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
     `В ноль: ${window.breakeven} (${window.closedTrades > 0 ? (window.breakeven / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
-    `PnL: ${esc(money(window.grossPnl))}${positive ? ' ⬆️' : negative ? ' ⬇️' : ''}`,
+    `PnL: ${esc(money(window.grossPnl))}`,
 
     '',
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
@@ -295,10 +293,8 @@ async function poll() {
       console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_15000', netPnl, minimumNetPnl: 15_000 }));
       continue;
     }
-    const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`];
-    const previousClosedTrades = previousWindow ? Number(previousWindow.closedTrades) : null;
-    console.log(JSON.stringify({ ...diagnostic, previousClosedTrades, decision: 'send_attempt', reason: 'completed_5m_window' }));
-    await send(alertText(window, previousClosedTrades));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'completed_5m_window' }));
+    await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
     saveState();
