@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v38-single-up-dual-down-breakeven-31';
+const VERSION = 'papertrade-closed-pnl-v39-ignore-dual-loss-majority';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -164,13 +164,13 @@ function alertText(window) {
   ].join('\n');
 }
 
-function lossMajorityAlertText(window, addBigDownArrow = false) {
+function lossMajorityAlertText(window) {
   const start = Number(window.periodStart);
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const total = Number(window.closedTrades);
   return [
-    `<b>МИНУСОВЫХ БОЛЬШЕ — ${esc(window.instrument)} ${addBigDownArrow ? '⬇️' : '⬆️'}</b>`,
+    `<b>МИНУСОВЫХ БОЛЬШЕ — ${esc(window.instrument)} ⬆️</b>`,
     `CLOSED: ${total}`,
     `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
@@ -216,7 +216,7 @@ async function poll() {
     .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart) || a.instrument.localeCompare(b.instrument));
 
-  // Add a down arrow when both BTC and ETH qualify for this strategy in the same period.
+  // A loss-majority alert is sent only when exactly one instrument qualifies in this period.
   const lossMajorityByPeriod = new Map();
   for (const window of completed) {
     const periodStart = Number(window.periodStart);
@@ -257,7 +257,7 @@ async function poll() {
       Number(window.losses) > Number(window.wins)
     ) {
       const qualifyingCoins = lossMajorityByPeriod.get(periodStart);
-      const addBigDownArrow = qualifyingCoins?.has('BTC') && qualifyingCoins?.has('ETH');
+      const isDualCoinPeriod = qualifyingCoins?.has('BTC') && qualifyingCoins?.has('ETH');
       const closedTrades = Number(window.closedTrades);
       const losingShare = closedTrades > 0 ? Number(window.losses) / closedTrades : 0;
       const breakevenShare = closedTrades > 0 ? Number(window.breakeven) / closedTrades : 1;
@@ -265,14 +265,16 @@ async function poll() {
       const passesLossShareFilter = losingShare <= 0.54;
       if (!passesBreakevenFilter) {
         console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'BREAKEVEN_SHARE_ABOVE_31_PERCENT', breakevenShare: Number((breakevenShare * 100).toFixed(1)) }));
-      } else if (!passesLossShareFilter && !addBigDownArrow) {
+      } else if (isDualCoinPeriod) {
+        console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'BOTH_BTC_AND_ETH_QUALIFY_SAME_PERIOD' }));
+        lossMajorityAlertedWindows.add(key);
+        saveState();
+      } else if (!passesLossShareFilter) {
         console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'LOSING_SHARE_ABOVE_54_PERCENT_WITHOUT_DUAL_COIN_ARROW', losingShare: Number((losingShare * 100).toFixed(1)) }));
       } else {
-        const reason = addBigDownArrow
-          ? 'DUAL_COIN_DOWN_ARROW_EXEMPT_FROM_54_PERCENT_FILTER'
-          : 'LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S';
+        const reason = 'SINGLE_COIN_LOSSES_EXCEED_WINS_AT_BOUNDARY_MAX_2S';
         console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason }));
-        await send(lossMajorityAlertText(window, addBigDownArrow));
+        await send(lossMajorityAlertText(window));
         lossMajorityAlertedWindows.add(key);
         saveState();
         console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason }));
