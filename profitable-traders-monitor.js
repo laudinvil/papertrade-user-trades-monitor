@@ -211,6 +211,12 @@ async function poll() {
       alreadyAlerted: alertedWindows.has(key),
     };
     if (alertedWindows.has(key)) continue;
+    // Send alerts only when there are zero breakeven trades in this 5-minute window.
+    if (Number(window.breakeven) !== 0) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'breakeven_trades_not_zero' }));
+      alertedWindows.add(key);
+      continue;
+    }
     const previousWindow = state.windows[`${Number(window.periodStart) - PERIOD_SECONDS}:${window.instrument}`];
     const previousClosedTrades = previousWindow ? Number(previousWindow.closedTrades) : null;
     console.log(JSON.stringify({ ...diagnostic, previousClosedTrades, decision: 'send_attempt', reason: 'completed_5m_window' }));
