@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v43-loss-margin-over-1';
+const VERSION = 'papertrade-closed-pnl-v44-positive-alert-alternation';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -48,9 +48,11 @@ function loadState() {
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
       lossMajorityAlertedWindows: Array.isArray(saved.lossMajorityAlertedWindows) ? saved.lossMajorityAlertedWindows.map(String) : [],
+      lastAlertType: ['positive', 'loss_majority'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
+      lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lossMajorityAlertedWindows: [] };
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lossMajorityAlertedWindows: [], lastAlertType: null, lastAlertInstrument: null };
     throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -68,6 +70,8 @@ function saveState() {
     windows: state.windows,
     alertedWindows: [...alertedWindows].slice(-5000),
     lossMajorityAlertedWindows: [...lossMajorityAlertedWindows].slice(-5000),
+    lastAlertType: state.lastAlertType || null,
+    lastAlertInstrument: state.lastAlertInstrument || null,
     savedAt: new Date().toISOString(),
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -288,6 +292,8 @@ async function poll() {
         console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason }));
         await send(lossMajorityAlertText(window));
         lossMajorityAlertedWindows.add(key);
+        state.lastAlertType = 'loss_majority';
+        state.lastAlertInstrument = window.instrument;
         saveState();
         console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason }));
       }
@@ -307,10 +313,18 @@ async function poll() {
       console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_15000', netPnl, minimumNetPnl: 15_000 }));
       continue;
     }
+    if (state.lastAlertType === 'positive' && state.lastAlertInstrument === window.instrument) {
+      alertedWindows.add(key);
+      saveState();
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'REPEATED_POSITIVE_ALERT_SAME_INSTRUMENT_WITHOUT_INTERVENING_ALERT', lastAlertType: state.lastAlertType, lastAlertInstrument: state.lastAlertInstrument }));
+      continue;
+    }
     console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'completed_5m_window' }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
+    state.lastAlertType = 'positive';
+    state.lastAlertInstrument = window.instrument;
     saveState();
     console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted' }));
   }
