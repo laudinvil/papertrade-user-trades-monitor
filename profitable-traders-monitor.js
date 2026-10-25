@@ -162,6 +162,7 @@ function alertText(window, previousClosedTrades) {
     `PnL: ${esc(money(window.grossPnl))}${positive ? ' ⬆️' : negative ? ' ⬇️' : ''}`,
 
     '',
+    '',
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
   ].join('\n');
 }
@@ -178,6 +179,7 @@ function lossMajorityAlertText(window) {
     `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
     `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
     `PnL: ${esc(money(window.grossPnl))}`,
+    '',
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
   ].join('\n');
 }
