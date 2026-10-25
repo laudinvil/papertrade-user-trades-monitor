@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-5m-v29-positive-net-pnl-15000';
+const VERSION = 'papertrade-closed-pnl-5m-v30-remove-next-market-link';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -147,7 +147,6 @@ function alertText(window, previousClosedTrades) {
   const closedArrow = Number.isFinite(previous) ? (closedTrades > previous ? ' ↑' : closedTrades < previous ? ' ↓' : '') : '';
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
-  const nextUrl = `https://polymarket.com/event/${slug}${start + 2 * PERIOD_SECONDS}`;
   const positive = window.netPnl > 0;
   const negative = window.netPnl < 0;
   const result = positive ? 'ПЛЮСОВОЙ' : negative ? 'МИНУСОВОЙ' : 'В НОЛЬ';
@@ -160,7 +159,6 @@ function alertText(window, previousClosedTrades) {
     `PnL: ${esc(money(window.grossPnl))}${positive ? ' ⬆️' : negative ? ' ⬇️' : ''}`,
 
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
-    `<a href="${nextUrl}">Следующий маркет</a>`,
   ].join('\n');
 }
 
