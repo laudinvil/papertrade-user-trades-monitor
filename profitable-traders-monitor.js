@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/+$/, '');
-const POLL_MS = Math.max(1_000, Math.min(2_000, Number(process.env.POLL_MS || 2_000)));
+const POLL_MS = 1_000;
 const STATE_PATH = process.env.PAPERTRADE_CLOSED_PNL_STATE_PATH || '/data/papertrade-closed-pnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
@@ -294,7 +294,7 @@ async function loop() {
     catch (error) {
       console.error(JSON.stringify({ level: 'error', event: 'papertrade_closed_pnl_poll_failed', message: error instanceof Error ? error.message : String(error) }));
     }
-    await sleep(Math.max(1000, POLL_MS - (Date.now() - started)));
+    await sleep(Math.max(0, POLL_MS - (Date.now() - started)));
   }
 }
 process.on('SIGTERM', () => { stopping = true; });
