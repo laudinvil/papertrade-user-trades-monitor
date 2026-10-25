@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v41-lowercase-bolshe';
+const VERSION = 'papertrade-closed-pnl-v42-loss-margin-closed-cap';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -229,8 +229,9 @@ async function poll() {
       periodStart === currentPeriodStart - PERIOD_SECONDS &&
       now - currentPeriodStart <= 2 &&
       !lossMajorityAlertedWindows.has(key) &&
-      Number(window.losses) > Number(window.wins) &&
+      Number(window.losses) - Number(window.wins) > 2 &&
       closedTrades > 0 &&
+      closedTrades < 133 &&
       breakevenShare <= 0.31 &&
       losingShare <= 0.54;
     if (!eligible) continue;
@@ -268,11 +269,15 @@ async function poll() {
         const closedTrades = Number(window.closedTrades);
         const losingShare = closedTrades > 0 ? Number(window.losses) / closedTrades : 0;
         const breakevenShare = closedTrades > 0 ? Number(window.breakeven) / closedTrades : 1;
-        const reason = Number(window.breakeven) / Math.max(1, closedTrades) > 0.31
-          ? 'BREAKEVEN_SHARE_ABOVE_31_PERCENT'
-          : losingShare > 0.54
-            ? 'LOSING_SHARE_ABOVE_54_PERCENT'
-            : 'LOSS_MAJORITY_RULE_NOT_MET';
+        const reason = closedTrades >= 133
+          ? 'CLOSED_NOT_BELOW_133'
+          : Number(window.losses) - Number(window.wins) <= 2
+            ? 'LOSSES_DO_NOT_EXCEED_WINS_BY_MORE_THAN_2'
+            : Number(window.breakeven) / Math.max(1, closedTrades) > 0.31
+              ? 'BREAKEVEN_SHARE_ABOVE_31_PERCENT'
+              : losingShare > 0.54
+                ? 'LOSING_SHARE_ABOVE_54_PERCENT'
+                : 'LOSS_MAJORITY_RULE_NOT_MET';
         console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason, losingShare: Number((losingShare * 100).toFixed(1)), breakevenShare: Number((breakevenShare * 100).toFixed(1)) }));
       } else if (qualifyingCoins.size >= 2) {
         console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'MULTIPLE_COINS_QUALIFY_SAME_PERIOD', qualifyingCoins: [...qualifyingCoins] }));
