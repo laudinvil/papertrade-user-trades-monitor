@@ -32,6 +32,7 @@ const unixSeconds = value => {
 const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_SECONDS;
 const instrumentOf = event => {
   const value = String(event?.instrument || event?.symbol || event?.market || '').toUpperCase();
+  if (value.includes('BTC') || value.includes('BITCOIN')) return 'BTC';
   if (value.includes('ETH') || value.includes('ETHEREUM')) return 'ETH';
   return null;
 };
