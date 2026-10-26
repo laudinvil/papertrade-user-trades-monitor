@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-win-rate-70pct-no-old-filters';
+const VERSION = 'papertrade-win-rate-60pct-no-old-filters';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -248,12 +248,12 @@ async function poll() {
     const closedTrades = Number(window.closedTrades ?? 0);
     const wins = Number(window.wins ?? 0);
     const winRate = closedTrades > 0 ? wins / closedTrades : 0;
-    if (winRate < 0.70) {
+    if (winRate < 0.60) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'WIN_RATE_BELOW_70_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'WIN_RATE_BELOW_60_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'WIN_RATE_AT_LEAST_70_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'WIN_RATE_AT_LEAST_60_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
