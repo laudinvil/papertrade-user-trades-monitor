@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-positive-periods-ignore-both-no-arrow';
+const VERSION = 'papertrade-win-rate-70pct-no-old-filters';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -217,10 +217,6 @@ async function poll() {
     .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart) || a.instrument.localeCompare(b.instrument));
 
-  const btcCurrentWindow = state.windows[`${justCompletedStart}:BTC`];
-  const ethCurrentWindow = state.windows[`${justCompletedStart}:ETH`];
-  const suppressBothPositive = Number(btcCurrentWindow?.netPnl ?? 0) > 0 && Number(ethCurrentWindow?.netPnl ?? 0) > 0;
-
   let alertsSent = 0;
   for (const window of completed) {
     const key = `${window.periodStart}:${window.instrument}`;
@@ -239,15 +235,9 @@ async function poll() {
 
     if (alertedWindows.has(key)) continue;
 
-    // If BTC and ETH are both positive in the same finished period, suppress both alerts.
-    if (periodStart === justCompletedStart && suppressBothPositive) {
-      alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'BOTH_BTC_ETH_PERIODS_POSITIVE' }));
-      continue;
-    }
-
-    // Alert only for the just-finished 5-minute period, within 2 seconds of the boundary.
-    // No CLOSED-count comparison or other signal filters: only positive net PnL is required.
+    // Signal filter: at least 70% of closed trades in this window must be profitable.
+    // BTC and ETH are evaluated independently; no PnL threshold or cross-coin suppression.
+    // Keep the 2-second deadline so missed alerts are never sent late.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
       alertedWindows.add(key);
       if (periodStart === currentPeriodStart - PERIOD_SECONDS && now - currentPeriodStart > 2) {
@@ -255,12 +245,15 @@ async function poll() {
       }
       continue;
     }
-    if (Number(window.netPnl) <= 0) {
+    const closedTrades = Number(window.closedTrades ?? 0);
+    const wins = Number(window.wins ?? 0);
+    const winRate = closedTrades > 0 ? wins / closedTrades : 0;
+    if (winRate < 0.70) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NON_POSITIVE_PNL_PERIOD' }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'WIN_RATE_BELOW_70_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'POSITIVE_PNL_PERIOD' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'WIN_RATE_AT_LEAST_70_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
