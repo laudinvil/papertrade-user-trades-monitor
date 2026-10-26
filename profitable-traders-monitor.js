@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-win-rate-63_1pct-closed-min-18';
+const VERSION = 'papertrade-win-rate-63_1pct-no-positive-period-heading';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -152,10 +152,10 @@ function alertText(window) {
   // Link directly to the market opening at this alert boundary.
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const positive = window.netPnl > 0;
-  const result = 'ПЛЮСОВОЙ';
+  const result = '';
   const pnlArrow = '';
   return [
-    `<b>${result} период — ${esc(window.instrument)}${pnlArrow}</b>`,
+    `<b>${esc(window.instrument)}${pnlArrow}</b>`,
     `CLOSED: ${window.closedTrades}`,
     `Плюсовых сделок: ${window.wins} (+${window.closedTrades > 0 ? (window.wins / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (-${window.closedTrades > 0 ? (window.losses / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
