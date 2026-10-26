@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v57-closed-drop-no-2s-deadline';
+const VERSION = 'papertrade-closed-pnl-v58-closed-drop-2s-deadline';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -237,9 +237,13 @@ async function poll() {
     if (alertedWindows.has(key)) continue;
 
     // Only compare the just-finished period against the immediately preceding period.
+    // Alerts are allowed only during the first 2 seconds after the 5-minute boundary.
     // PnL, wins/losses ratio, minimum counts, and coin alternation do not filter alerts.
-    if (periodStart !== currentPeriodStart - PERIOD_SECONDS) {
+    if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
       alertedWindows.add(key);
+      if (periodStart === currentPeriodStart - PERIOD_SECONDS && now - currentPeriodStart > 2) {
+        console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'ALERT_DEADLINE_EXPIRED', secondsAfterBoundary: now - currentPeriodStart }));
+      }
       continue;
     }
     const previousKey = `${periodStart - PERIOD_SECONDS}:${window.instrument}`;
