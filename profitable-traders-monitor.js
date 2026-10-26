@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v48-loss-majority-original-format';
+const VERSION = 'papertrade-closed-pnl-v49-loss-majority-gross-pnl-60';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -244,7 +244,8 @@ async function poll() {
       now - currentPeriodStart <= 2 &&
       !lossMajorityAlertedWindows.has(key) &&
       Number(window.losses) > Number(window.wins) &&
-      Number(window.netPnl) > 0
+      Number(window.netPnl) > 0 &&
+      Number(window.grossPnl) >= 60
     ) {
       console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AND_NET_PNL_POSITIVE' }));
       await send(lossMajorityAlertText(window));
