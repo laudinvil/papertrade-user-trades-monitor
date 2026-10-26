@@ -50,9 +50,10 @@ function loadState() {
       lastAlertType: ['positive', 'closed_drop'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
       lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
       lastAlertPeriodStart: Number.isFinite(Number(saved.lastAlertPeriodStart)) ? Number(saved.lastAlertPeriodStart) : null,
+      lastAlertClosed: saved.lastAlertClosed == null ? null : Number(saved.lastAlertClosed),
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null, lastAlertPeriodStart: null };
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null, lastAlertPeriodStart: null, lastAlertClosed: null };
     throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -71,6 +72,7 @@ function saveState() {
     lastAlertType: state.lastAlertType || null,
     lastAlertInstrument: state.lastAlertInstrument || null,
     lastAlertPeriodStart: state.lastAlertPeriodStart ?? null,
+    lastAlertClosed: state.lastAlertClosed ?? null,
     savedAt: new Date().toISOString(),
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -258,13 +260,19 @@ async function poll() {
       console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'WIN_RATE_BELOW_63_4_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'WIN_RATE_AT_LEAST_63_4_PERCENT', winRatePercent: Number((winRate * 100).toFixed(1)) }));
+    if (state.lastAlertClosed !== null && Number(state.lastAlertClosed) === closedTrades) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'CLOSED_UNCHANGED_FROM_PREVIOUS_ALERT', closedTrades, previousAlertClosed: state.lastAlertClosed }));
+      continue;
+    }
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'WIN_RATE_AT_LEAST_63_4_PERCENT_AND_CLOSED_CHANGED', winRatePercent: Number((winRate * 100).toFixed(1)) }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
     state.lastAlertType = 'positive';
     state.lastAlertInstrument = window.instrument;
     state.lastAlertPeriodStart = periodStart;
+    state.lastAlertClosed = closedTrades;
     saveState();
     console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_positive_period' }));
   }
