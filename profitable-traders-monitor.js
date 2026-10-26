@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v46-positive-pnl-alerts-only';
+const VERSION = 'papertrade-closed-pnl-v47-loss-majority-positive-pnl-only';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -168,6 +168,24 @@ function alertText(window) {
   ].join('\n');
 }
 
+
+function lossMajorityAlertText(window) {
+  const start = Number(window.periodStart);
+  const slug = window.instrument.toLowerCase() + '-updown-5m-';
+  const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
+  const total = Number(window.closedTrades);
+  return [
+    `<b>МИНУСОВЫХ больше — ${esc(window.instrument)} ⬆️</b>`,
+    `CLOSED: ${total}`,
+    `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
+    `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
+    `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
+    `PnL: ${esc(money(window.grossPnl))}`,
+    '',
+    `<a href="${firstUrl}">Начинающийся маркет</a>`,
+  ].join('\\n');
+}
+
 async function poll() {
   let now = Math.floor(Date.now() / 1000);
   let currentPeriodStart = periodStartFor(now);
@@ -218,6 +236,24 @@ async function poll() {
       alreadyAlerted: alertedWindows.has(key),
     };
     const periodStart = Number(window.periodStart);
+
+    // Loss-majority alert: only two criteria apply — losses exceed wins and net PnL is positive.
+    // Keep the existing just-completed-period delivery window and per-window deduplication.
+    if (
+      periodStart === currentPeriodStart - PERIOD_SECONDS &&
+      now - currentPeriodStart <= 2 &&
+      !lossMajorityAlertedWindows.has(key) &&
+      Number(window.losses) > Number(window.wins) &&
+      Number(window.netPnl) > 0
+    ) {
+      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AND_NET_PNL_POSITIVE' }));
+      await send(lossMajorityAlertText(window));
+      lossMajorityAlertedWindows.add(key);
+      state.lastAlertType = 'loss_majority';
+      state.lastAlertInstrument = window.instrument;
+      saveState();
+      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_loss_majority_positive_pnl' }));
+    }
 
     if (alertedWindows.has(key)) continue;
     // Both alert paths are boundary-only: if this isn't the just-finished period,
