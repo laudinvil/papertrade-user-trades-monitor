@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v49-loss-majority-gross-pnl-60';
+const VERSION = 'papertrade-closed-pnl-v50-positive-only-net-pnl-10000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -47,12 +47,11 @@ function loadState() {
       seenEvents: Array.isArray(saved.seenEvents) ? saved.seenEvents.map(String).slice(-MAX_SEEN) : [],
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
-      lossMajorityAlertedWindows: Array.isArray(saved.lossMajorityAlertedWindows) ? saved.lossMajorityAlertedWindows.map(String) : [],
-      lastAlertType: ['positive', 'loss_majority'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
+      lastAlertType: saved.lastAlertType === 'positive' ? 'positive' : null,
       lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lossMajorityAlertedWindows: [], lastAlertType: null, lastAlertInstrument: null };
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null };
     throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -60,7 +59,6 @@ function loadState() {
 let state = loadState();
 const seenEvents = new Set(state.seenEvents);
 const alertedWindows = new Set(state.alertedWindows);
-const lossMajorityAlertedWindows = new Set(state.lossMajorityAlertedWindows || []);
 
 function saveState() {
   const next = {
@@ -69,7 +67,6 @@ function saveState() {
     seenEvents: [...seenEvents].slice(-MAX_SEEN),
     windows: state.windows,
     alertedWindows: [...alertedWindows].slice(-5000),
-    lossMajorityAlertedWindows: [...lossMajorityAlertedWindows].slice(-5000),
     lastAlertType: state.lastAlertType || null,
     lastAlertInstrument: state.lastAlertInstrument || null,
     savedAt: new Date().toISOString(),
@@ -169,23 +166,6 @@ function alertText(window) {
 }
 
 
-function lossMajorityAlertText(window) {
-  const start = Number(window.periodStart);
-  const slug = window.instrument.toLowerCase() + '-updown-5m-';
-  const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
-  const total = Number(window.closedTrades);
-  return [
-    `<b>МИНУСОВЫХ больше — ${esc(window.instrument)} ⬆️</b>`,
-    `CLOSED: ${total}`,
-    `Плюсовых сделок: ${window.wins} (+${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
-    `Минусовых сделок: ${window.losses} (-${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
-    `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
-    `PnL: ${esc(money(window.grossPnl))}`,
-    '',
-    `<a href="${firstUrl}">Начинающийся маркет</a>`,
-  ].join('\n');
-}
-
 async function poll() {
   let now = Math.floor(Date.now() / 1000);
   let currentPeriodStart = periodStartFor(now);
@@ -237,25 +217,6 @@ async function poll() {
     };
     const periodStart = Number(window.periodStart);
 
-    // Loss-majority alert: only two criteria apply — losses exceed wins and net PnL is positive.
-    // Keep the existing just-completed-period delivery window and per-window deduplication.
-    if (
-      periodStart === currentPeriodStart - PERIOD_SECONDS &&
-      now - currentPeriodStart <= 2 &&
-      !lossMajorityAlertedWindows.has(key) &&
-      Number(window.losses) > Number(window.wins) &&
-      Number(window.netPnl) > 0 &&
-      Number(window.grossPnl) >= 60
-    ) {
-      console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'LOSSES_EXCEED_WINS_AND_NET_PNL_POSITIVE' }));
-      await send(lossMajorityAlertText(window));
-      lossMajorityAlertedWindows.add(key);
-      state.lastAlertType = 'loss_majority';
-      state.lastAlertInstrument = window.instrument;
-      saveState();
-      console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_loss_majority_positive_pnl' }));
-    }
-
     if (alertedWindows.has(key)) continue;
     // Both alert paths are boundary-only: if this isn't the just-finished period,
     // or the API response arrived more than 2 seconds after the boundary, never send.
@@ -264,10 +225,10 @@ async function poll() {
       continue;
     }
     const netPnl = Number(window.netPnl || 0);
-    // Alert each instrument independently only when the completed 5-minute net PnL is at least $15,000.
-    if (netPnl < 15_000) {
+    // Alert each instrument independently only when the completed 5-minute net PnL is at least $10,000.
+    if (netPnl < 10_000) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_15000', netPnl, minimumNetPnl: 15_000 }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_10000', netPnl, minimumNetPnl: 10_000 }));
       continue;
     }
     if (state.lastAlertType === 'positive' && state.lastAlertInstrument === window.instrument) {
