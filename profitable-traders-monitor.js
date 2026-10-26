@@ -183,7 +183,7 @@ function lossMajorityAlertText(window) {
     `PnL: ${esc(money(window.grossPnl))}`,
     '',
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function poll() {
