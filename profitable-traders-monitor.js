@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-positive-periods-ignore-both-if-btc-eth-positive';
+const VERSION = 'papertrade-positive-periods-ignore-both-no-arrow';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -153,7 +153,7 @@ function alertText(window) {
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const positive = window.netPnl > 0;
   const result = 'ПЛЮСОВОЙ';
-  const pnlArrow = ' ⬆️';
+  const pnlArrow = '';
   return [
     `<b>${result} период — ${esc(window.instrument)}${pnlArrow}</b>`,
     `CLOSED: ${window.closedTrades}`,
