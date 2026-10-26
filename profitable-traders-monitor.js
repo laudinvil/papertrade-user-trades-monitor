@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v61-positive-only-down-arrow';
+const VERSION = 'papertrade-positive-periods-up-arrow-starting-market';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -149,12 +149,11 @@ function formatPeriod(start) {
 function alertText(window) {
   const start = Number(window.periodStart);
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
-  // Skip the market that opens at the alert boundary; link to the following 5-minute market.
-  const firstUrl = `https://polymarket.com/event/${slug}${start + 2 * PERIOD_SECONDS}`;
+  // Link directly to the market opening at this alert boundary.
+  const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const positive = window.netPnl > 0;
-  const negative = window.netPnl < 0;
-  const result = positive ? 'ПЛЮСОВОЙ' : negative ? 'МИНУСОВОЙ' : 'В НОЛЬ';
-  const pnlArrow = positive ? ' ⬇️' : '';
+  const result = 'ПЛЮСОВОЙ';
+  const pnlArrow = ' ⬆️';
   return [
     `<b>${result} период — ${esc(window.instrument)}${pnlArrow}</b>`,
     `CLOSED: ${window.closedTrades}`,
@@ -164,7 +163,7 @@ function alertText(window) {
     `PnL: ${esc(money(window.grossPnl))}`,
 
     '',
-    `<a href="${firstUrl}">Следующий маркет</a>`,
+    `<a href="${firstUrl}">Начинающийся маркет</a>`,
   ].join('\n');
 }
 
@@ -236,9 +235,8 @@ async function poll() {
 
     if (alertedWindows.has(key)) continue;
 
-    // Only compare the just-finished period against the immediately preceding period.
-    // Alerts are allowed only during the first 2 seconds after the 5-minute boundary.
-    // PnL, wins/losses ratio, minimum counts, and coin alternation do not filter alerts.
+    // Alert only for the just-finished 5-minute period, within 2 seconds of the boundary.
+    // No CLOSED-count comparison or other signal filters: only positive net PnL is required.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
       alertedWindows.add(key);
       if (periodStart === currentPeriodStart - PERIOD_SECONDS && now - currentPeriodStart > 2) {
@@ -246,31 +244,20 @@ async function poll() {
       }
       continue;
     }
-    const previousKey = `${periodStart - PERIOD_SECONDS}:${window.instrument}`;
-    const previousWindow = state.windows[previousKey];
-    const previousClosed = Number(previousWindow?.closedTrades ?? 0);
-    const currentClosed = Number(window.closedTrades ?? 0);
-    if (currentClosed >= previousClosed) {
-      alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'CLOSED_NOT_LOWER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
-      continue;
-    }
-    // Negative and breakeven periods remain in period state and CLOSED comparisons,
-    // but only positive-PnL periods are sent as alerts.
     if (Number(window.netPnl) <= 0) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NON_POSITIVE_PNL_PERIOD', previousClosedTrades: previousClosed }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NON_POSITIVE_PNL_PERIOD' }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'CLOSED_LOWER_AND_POSITIVE_PNL', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'POSITIVE_PNL_PERIOD' }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
-    state.lastAlertType = 'closed_drop';
+    state.lastAlertType = 'positive';
     state.lastAlertInstrument = window.instrument;
     state.lastAlertPeriodStart = periodStart;
     saveState();
-    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_closed_drop', previousClosedTrades: previousClosed }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_positive_period' }));
   }
 
   // Retain only the last 48 hours of window data; keep alert keys for deduplication.
