@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v53-one-alert-per-period-alternating';
+const VERSION = 'papertrade-closed-pnl-v54-link-market-after-next';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -149,7 +149,8 @@ function formatPeriod(start) {
 function alertText(window) {
   const start = Number(window.periodStart);
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
-  const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
+  // Skip the market that opens at the alert boundary; link to the following 5-minute market.
+  const firstUrl = `https://polymarket.com/event/${slug}${start + 2 * PERIOD_SECONDS}`;
   const positive = window.netPnl > 0;
   const negative = window.netPnl < 0;
   const result = positive ? 'ПЛЮСОВОЙ' : negative ? 'МИНУСОВОЙ' : 'В НОЛЬ';
