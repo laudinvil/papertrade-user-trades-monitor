@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v52-next-market-link-label';
+const VERSION = 'papertrade-closed-pnl-v53-one-alert-per-period-alternating';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -49,9 +49,10 @@ function loadState() {
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
       lastAlertType: saved.lastAlertType === 'positive' ? 'positive' : null,
       lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
+      lastAlertPeriodStart: Number.isFinite(Number(saved.lastAlertPeriodStart)) ? Number(saved.lastAlertPeriodStart) : null,
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null };
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null, lastAlertPeriodStart: null };
     throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -69,6 +70,7 @@ function saveState() {
     alertedWindows: [...alertedWindows].slice(-5000),
     lastAlertType: state.lastAlertType || null,
     lastAlertInstrument: state.lastAlertInstrument || null,
+    lastAlertPeriodStart: state.lastAlertPeriodStart ?? null,
     savedAt: new Date().toISOString(),
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -218,6 +220,14 @@ async function poll() {
     const periodStart = Number(window.periodStart);
 
     if (alertedWindows.has(key)) continue;
+    // Enforce a single alert across BTC and ETH for each completed 5-minute period.
+    // The first successful alert locks this period; subsequent coin windows are suppressed.
+    if (state.lastAlertPeriodStart === periodStart) {
+      alertedWindows.add(key);
+      saveState();
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'ONE_ALERT_PER_5M_PERIOD_ALREADY_SENT', lastAlertInstrument: state.lastAlertInstrument }));
+      continue;
+    }
     // Both alert paths are boundary-only: if this isn't the just-finished period,
     // or the API response arrived more than 2 seconds after the boundary, never send.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
@@ -243,6 +253,7 @@ async function poll() {
     alertsSent++;
     state.lastAlertType = 'positive';
     state.lastAlertInstrument = window.instrument;
+    state.lastAlertPeriodStart = periodStart;
     saveState();
     console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted' }));
   }
