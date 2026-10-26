@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v54-link-market-after-next';
+const VERSION = 'papertrade-closed-pnl-v55-min-positive-pnl-1000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -237,9 +237,9 @@ async function poll() {
     }
     const netPnl = Number(window.netPnl || 0);
     // Alert when completed 5-minute net PnL is positive and winning trades outnumber losing trades.
-    if (netPnl <= 0 || Number(window.wins) <= Number(window.losses)) {
+    if (netPnl < 1_000 || Number(window.wins) <= Number(window.losses)) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: netPnl <= 0 ? 'NET_PNL_NOT_POSITIVE' : 'WINS_DO_NOT_EXCEED_LOSSES', netPnl, wins: Number(window.wins), losses: Number(window.losses) }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: netPnl < 1_000 ? 'NET_PNL_BELOW_1000' : 'WINS_DO_NOT_EXCEED_LOSSES', netPnl, wins: Number(window.wins), losses: Number(window.losses) }));
       continue;
     }
     if (state.lastAlertType === 'positive' && state.lastAlertInstrument === window.instrument) {
