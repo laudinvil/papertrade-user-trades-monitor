@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v60-closed-drop-2s-deadline';
+const VERSION = 'papertrade-closed-pnl-v61-positive-only-down-arrow';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -154,7 +154,7 @@ function alertText(window) {
   const positive = window.netPnl > 0;
   const negative = window.netPnl < 0;
   const result = positive ? 'ПЛЮСОВОЙ' : negative ? 'МИНУСОВОЙ' : 'В НОЛЬ';
-  const pnlArrow = positive ? ' ⬆️' : negative ? ' ⬇️' : '';
+  const pnlArrow = positive ? ' ⬇️' : '';
   return [
     `<b>${result} период — ${esc(window.instrument)}${pnlArrow}</b>`,
     `CLOSED: ${window.closedTrades}`,
@@ -255,7 +255,14 @@ async function poll() {
       console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'CLOSED_NOT_LOWER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'CLOSED_LOWER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
+    // Negative and breakeven periods remain in period state and CLOSED comparisons,
+    // but only positive-PnL periods are sent as alerts.
+    if (Number(window.netPnl) <= 0) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NON_POSITIVE_PNL_PERIOD', previousClosedTrades: previousClosed }));
+      continue;
+    }
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'CLOSED_LOWER_AND_POSITIVE_PNL', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
