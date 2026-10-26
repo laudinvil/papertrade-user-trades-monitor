@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v55-min-positive-pnl-1000';
+const VERSION = 'papertrade-closed-pnl-v56-alert-when-closed-count-drops';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -47,7 +47,7 @@ function loadState() {
       seenEvents: Array.isArray(saved.seenEvents) ? saved.seenEvents.map(String).slice(-MAX_SEEN) : [],
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
-      lastAlertType: saved.lastAlertType === 'positive' ? 'positive' : null,
+      lastAlertType: ['positive', 'closed_drop'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
       lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
       lastAlertPeriodStart: Number.isFinite(Number(saved.lastAlertPeriodStart)) ? Number(saved.lastAlertPeriodStart) : null,
     };
@@ -200,6 +200,20 @@ async function poll() {
     }
   }
 
+  // If a coin had closes in the previous 5-minute window but none in the just-finished
+  // window, add a zero-CLOSED window so the drop to zero can trigger an alert.
+  const justCompletedStart = currentPeriodStart - PERIOD_SECONDS;
+  for (const instrument of ['BTC', 'ETH']) {
+    const currentKey = `${justCompletedStart}:${instrument}`;
+    const previousKey = `${justCompletedStart - PERIOD_SECONDS}:${instrument}`;
+    if (!state.windows[currentKey] && state.windows[previousKey]) {
+      state.windows[currentKey] = {
+        periodStart: justCompletedStart, instrument, closedTrades: 0, wins: 0, losses: 0, breakeven: 0,
+        grossPnl: 0, fees: 0, netPnl: 0, eventKeys: [],
+      };
+    }
+  }
+
   const completed = Object.values(state.windows)
     .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart) || a.instrument.localeCompare(b.instrument));
@@ -221,42 +235,31 @@ async function poll() {
     const periodStart = Number(window.periodStart);
 
     if (alertedWindows.has(key)) continue;
-    // Enforce a single alert across BTC and ETH for each completed 5-minute period.
-    // The first successful alert locks this period; subsequent coin windows are suppressed.
-    if (state.lastAlertPeriodStart === periodStart) {
-      alertedWindows.add(key);
-      saveState();
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'ONE_ALERT_PER_5M_PERIOD_ALREADY_SENT', lastAlertInstrument: state.lastAlertInstrument }));
-      continue;
-    }
-    // Both alert paths are boundary-only: if this isn't the just-finished period,
-    // or the API response arrived more than 2 seconds after the boundary, never send.
+
+    // Only compare the just-finished period against the immediately preceding period.
+    // PnL, wins/losses ratio, minimum counts, and coin alternation do not filter alerts.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
       alertedWindows.add(key);
       continue;
     }
-    const netPnl = Number(window.netPnl || 0);
-    // Alert when completed 5-minute net PnL is positive and winning trades outnumber losing trades.
-    if (netPnl < 1_000 || Number(window.wins) <= Number(window.losses)) {
+    const previousKey = `${periodStart - PERIOD_SECONDS}:${window.instrument}`;
+    const previousWindow = state.windows[previousKey];
+    const previousClosed = Number(previousWindow?.closedTrades ?? 0);
+    const currentClosed = Number(window.closedTrades ?? 0);
+    if (currentClosed >= previousClosed) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: netPnl < 1_000 ? 'NET_PNL_BELOW_1000' : 'WINS_DO_NOT_EXCEED_LOSSES', netPnl, wins: Number(window.wins), losses: Number(window.losses) }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'CLOSED_NOT_LOWER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
       continue;
     }
-    if (state.lastAlertType === 'positive' && state.lastAlertInstrument === window.instrument) {
-      alertedWindows.add(key);
-      saveState();
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'REPEATED_POSITIVE_ALERT_SAME_INSTRUMENT_WITHOUT_INTERVENING_ALERT', lastAlertType: state.lastAlertType, lastAlertInstrument: state.lastAlertInstrument }));
-      continue;
-    }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'completed_5m_window' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'CLOSED_LOWER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
-    state.lastAlertType = 'positive';
+    state.lastAlertType = 'closed_drop';
     state.lastAlertInstrument = window.instrument;
     state.lastAlertPeriodStart = periodStart;
     saveState();
-    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_closed_drop', previousClosedTrades: previousClosed }));
   }
 
   // Retain only the last 48 hours of window data; keep alert keys for deduplication.
