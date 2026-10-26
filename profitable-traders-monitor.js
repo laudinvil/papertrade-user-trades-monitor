@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-positive-periods-up-arrow-starting-market';
+const VERSION = 'papertrade-positive-periods-ignore-both-if-btc-eth-positive';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -217,6 +217,10 @@ async function poll() {
     .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart) || a.instrument.localeCompare(b.instrument));
 
+  const btcCurrentWindow = state.windows[`${justCompletedStart}:BTC`];
+  const ethCurrentWindow = state.windows[`${justCompletedStart}:ETH`];
+  const suppressBothPositive = Number(btcCurrentWindow?.netPnl ?? 0) > 0 && Number(ethCurrentWindow?.netPnl ?? 0) > 0;
+
   let alertsSent = 0;
   for (const window of completed) {
     const key = `${window.periodStart}:${window.instrument}`;
@@ -234,6 +238,13 @@ async function poll() {
     const periodStart = Number(window.periodStart);
 
     if (alertedWindows.has(key)) continue;
+
+    // If BTC and ETH are both positive in the same finished period, suppress both alerts.
+    if (periodStart === justCompletedStart && suppressBothPositive) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'BOTH_BTC_ETH_PERIODS_POSITIVE' }));
+      continue;
+    }
 
     // Alert only for the just-finished 5-minute period, within 2 seconds of the boundary.
     // No CLOSED-count comparison or other signal filters: only positive net PnL is required.
