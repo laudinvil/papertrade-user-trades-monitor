@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v50-positive-only-net-pnl-10000';
+const VERSION = 'papertrade-closed-pnl-v51-any-positive-pnl-wins-exceed-losses';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -225,10 +225,10 @@ async function poll() {
       continue;
     }
     const netPnl = Number(window.netPnl || 0);
-    // Alert each instrument independently only when the completed 5-minute net PnL is at least $10,000.
-    if (netPnl < 10_000) {
+    // Alert when completed 5-minute net PnL is positive and winning trades outnumber losing trades.
+    if (netPnl <= 0 || Number(window.wins) <= Number(window.losses)) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_10000', netPnl, minimumNetPnl: 10_000 }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: netPnl <= 0 ? 'NET_PNL_NOT_POSITIVE' : 'WINS_DO_NOT_EXCEED_LOSSES', netPnl, wins: Number(window.wins), losses: Number(window.losses) }));
       continue;
     }
     if (state.lastAlertType === 'positive' && state.lastAlertInstrument === window.instrument) {
