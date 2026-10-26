@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v51-any-positive-pnl-wins-exceed-losses';
+const VERSION = 'papertrade-closed-pnl-v52-next-market-link-label';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -161,7 +161,7 @@ function alertText(window) {
     `PnL: ${esc(money(window.grossPnl))}`,
 
     '',
-    `<a href="${firstUrl}">Начинающийся маркет</a>`,
+    `<a href="${firstUrl}">Следующий маркет</a>`,
   ].join('\n');
 }
 
