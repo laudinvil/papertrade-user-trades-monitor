@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v44-positive-alert-alternation';
+const VERSION = 'papertrade-closed-pnl-v45-positive-only-alternation';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -47,12 +47,11 @@ function loadState() {
       seenEvents: Array.isArray(saved.seenEvents) ? saved.seenEvents.map(String).slice(-MAX_SEEN) : [],
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
-      lossMajorityAlertedWindows: Array.isArray(saved.lossMajorityAlertedWindows) ? saved.lossMajorityAlertedWindows.map(String) : [],
-      lastAlertType: ['positive', 'loss_majority'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
+      lastAlertType: saved.lastAlertType === 'positive' ? 'positive' : null,
       lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lossMajorityAlertedWindows: [], lastAlertType: null, lastAlertInstrument: null };
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null };
     throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -60,7 +59,6 @@ function loadState() {
 let state = loadState();
 const seenEvents = new Set(state.seenEvents);
 const alertedWindows = new Set(state.alertedWindows);
-const lossMajorityAlertedWindows = new Set(state.lossMajorityAlertedWindows || []);
 
 function saveState() {
   const next = {
@@ -69,7 +67,6 @@ function saveState() {
     seenEvents: [...seenEvents].slice(-MAX_SEEN),
     windows: state.windows,
     alertedWindows: [...alertedWindows].slice(-5000),
-    lossMajorityAlertedWindows: [...lossMajorityAlertedWindows].slice(-5000),
     lastAlertType: state.lastAlertType || null,
     lastAlertInstrument: state.lastAlertInstrument || null,
     savedAt: new Date().toISOString(),
@@ -168,23 +165,6 @@ function alertText(window) {
   ].join('\n');
 }
 
-function lossMajorityAlertText(window) {
-  const start = Number(window.periodStart);
-  const slug = window.instrument.toLowerCase() + '-updown-5m-';
-  const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
-  const total = Number(window.closedTrades);
-  return [
-    `<b>МИНУСОВЫХ больше — ${esc(window.instrument)} ⬆️</b>`,
-    `CLOSED: ${total}`,
-    `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
-    `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
-    `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
-    `PnL: ${esc(money(window.grossPnl))}`,
-    '',
-    `<a href="${firstUrl}">Начинающийся маркет</a>`,
-  ].join('\n');
-}
-
 async function poll() {
   let now = Math.floor(Date.now() / 1000);
   let currentPeriodStart = periodStartFor(now);
@@ -220,29 +200,6 @@ async function poll() {
     .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart) || a.instrument.localeCompare(b.instrument));
 
-  // Build the exact set of eligible loss-majority alerts before sending anything.
-  // If BTC and ETH both qualify for the same 5-minute period, suppress BOTH.
-  const lossMajorityByPeriod = new Map();
-  for (const window of completed) {
-    const periodStart = Number(window.periodStart);
-    const key = `${window.periodStart}:${window.instrument}`;
-    const closedTrades = Number(window.closedTrades);
-    const losingShare = closedTrades > 0 ? Number(window.losses) / closedTrades : 0;
-    const breakevenShare = closedTrades > 0 ? Number(window.breakeven) / closedTrades : 1;
-    const eligible =
-      periodStart === currentPeriodStart - PERIOD_SECONDS &&
-      now - currentPeriodStart <= 2 &&
-      !lossMajorityAlertedWindows.has(key) &&
-      Number(window.losses) - Number(window.wins) > 1 &&
-      closedTrades > 0 &&
-      closedTrades < 133 &&
-      breakevenShare <= 0.31 &&
-      losingShare <= 0.54;
-    if (!eligible) continue;
-    if (!lossMajorityByPeriod.has(periodStart)) lossMajorityByPeriod.set(periodStart, new Set());
-    lossMajorityByPeriod.get(periodStart).add(window.instrument);
-  }
-
   let alertsSent = 0;
   for (const window of completed) {
     const key = `${window.periodStart}:${window.instrument}`;
@@ -259,48 +216,8 @@ async function poll() {
     };
     const periodStart = Number(window.periodStart);
 
-    // Loss-majority alerts are allowed only at the immediately following 5-minute boundary,
-    // with a hard 2-second deadline. Never catch up or send stale alerts.
-    if (
-      periodStart === currentPeriodStart - PERIOD_SECONDS &&
-      now - currentPeriodStart <= 2 &&
-      !lossMajorityAlertedWindows.has(key) &&
-      Number(window.losses) > Number(window.wins)
-    ) {
-      const qualifyingCoins = lossMajorityByPeriod.get(periodStart) || new Set();
-      const isEligible = qualifyingCoins.has(window.instrument);
-      if (!isEligible) {
-        const closedTrades = Number(window.closedTrades);
-        const losingShare = closedTrades > 0 ? Number(window.losses) / closedTrades : 0;
-        const breakevenShare = closedTrades > 0 ? Number(window.breakeven) / closedTrades : 1;
-        const reason = closedTrades >= 133
-          ? 'CLOSED_NOT_BELOW_133'
-          : Number(window.losses) - Number(window.wins) <= 2
-            ? 'LOSSES_DO_NOT_EXCEED_WINS_BY_MORE_THAN_1'
-            : Number(window.breakeven) / Math.max(1, closedTrades) > 0.31
-              ? 'BREAKEVEN_SHARE_ABOVE_31_PERCENT'
-              : losingShare > 0.54
-                ? 'LOSING_SHARE_ABOVE_54_PERCENT'
-                : 'LOSS_MAJORITY_RULE_NOT_MET';
-        console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason, losingShare: Number((losingShare * 100).toFixed(1)), breakevenShare: Number((breakevenShare * 100).toFixed(1)) }));
-      } else if (qualifyingCoins.size >= 2) {
-        console.log(JSON.stringify({ ...diagnostic, decision: 'ignored', reason: 'MULTIPLE_COINS_QUALIFY_SAME_PERIOD', qualifyingCoins: [...qualifyingCoins] }));
-        lossMajorityAlertedWindows.add(key);
-        saveState();
-      } else {
-        const reason = 'ONLY_ONE_COIN_QUALIFIES_AT_BOUNDARY_MAX_2S';
-        console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason }));
-        await send(lossMajorityAlertText(window));
-        lossMajorityAlertedWindows.add(key);
-        state.lastAlertType = 'loss_majority';
-        state.lastAlertInstrument = window.instrument;
-        saveState();
-        console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason }));
-      }
-    }
-
     if (alertedWindows.has(key)) continue;
-    // Both alert paths are boundary-only: if this isn't the just-finished period,
+    // Positive-period alerts are boundary-only: if this isn't the just-finished period,
     // or the API response arrived more than 2 seconds after the boundary, never send.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
       alertedWindows.add(key);
