@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v58-closed-drop-2s-deadline';
+const VERSION = 'papertrade-closed-pnl-v59-closed-rise-2s-deadline';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -250,12 +250,12 @@ async function poll() {
     const previousWindow = state.windows[previousKey];
     const previousClosed = Number(previousWindow?.closedTrades ?? 0);
     const currentClosed = Number(window.closedTrades ?? 0);
-    if (currentClosed >= previousClosed) {
+    if (currentClosed <= previousClosed) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'CLOSED_NOT_LOWER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'CLOSED_NOT_GREATER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'CLOSED_LOWER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'CLOSED_GREATER_THAN_PREVIOUS_PERIOD', closedTrades: currentClosed, previousClosedTrades: previousClosed }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
