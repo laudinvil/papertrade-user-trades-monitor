@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-closed-pnl-v47-loss-majority-positive-pnl-only';
+const VERSION = 'papertrade-closed-pnl-v48-loss-majority-original-format';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -177,13 +177,13 @@ function lossMajorityAlertText(window) {
   return [
     `<b>МИНУСОВЫХ больше — ${esc(window.instrument)} ⬆️</b>`,
     `CLOSED: ${total}`,
-    `Плюсовых сделок: ${window.wins} (${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
-    `Минусовых сделок: ${window.losses} (${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
+    `Плюсовых сделок: ${window.wins} (+${total > 0 ? (window.wins / total * 100).toFixed(1) : '0.0'}%)`,
+    `Минусовых сделок: ${window.losses} (-${total > 0 ? (window.losses / total * 100).toFixed(1) : '0.0'}%)`,
     `В ноль: ${window.breakeven} (${total > 0 ? (window.breakeven / total * 100).toFixed(1) : '0.0'}%)`,
     `PnL: ${esc(money(window.grossPnl))}`,
     '',
     `<a href="${firstUrl}">Начинающийся маркет</a>`,
-  ].join('\n');
+  ].join('\\n');
 }
 
 async function poll() {
