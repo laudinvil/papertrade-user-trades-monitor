@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'open-vs-closed-notional-min-14-35-percent-btc-eth-independent-v13';
+const VERSION = 'open-vs-closed-notional-min-42-6-percent-btc-eth-independent-v14';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -195,7 +195,7 @@ async function poll() {
       const closedUsd = Number(bucket.closedUsd);
       if (!(openUsd > closedUsd)) return false;
       const excessPercent = closedUsd > 0 ? ((openUsd - closedUsd) / closedUsd) * 100 : Infinity;
-      return excessPercent >= 14.35;
+      return excessPercent >= 42.6;
     });
 
     for (const { instrument, bucket } of evaluated) {
@@ -233,7 +233,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd independently per completed 5-minute window; each alerts at >=14.35% excess; both may alert in the same window; no streaks',
+  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd independently per completed 5-minute window; each alerts at >=42.6% excess; both may alert in the same window; no streaks',
 }));
 
 let stopping = false;
