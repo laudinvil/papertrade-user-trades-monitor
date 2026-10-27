@@ -151,8 +151,8 @@ function alertText(window, instrument, bucket) {
   const marketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${marketStart}`;
   return [
     `<b>${esc(instrument)} — OPEN больше CLOSED</b>`,
-    `OPEN объём: ${esc(money(bucket.openUsd))} (${bucket.openCount} сделок)`,
-    `CLOSED объём: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
+    `OPEN: ${esc(money(bucket.openUsd))} (${bucket.openCount} сделок)`,
+    `CLOSED: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
     '',
     `<a href="${marketUrl}">${esc(instrument)} маркет</a>`,
   ].join('\n');
