@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-open-vs-closed-notional-usd-5m-v6';
+const VERSION = 'papertrade-open-vs-closed-notional-usd-per-5m-period-link-v7';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -163,6 +163,9 @@ function alertText(window) {
     if (!bucket) continue;
     lines.push(`${esc(instrument)}: OPEN ${esc(money(bucket.openUsd))} / CLOSED ${esc(money(bucket.closedUsd))}`);
   }
+  const marketStart = start + PERIOD_SECONDS;
+  const marketUrl = `https://polymarket.com/event/btc-updown-5m-${marketStart}`;
+  lines.push('', `<a href="${marketUrl}">Открыть маркет</a>`);
   return lines.join('\n');
 }
 
@@ -186,11 +189,11 @@ async function poll() {
     if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
   }
 
-  // Only evaluate the just-finished window, never replay historical alerts after a restart.
-  // Ignore legacy CLOSED-only state entries from the previous monitor version.
+  // Evaluate each completed 5-minute aggregate once. The alert key is the period,
+  // not the instrument, so BTC/ETH are combined into one total and one possible alert.
   const completed = Object.values(state.windows)
     .filter(window =>
-      Number(window.periodStart) === currentPeriodStart - PERIOD_SECONDS &&
+      Number(window.periodStart) + PERIOD_SECONDS <= now &&
       Number.isFinite(Number(window.openUsd)) &&
       Number.isFinite(Number(window.closedUsd))
     )
