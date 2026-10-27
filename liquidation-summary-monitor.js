@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const RECENT_TRADES_URL = 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools/get_recent_trades';
+const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
 const POLL_MS = Math.max(60_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 60_000));
 const RATE_LIMIT_BACKOFF_MS = 60_000;
 const MAX_RATE_LIMIT_BACKOFF_MS = 300_000;
@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const MAX_SEEN = 20_000;
 const MAX_WINDOWS = 288;
-const VERSION = 'papertrade-liquidation-summary-5m-v4-post-json-request';
+const VERSION = 'papertrade-liquidation-summary-5m-v5-direct-recent-trades-api';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -35,8 +35,8 @@ const unixSeconds = value => {
 };
 const instrumentOf = event => {
   const value = String(event?.instrument || event?.symbol || event?.market || '').toUpperCase();
-  if (value.includes('BTC') || value.includes('BITCOIN')) return 'BTC';
-  if (value.includes('ETH') || value.includes('ETHEREUM')) return 'ETH';
+  if (value.includes('BTC') || value.includes('BITCOIN') || Number(event?.instrumentId) === 0) return 'BTC';
+  if (value.includes('ETH') || value.includes('ETHEREUM') || Number(event?.instrumentId) === 1) return 'ETH';
   return null;
 };
 const kindOf = event => String(event?.kind || event?.type || event?.action || '').trim().toLowerCase();
@@ -93,27 +93,24 @@ function saveState() {
 }
 
 async function fetchRecentTrades() {
-  // The public REST docs support POST with a JSON argument object. Use POST rather than
-  // repeatedly hitting the GET route that is currently returning HTTP 429.
+  // This is the canonical public endpoint used by the Papertrade SDK and by the
+  // liquidation site's own feed. Avoid the AI tool proxy that has been returning 429.
   const response = await fetch(RECENT_TRADES_URL, {
-    method: 'POST',
+    method: 'GET',
     headers: {
       accept: 'application/json',
-      'content-type': 'application/json',
       'user-agent': 'papertrade-liquidation-summary-monitor',
     },
-    body: '{}',
     signal: AbortSignal.timeout(15_000),
   });
   const rawBody = await response.text().catch(() => '');
   let body = {};
   try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
-  const events = body?.data?.events;
+  const events = body?.events;
   if (!response.ok || body?.ok !== true || !Array.isArray(events)) {
-    // Never include the response body for rate limits: Cloudflare often returns a full HTML page.
     const safeMessage = response.status === 429
-      ? 'papertrade-ai get_recent_trades HTTP 429 (rate limited; response body suppressed)'
-      : `papertrade-ai get_recent_trades HTTP ${response.status}: ${body?.error?.message || body?.message || (rawBody && body && Object.keys(body).length ? 'invalid response' : 'empty or invalid response')}`;
+      ? 'Papertrade recent-trades API HTTP 429 (rate limited; response body suppressed)'
+      : `Papertrade recent-trades API HTTP ${response.status}: ${body?.error?.message || body?.message || (rawBody && body && Object.keys(body).length ? 'invalid response' : 'empty or invalid response')}`;
     const error = new Error(safeMessage);
     error.status = response.status;
     error.retryAfter = response.headers.get('retry-after');
@@ -262,7 +259,7 @@ async function poll() {
   const active = state.windows[String(currentStart)];
   console.log(JSON.stringify({
     level: 'info', event: 'liquidation_summary_snapshot', version: VERSION,
-    source: 'papertrade-ai get_recent_trades tool', endpoint: RECENT_TRADES_URL, eventCount: events.length, liquidationEvents: events.filter(isLiquidation).length,
+    source: 'Papertrade canonical recent trades API', endpoint: RECENT_TRADES_URL, eventCount: events.length, liquidationEvents: events.filter(isLiquidation).length,
     pollMs: POLL_MS, activePeriod: new Date(currentStart * 1000).toISOString(),
     byInstrument: Object.fromEntries(['BTC', 'ETH'].map(symbol => [symbol, active?.byInstrument?.[symbol] || {
       long: { count: 0, usd: 0 }, short: { count: 0, usd: 0 }, unknown: { count: 0, usd: 0 }, total: { count: 0, usd: 0 },
@@ -303,7 +300,7 @@ async function loop() {
         console.warn(JSON.stringify({
           level: 'warn', event: 'liquidation_summary_rate_limited', status: 429,
           consecutiveRateLimits, retryInMs: delayMs,
-          message: 'Papertrade AI tool endpoint returned HTTP 429; polling reduced to 60s and retries capped at 5m.',
+          message: 'Papertrade recent-trades API returned HTTP 429; exponential retry backoff is capped at 5m.',
         }));
       } else {
         const message = error instanceof Error ? error.message : String(error);
