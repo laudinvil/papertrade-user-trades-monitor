@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-btc-eth-closed-pnl-period-comparison-arrows-v2';
+const VERSION = 'papertrade-btc-eth-closed-win-loss-difference-period-comparison-v3';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -153,11 +153,11 @@ function alertText(window, previousWindow) {
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   // Link directly to the market opening at this alert boundary.
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
-  const currentPnl = Number(window.grossPnl ?? 0);
-  const previousPnl = previousWindow ? Number(previousWindow.grossPnl ?? 0) : null;
-  const pnlArrow = previousPnl === null ? '' : currentPnl > previousPnl ? ' ↑' : currentPnl < previousPnl ? ' ↓' : '';
+  const currentDifference = Number(window.wins ?? 0) - Number(window.losses ?? 0);
+  const previousDifference = previousWindow ? Number(previousWindow.wins ?? 0) - Number(previousWindow.losses ?? 0) : null;
+  const differenceArrow = previousDifference === null ? '' : currentDifference > previousDifference ? ' ↑' : currentDifference < previousDifference ? ' ↓' : '';
   return [
-    `<b>${esc(window.instrument)}${pnlArrow}</b>`,
+    `<b>${esc(window.instrument)}${differenceArrow}</b>`,
     `CLOSED: ${window.closedTrades}`,
     `Плюсовых сделок: ${window.wins} (+${window.closedTrades > 0 ? (window.wins / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (-${window.closedTrades > 0 ? (window.losses / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
@@ -224,7 +224,7 @@ async function poll() {
     const key = `${window.periodStart}:${window.instrument}`;
     const grossPnl = Number(window.grossPnl);
     const diagnostic = {
-      level: 'info', event: 'papertrade_closed_pnl_window_diagnostic',
+      level: 'info', event: 'papertrade_closed_win_loss_difference_window_diagnostic',
       version: VERSION, windowKey: key, instrument: window.instrument,
       periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
       closedTrades: Number(window.closedTrades), grossPnl: Number.isFinite(grossPnl) ? Number(grossPnl.toFixed(2)) : null,
@@ -237,8 +237,8 @@ async function poll() {
 
     if (alertedWindows.has(key)) continue;
 
-    // No positive/negative PnL thresholds. Compare this window's PnL with
-    // the immediately preceding 5-minute window for the same instrument.
+    // No positive/negative PnL thresholds. Compare (wins - losses) in this window
+    // with the immediately preceding 5-minute window for the same instrument.
     // Process the just-completed period on the next successful poll; do not
     // drop it merely because the API response arrived more than 2 seconds late.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS) {
@@ -246,22 +246,22 @@ async function poll() {
       continue;
     }
     const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`] || null;
-    const currentPnl = Number(window.grossPnl ?? 0);
-    const previousPnl = previousWindow ? Number(previousWindow.grossPnl ?? 0) : null;
+    const currentDifference = Number(window.wins ?? 0) - Number(window.losses ?? 0);
+    const previousDifference = previousWindow ? Number(previousWindow.wins ?? 0) - Number(previousWindow.losses ?? 0) : null;
     console.log(JSON.stringify({
-      ...diagnostic, decision: 'send_attempt', reason: 'PERIOD_PNL_COMPARISON',
-      currentPnl: Number(currentPnl.toFixed(2)),
-      previousPnl: previousPnl === null ? null : Number(previousPnl.toFixed(2)),
-      pnlDirection: previousPnl === null ? 'NO_PREVIOUS_PERIOD' : currentPnl > previousPnl ? 'UP' : currentPnl < previousPnl ? 'DOWN' : 'EQUAL',
+      ...diagnostic, decision: 'send_attempt', reason: 'PERIOD_WIN_LOSS_DIFFERENCE_COMPARISON',
+      currentDifference,
+      previousDifference,
+      differenceDirection: previousDifference === null ? 'NO_PREVIOUS_PERIOD' : currentDifference > previousDifference ? 'UP' : currentDifference < previousDifference ? 'DOWN' : 'EQUAL',
     }));
     await send(alertText(window, previousWindow));
     alertedWindows.add(key);
     alertsSent++;
-    state.lastAlertType = 'period_pnl_comparison';
+    state.lastAlertType = 'period_win_loss_difference_comparison';
     state.lastAlertInstrument = window.instrument;
     state.lastAlertPeriodStart = periodStart;
     saveState();
-    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_period_pnl_comparison' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_period_win_loss_difference_comparison' }));
   }
 
   // Retain only the last 48 hours of window data; keep alert keys for deduplication.
@@ -277,7 +277,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_closed_pnl_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; arrows compare PnL with previous period',
+  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; arrows compare wins minus losses with previous period',
 }));
 let stopping = false;
 async function loop() {
