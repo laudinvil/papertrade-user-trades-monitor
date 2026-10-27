@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'open-vs-closed-notional-per-instrument-5m-link-v8';
+const VERSION = 'open-vs-closed-notional-single-qualifier-5m-link-v9';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -178,7 +178,7 @@ async function poll() {
     if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
   }
 
-  // Evaluate BTC and ETH independently for the just-finished 5-minute window.
+  // Evaluate BTC and ETH together. Send an alert only when exactly one instrument qualifies.
   const completed = Object.values(state.windows)
     .filter(window =>
       Number(window.periodStart) === currentPeriodStart - PERIOD_SECONDS &&
@@ -187,31 +187,46 @@ async function poll() {
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart));
 
   for (const window of completed) {
-    for (const instrument of ['BTC', 'ETH']) {
-      const bucket = window.byInstrument[instrument];
-      if (!bucket) continue;
-      const key = `${window.periodStart}:${instrument}`;
-      if (alertedWindows.has(key)) continue;
-      // Only alert when this instrument's OPEN notionalUsd exceeds its CLOSED notionalUsd.
+    const evaluated = ['BTC', 'ETH']
+      .map(instrument => ({ instrument, bucket: window.byInstrument[instrument] }))
+      .filter(item => item.bucket && !alertedWindows.has(`${window.periodStart}:${item.instrument}`));
+    const eligible = evaluated.filter(({ bucket }) =>
+      Number(bucket.openUsd) > Number(bucket.closedUsd)
+    );
+
+    for (const { instrument, bucket } of evaluated) {
       if (Number(bucket.openUsd) <= Number(bucket.closedUsd)) {
-        alertedWindows.add(key);
         console.log(JSON.stringify({
           level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
           instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
           openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
           reason: 'OPEN_NOT_GREATER_THAN_CLOSED',
         }));
-        continue;
+        alertedWindows.add(`${window.periodStart}:${instrument}`);
       }
+    }
+
+    if (eligible.length === 1) {
+      const { instrument, bucket } = eligible[0];
       await send(alertText(window, instrument, bucket));
-      alertedWindows.add(key);
+      alertedWindows.add(`${window.periodStart}:${instrument}`);
       console.log(JSON.stringify({
         level: 'info', event: 'papertrade_open_closed_alert_sent', version: VERSION,
         instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
         openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
       }));
-      saveState();
+    } else if (eligible.length > 1) {
+      for (const { instrument, bucket } of eligible) {
+        alertedWindows.add(`${window.periodStart}:${instrument}`);
+        console.log(JSON.stringify({
+          level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
+          instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
+          openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
+          reason: 'MULTIPLE_INSTRUMENTS_QUALIFIED_ONLY_SINGLE_ALERT_ALLOWED',
+        }));
+      }
     }
+    saveState();
   }
 
   const cutoff = now - 48 * 60 * 60;
@@ -225,7 +240,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd independently per completed 5-minute window; one alert per instrument per window; no streaks',
+  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd per completed 5-minute window; alert only if exactly one instrument qualifies; no streaks',
 }));
 
 let stopping = false;
