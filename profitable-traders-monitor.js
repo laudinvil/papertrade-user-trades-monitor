@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-win-rate-63_4pct-no-positive-period-heading';
+const VERSION = 'papertrade-eth-win-rate-63_4pct-no-positive-period-heading';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -32,7 +32,6 @@ const unixSeconds = value => {
 const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_SECONDS;
 const instrumentOf = event => {
   const value = String(event?.instrument || event?.symbol || event?.market || '').toUpperCase();
-  if (value.includes('BTC') || value.includes('BITCOIN')) return 'BTC';
   if (value.includes('ETH') || value.includes('ETHEREUM')) return 'ETH';
   return null;
 };
@@ -48,7 +47,7 @@ function loadState() {
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
       lastAlertType: ['positive', 'closed_drop'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
-      lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
+      lastAlertInstrument: saved.lastAlertInstrument === 'ETH' ? 'ETH' : null,
       lastAlertPeriodStart: Number.isFinite(Number(saved.lastAlertPeriodStart)) ? Number(saved.lastAlertPeriodStart) : null,
       lastAlertClosed: saved.lastAlertClosed == null ? null : Number(saved.lastAlertClosed),
     };
@@ -204,7 +203,7 @@ async function poll() {
   // If a coin had closes in the previous 5-minute window but none in the just-finished
   // window, add a zero-CLOSED window so the drop to zero can trigger an alert.
   const justCompletedStart = currentPeriodStart - PERIOD_SECONDS;
-  for (const instrument of ['BTC', 'ETH']) {
+  for (const instrument of ['ETH']) {
     const currentKey = `${justCompletedStart}:${instrument}`;
     const previousKey = `${justCompletedStart - PERIOD_SECONDS}:${instrument}`;
     if (!state.windows[currentKey] && state.windows[previousKey]) {
@@ -238,7 +237,7 @@ async function poll() {
     if (alertedWindows.has(key)) continue;
 
     // Signal filter: at least 70% of closed trades in this window must be profitable.
-    // BTC and ETH are evaluated independently; no PnL threshold or cross-coin suppression.
+    // ETH only; BTC alerts are disabled.
     // Keep the 2-second deadline so missed alerts are never sent late.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
       alertedWindows.add(key);
@@ -290,7 +289,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_closed_pnl_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'all Papertrade closed trades grouped by instrument and 5-minute close-time window',
+  scope: 'Papertrade ETH closed trades grouped by 5-minute close-time window; BTC excluded',
 }));
 let stopping = false;
 async function loop() {
