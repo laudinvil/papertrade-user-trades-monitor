@@ -198,6 +198,36 @@ async function poll() {
     alertedWindows.add(justCompletedStart + ':ETH');
   }
 
+  // If either BTC or ETH completed-window alert has a LONG or SHORT USD share
+  // strictly above 93%, suppress both alerts for this same 5-minute period.
+  const completedWindows = ['BTC', 'ETH'].map(instrument =>
+    state.windows[justCompletedStart + ':' + instrument] || createWindow(justCompletedStart, instrument)
+  );
+  const imbalancedWindows = completedWindows.filter(window => {
+    const totalUsd = window.longUsd + window.shortUsd;
+    return totalUsd > 0 && (window.longUsd / totalUsd > 0.93 || window.shortUsd / totalUsd > 0.93);
+  });
+
+  if (imbalancedWindows.length > 0) {
+    for (const instrument of ['BTC', 'ETH']) {
+      alertedWindows.add(justCompletedStart + ':' + instrument);
+    }
+    console.log(JSON.stringify({
+      level: 'info', event: 'papertrade_open_positions_alerts_suppressed_imbalance',
+      version: VERSION, periodStart: new Date(justCompletedStart * 1000).toISOString(),
+      thresholdPercent: 93,
+      instrumentsTriggeringSuppression: imbalancedWindows.map(window => window.instrument),
+      shares: imbalancedWindows.map(window => {
+        const totalUsd = window.longUsd + window.shortUsd;
+        return {
+          instrument: window.instrument,
+          longPercent: Number((window.longUsd / totalUsd * 100).toFixed(2)),
+          shortPercent: Number((window.shortUsd / totalUsd * 100).toFixed(2)),
+        };
+      }),
+      suppressedInstruments: ['BTC', 'ETH'],
+    }));
+  } else {
   // Send each completed 5-minute window once, even if the API call or process
   // was slow and the boundary was missed by more than 10 seconds.
   for (const instrument of ['BTC', 'ETH']) {
@@ -217,6 +247,7 @@ async function poll() {
       countDirection: (window.longCount + window.shortCount) > (previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0) ? 'UP' : (window.longCount + window.shortCount) < (previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0) ? 'DOWN' : 'TIE',
       newOpensSeenThisPoll: newOpens, ignoredEvents: ignored,
     }));
+  }
   }
   console.log(JSON.stringify({
     level: 'info', event: 'papertrade_open_positions_poll_summary',
