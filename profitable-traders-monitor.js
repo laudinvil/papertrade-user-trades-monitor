@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'open-vs-closed-notional-single-qualifier-5m-link-v9';
+const VERSION = 'open-vs-closed-notional-single-qualifier-percent-5m-link-v10';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -150,7 +150,7 @@ function alertText(window, instrument, bucket) {
   const marketStart = Number(window.periodStart) + PERIOD_SECONDS;
   const marketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${marketStart}`;
   return [
-    `<b>${esc(instrument)} — OPEN больше CLOSED</b>`,
+    `<b>${esc(instrument)} — OPEN больше CLOSED на ${Number(bucket.closedUsd) > 0 ? (((Number(bucket.openUsd) - Number(bucket.closedUsd)) / Number(bucket.closedUsd)) * 100).toFixed(2) : '∞'}%</b>`,
     `OPEN: ${esc(money(bucket.openUsd))} (${bucket.openCount} сделок)`,
     `CLOSED: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
     '',
