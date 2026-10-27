@@ -188,11 +188,12 @@ let stopping = false;
 async function loop() {
   while (!stopping) {
     const started = Date.now();
-    let delayMs = Math.max(0, POLL_MS - (Date.now() - started));
+    let delayMs = POLL_MS;
     try {
       await poll();
+      delayMs = Math.max(0, POLL_MS - (Date.now() - started));
     } catch (error) {
-      const isRateLimited = Number(error?.status) === 429 || /HTTP 429\\b/.test(error instanceof Error ? error.message : String(error));
+      const isRateLimited = Number(error?.status) === 429 || /HTTP 429\b/.test(error instanceof Error ? error.message : String(error));
       if (isRateLimited) {
         const retryAfterSeconds = Number(error?.retryAfter);
         delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : RATE_LIMIT_BACKOFF_MS;
