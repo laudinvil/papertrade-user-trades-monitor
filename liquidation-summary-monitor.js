@@ -2,16 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const RECENT_TRADES_URL = 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools/get_recent_trades';
-const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 30_000));
-const RATE_LIMIT_BACKOFF_MS = 300_000;
-const MAX_RATE_LIMIT_BACKOFF_MS = 1_800_000;
+const POLL_MS = Math.max(60_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 60_000));
+const RATE_LIMIT_BACKOFF_MS = 60_000;
+const MAX_RATE_LIMIT_BACKOFF_MS = 300_000;
 const PERIOD_SECONDS = 300;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-summary-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const MAX_SEEN = 20_000;
 const MAX_WINDOWS = 288;
-const VERSION = 'papertrade-liquidation-summary-5m-v2-no-html-429-logs';
+const VERSION = 'papertrade-liquidation-summary-5m-v3-60s-rate-limit-recovery';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -284,7 +284,10 @@ async function loop() {
       const isRateLimited = Number(error?.status) === 429 || /HTTP 429\b/.test(error instanceof Error ? error.message : String(error));
       if (isRateLimited) {
         consecutiveRateLimits++;
-        const retryAfterSeconds = Number(error?.retryAfter);
+        const retryAfterValue = error?.retryAfter;
+        const retryAfterSeconds = retryAfterValue && !Number.isFinite(Number(retryAfterValue))
+          ? Math.max(0, (Date.parse(retryAfterValue) - Date.now()) / 1000)
+          : Number(retryAfterValue);
         const exponentialBackoff = Math.min(MAX_RATE_LIMIT_BACKOFF_MS, RATE_LIMIT_BACKOFF_MS * (2 ** Math.min(consecutiveRateLimits - 1, 3)));
         delayMs = Math.max(
           Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0,
@@ -293,7 +296,7 @@ async function loop() {
         console.warn(JSON.stringify({
           level: 'warn', event: 'liquidation_summary_rate_limited', status: 429,
           consecutiveRateLimits, retryInMs: delayMs,
-          message: 'Papertrade AI tool endpoint returned HTTP 429; backing off to reduce requests.',
+          message: 'Papertrade AI tool endpoint returned HTTP 429; polling reduced to 60s and retries capped at 5m.',
         }));
       } else {
         const message = error instanceof Error ? error.message : String(error);
