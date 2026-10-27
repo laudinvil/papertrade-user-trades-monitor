@@ -115,7 +115,7 @@ jobs:
             exit 1
           fi
 
-          echo "Build/deployment reports success. Checking runtime logs for the required v33 closed-PnL monitor."
+          echo "Build/deployment reports success. Checking runtime logs for the required closed-PnL monitor."
           RUNTIME_OK="false"
           for ATTEMPT in $(seq 1 12); do
             RUNTIME_CODE="$(curl --silent --show-error -o /tmp/deplexo-runtime.json -w '%{http_code}' \
@@ -135,7 +135,7 @@ jobs:
           done
 
           if [[ "$RUNTIME_OK" != "true" ]]; then
-            echo "::error::Deployment reports success, but runtime logs do not confirm the required v33 closed-PnL monitor started."
+            echo "::error::Deployment reports success, but runtime logs do not confirm the required closed-PnL monitor started."
             echo "Recent runtime response:"
             jq '{lines, nextSince}' /tmp/deplexo-runtime.json 2>/dev/null || cat /tmp/deplexo-runtime.json 2>/dev/null || true
             exit 1

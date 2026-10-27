@@ -5,7 +5,7 @@ const services = [
   { name: "profitable-traders-monitor", script: "profitable-traders-monitor.js" },
 ];
 const children = new Map();
-const port = Number(process.env.PORT || 8000);
+const port = Number(process.env.PORT || 8080);
 const healthServer = createServer((req, res) => {
   if (req.url === "/health" || req.url === "/") {
     res.writeHead(200, { "content-type": "application/json" });
