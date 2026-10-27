@@ -156,7 +156,7 @@ function alertText(window) {
   // Link directly to the market opening at this alert boundary.
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const pnl = Number(window.grossPnl ?? 0);
-  const pnlDirection = pnl > 0 ? 'ПЛЮСОВОЙ PNL' : pnl < 0 ? 'МИНУСОВОЙ PNL' : 'PNL = 0';
+  const pnlDirection = pnl > 0 ? 'ПЛЮСОВОЙ PNL ↓' : pnl < 0 ? 'МИНУСОВОЙ PNL ↑' : 'PNL = 0';
   return [
     `<b>${esc(window.instrument)} — ${pnlDirection}</b>`,
     `CLOSED: ${window.closedTrades}`,
