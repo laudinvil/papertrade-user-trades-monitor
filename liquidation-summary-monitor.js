@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const RECENT_TRADES_URL = 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools/get_recent_trades';
-const POLL_MS = Math.max(3_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 10_000));
+const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 30_000));
 const RATE_LIMIT_BACKOFF_MS = 300_000;
+const MAX_RATE_LIMIT_BACKOFF_MS = 1_800_000;
 const PERIOD_SECONDS = 300;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-summary-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -266,23 +267,37 @@ console.log(JSON.stringify({
 }));
 
 let stopping = false;
+let consecutiveRateLimits = 0;
 async function loop() {
   while (!stopping) {
     const started = Date.now();
     let delayMs = POLL_MS;
     try {
       await poll();
+      consecutiveRateLimits = 0;
       delayMs = Math.max(0, POLL_MS - (Date.now() - started));
     } catch (error) {
       const isRateLimited = Number(error?.status) === 429 || /HTTP 429\b/.test(error instanceof Error ? error.message : String(error));
       if (isRateLimited) {
+        consecutiveRateLimits++;
         const retryAfterSeconds = Number(error?.retryAfter);
-        delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : RATE_LIMIT_BACKOFF_MS;
+        const exponentialBackoff = Math.min(MAX_RATE_LIMIT_BACKOFF_MS, RATE_LIMIT_BACKOFF_MS * (2 ** Math.min(consecutiveRateLimits - 1, 3)));
+        delayMs = Math.max(
+          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0,
+          exponentialBackoff,
+        );
+        console.warn(JSON.stringify({
+          level: 'warn', event: 'liquidation_summary_rate_limited', status: 429,
+          consecutiveRateLimits, retryInMs: delayMs,
+          message: 'Papertrade AI tool endpoint returned HTTP 429; backing off to reduce requests.',
+        }));
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({
+          level: 'error', event: 'liquidation_summary_poll_failed',
+          message: message.slice(0, 300),
+        }));
       }
-      console.error(JSON.stringify({
-        level: 'error', event: 'liquidation_summary_poll_failed',
-        message: error instanceof Error ? error.message : String(error),
-      }));
     }
     await sleep(delayMs);
   }
