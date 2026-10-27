@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-btc-eth-net-pnl-pos80000-neg20000-arrows';
+const VERSION = 'papertrade-btc-eth-closed-pnl-period-comparison-arrows-v2';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -148,14 +148,14 @@ function formatPeriod(start) {
   return new Date(start * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
 
-function alertText(window) {
+function alertText(window, previousWindow) {
   const start = Number(window.periodStart);
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   // Link directly to the market opening at this alert boundary.
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
-  const positive = window.netPnl > 0;
-  const result = '';
-  const pnlArrow = window.netPnl < 0 ? ' ↓' : window.netPnl > 0 ? ' ↑' : '';
+  const currentPnl = Number(window.grossPnl ?? 0);
+  const previousPnl = previousWindow ? Number(previousWindow.grossPnl ?? 0) : null;
+  const pnlArrow = previousPnl === null ? '' : currentPnl > previousPnl ? ' ↑' : currentPnl < previousPnl ? ' ↓' : '';
   return [
     `<b>${esc(window.instrument)}${pnlArrow}</b>`,
     `CLOSED: ${window.closedTrades}`,
@@ -237,9 +237,9 @@ async function poll() {
 
     if (alertedWindows.has(key)) continue;
 
-    // Positive PnL threshold: +80000; negative PnL threshold: -20000 or lower.
-    // BTC and ETH are evaluated independently.
-    // Keep the 2-second deadline so missed alerts are never sent late.
+    // No positive/negative PnL thresholds. Compare this window's PnL with
+    // the immediately preceding 5-minute window for the same instrument.
+    // Keep the existing deadline and avoid sending stale alerts.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
       alertedWindows.add(key);
       if (periodStart === currentPeriodStart - PERIOD_SECONDS && now - currentPeriodStart > 2) {
@@ -247,15 +247,16 @@ async function poll() {
       }
       continue;
     }
-    const netPnl = Number(window.netPnl ?? 0);
-    const qualifies = netPnl >= 80000 || netPnl <= -20000;
-    if (!qualifies) {
-      alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_DIRECTIONAL_THRESHOLD', netPnl: Number(netPnl.toFixed(2)), positiveThreshold: 80000, negativeThreshold: -20000 }));
-      continue;
-    }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: netPnl < 0 ? 'NET_PNL_AT_MOST_NEGATIVE_20000' : 'NET_PNL_AT_LEAST_80000', netPnl: Number(netPnl.toFixed(2)) }));
-    await send(alertText(window));
+    const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`] || null;
+    const currentPnl = Number(window.grossPnl ?? 0);
+    const previousPnl = previousWindow ? Number(previousWindow.grossPnl ?? 0) : null;
+    console.log(JSON.stringify({
+      ...diagnostic, decision: 'send_attempt', reason: 'PERIOD_PNL_COMPARISON',
+      currentPnl: Number(currentPnl.toFixed(2)),
+      previousPnl: previousPnl === null ? null : Number(previousPnl.toFixed(2)),
+      pnlDirection: previousPnl === null ? 'NO_PREVIOUS_PERIOD' : currentPnl > previousPnl ? 'UP' : currentPnl < previousPnl ? 'DOWN' : 'EQUAL',
+    }));
+    await send(alertText(window, previousWindow));
     alertedWindows.add(key);
     alertsSent++;
     state.lastAlertType = 'positive';
@@ -278,7 +279,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_closed_pnl_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; net PnL threshold 80000',
+  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; arrows compare PnL with previous period',
 }));
 let stopping = false;
 async function loop() {
