@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-btc-eth-net-pnl-15000';
+const VERSION = 'papertrade-btc-eth-net-pnl-80000';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -237,7 +237,7 @@ async function poll() {
 
     if (alertedWindows.has(key)) continue;
 
-    // Signal filter: net PnL must be at least 15000 for this 5-minute window.
+    // Signal filter: net PnL must be at least 80000 for this 5-minute window.
     // BTC and ETH are evaluated independently.
     // Keep the 2-second deadline so missed alerts are never sent late.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
@@ -248,12 +248,12 @@ async function poll() {
       continue;
     }
     const netPnl = Number(window.netPnl ?? 0);
-    if (netPnl < 15000) {
+    if (netPnl < 80000) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_15000', netPnl }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_80000', netPnl }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'NET_PNL_AT_LEAST_15000', netPnl }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'NET_PNL_AT_LEAST_80000', netPnl }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
@@ -277,7 +277,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_closed_pnl_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; net PnL threshold 15000',
+  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; net PnL threshold 80000',
 }));
 let stopping = false;
 async function loop() {
