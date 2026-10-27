@@ -5,4 +5,4 @@ build:
   framework: dockerfile
   dockerfile: Dockerfile
 
-# Trigger a fresh GitHub push event for Deplexo auto-deploy (prefer fewer BTC/ETH long liquidations).
+# OPEN monitor removed. Trigger fresh Deplexo auto-deploy with CLOSED-only supervisor.
