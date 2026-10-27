@@ -3,13 +3,13 @@ import path from 'node:path';
 
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/+$/, '');
 const POLL_MS = 10_000;
-const RATE_LIMIT_BACKOFF_MS = 60_000;
+const RATE_LIMIT_BACKOFF_MS = 300_000;
 const STATE_PATH = process.env.PAPERTRADE_CLOSED_PNL_STATE_PATH || '/data/papertrade-closed-pnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-arrow-82-percent-rate-limit-backoff-v18';
+const VERSION = 'closed-greater-than-open-arrow-82-percent-diagnostic-backoff-v19';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -88,9 +88,16 @@ async function callTool(name, args = {}) {
     body: JSON.stringify(args),
     signal: AbortSignal.timeout(15_000),
   });
-  const body = await response.json().catch(() => ({}));
+  const rawBody = await response.text().catch(() => '');
+  let body = {};
+  try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
   if (!response.ok || body?.ok !== true) {
-    throw new Error(`Papertrade ${name} HTTP ${response.status}: ${body?.error?.message || 'request failed'}`);
+    const retryAfter = response.headers.get('retry-after');
+    const details = body?.error?.message || body?.message || rawBody.slice(0, 300) || 'empty response';
+    const error = new Error(`Papertrade ${name} HTTP ${response.status}: ${details}`);
+    error.status = response.status;
+    error.retryAfter = retryAfter;
+    throw error;
   }
   return body.data ?? {};
 }
@@ -242,7 +249,11 @@ async function loop() {
     let rateLimited = false;
     try { await poll(); }
     catch (error) {
-      rateLimited = /HTTP 429\b/.test(error instanceof Error ? error.message : String(error));
+      rateLimited = Number(error?.status) === 429 || /HTTP 429\\b/.test(error instanceof Error ? error.message : String(error));
+      const retryAfterSeconds = Number(error?.retryAfter);
+      const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+        ? retryAfterSeconds * 1000
+        : RATE_LIMIT_BACKOFF_MS;
       const cause = error && typeof error === 'object' ? error.cause : null;
       console.error(JSON.stringify({
         level: 'error', event: 'papertrade_open_closed_poll_failed',
@@ -255,7 +266,7 @@ async function loop() {
         stack: error instanceof Error ? error.stack : null,
       }));
     }
-    await sleep(rateLimited ? RATE_LIMIT_BACKOFF_MS : Math.max(0, POLL_MS - (Date.now() - started)));
+    await sleep(rateLimited ? retryDelayMs : Math.max(0, POLL_MS - (Date.now() - started)));
   }
 }
 process.on('SIGTERM', () => { stopping = true; });
