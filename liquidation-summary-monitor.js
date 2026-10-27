@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
+const RECENT_TRADES_URL = 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools/get_recent_trades';
 const POLL_MS = Math.max(3_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 10_000));
 const RATE_LIMIT_BACKOFF_MS = 300_000;
 const PERIOD_SECONDS = 300;
@@ -100,13 +100,14 @@ async function fetchRecentTrades() {
   const rawBody = await response.text().catch(() => '');
   let body = {};
   try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
-  if (!response.ok || body?.ok !== true || !Array.isArray(body?.events)) {
-    const error = new Error(`Papertrade recent trades HTTP ${response.status}: ${body?.error?.message || body?.message || rawBody.slice(0, 250) || 'empty or invalid response'}`);
+  const events = body?.data?.events;
+  if (!response.ok || body?.ok !== true || !Array.isArray(events)) {
+    const error = new Error(`papertrade-ai get_recent_trades HTTP ${response.status}: ${body?.error?.message || body?.message || rawBody.slice(0, 250) || 'empty or invalid response'}`);
     error.status = response.status;
     error.retryAfter = response.headers.get('retry-after');
     throw error;
   }
-  return body.events;
+  return events;
 }
 
 async function send(message) {
@@ -249,7 +250,7 @@ async function poll() {
   const active = state.windows[String(currentStart)];
   console.log(JSON.stringify({
     level: 'info', event: 'liquidation_summary_snapshot', version: VERSION,
-    source: RECENT_TRADES_URL, eventCount: events.length, liquidationEvents: events.filter(isLiquidation).length,
+    source: 'papertrade-ai get_recent_trades tool', endpoint: RECENT_TRADES_URL, eventCount: events.length, liquidationEvents: events.filter(isLiquidation).length,
     pollMs: POLL_MS, activePeriod: new Date(currentStart * 1000).toISOString(),
     byInstrument: Object.fromEntries(['BTC', 'ETH'].map(symbol => [symbol, active?.byInstrument?.[symbol] || {
       long: { count: 0, usd: 0 }, short: { count: 0, usd: 0 }, unknown: { count: 0, usd: 0 }, total: { count: 0, usd: 0 },
@@ -259,7 +260,7 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'liquidation_summary_monitor_started', version: VERSION,
-  endpoint: RECENT_TRADES_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
+  sourceProject: 'https://github.com/nirholas/papertrade-ai', endpoint: RECENT_TRADES_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
   statePath: STATE_PATH, eventFilter: 'kind=liquidation', aggregation: 'event-time 5-minute windows, LONG/SHORT count and notionalUsd sum',
   alerts: 'one Telegram summary after each completed 5-minute period with at least one liquidation',
 }));
