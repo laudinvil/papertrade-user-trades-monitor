@@ -53,7 +53,7 @@ The monitor evaluates completed 5-minute windows and uses its own persistent ded
 
 ## Five-minute liquidation summary monitor
 
-A separate `liquidation-summary-monitor.js` service polls the public `https://exchange.papertrade.xyz/query/protocol/trades/recent` feed and filters events whose `kind` identifies a liquidation. At the end of each completed UTC 5-minute window, it sends one Telegram summary if any BTC or ETH liquidations were observed.
+A separate `liquidation-summary-monitor.js` service polls the public `get_recent_trades` public tool from [`nirholas/papertrade-ai`](https://github.com/nirholas/papertrade-ai), via `https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools/get_recent_trades` feed and filters events whose `kind` identifies a liquidation. At the end of each completed UTC 5-minute window, it sends one Telegram summary if any BTC or ETH liquidations were observed.
 
 The alert reports, per instrument:
 - LONG liquidation count and summed `notionalUsd`;
