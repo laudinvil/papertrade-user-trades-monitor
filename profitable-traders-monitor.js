@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-btc-eth-net-pnl-80000';
+const VERSION = 'papertrade-btc-eth-net-pnl-pos80000-neg20000-arrows';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -155,7 +155,7 @@ function alertText(window) {
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
   const positive = window.netPnl > 0;
   const result = '';
-  const pnlArrow = '';
+  const pnlArrow = window.netPnl < 0 ? ' ↓' : window.netPnl > 0 ? ' ↑' : '';
   return [
     `<b>${esc(window.instrument)}${pnlArrow}</b>`,
     `CLOSED: ${window.closedTrades}`,
@@ -237,7 +237,7 @@ async function poll() {
 
     if (alertedWindows.has(key)) continue;
 
-    // Signal filter: net PnL must be at least 80000 for this 5-minute window.
+    // Positive PnL threshold: +80000; negative PnL threshold: -20000 or lower.
     // BTC and ETH are evaluated independently.
     // Keep the 2-second deadline so missed alerts are never sent late.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
@@ -248,12 +248,13 @@ async function poll() {
       continue;
     }
     const netPnl = Number(window.netPnl ?? 0);
-    if (netPnl < 80000) {
+    const qualifies = netPnl >= 80000 || netPnl <= -20000;
+    if (!qualifies) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_80000', netPnl }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_DIRECTIONAL_THRESHOLD', netPnl, positiveThreshold: 80000, negativeThreshold: -20000 }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'NET_PNL_AT_LEAST_80000', netPnl }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: netPnl < 0 ? 'NET_PNL_AT_MOST_NEGATIVE_20000' : 'NET_PNL_AT_LEAST_80000', netPnl }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
