@@ -8,7 +8,7 @@ const PERIOD_SECONDS = 300;
 const STATE_PATH = process.env.PAPERTRADE_UPNL_STATE_PATH || '/data/papertrade-upnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'aggregate-upnl-change-5m-v1';
+const VERSION = 'aggregate-upnl-change-5m-v2-wad-usd';
 const MAX_SNAPSHOTS = 2_000;
 const SAMPLE_TOLERANCE_SECONDS = 45;
 // Fail closed rather than sending alerts if the endpoint is misparsed or returns non-dollar-scaled values.
@@ -99,7 +99,7 @@ async function fetchAggregateUpnl() {
       const pnl = wadToUsd(String(pnlValue));
       if (Number.isFinite(pnl)) {
         if (Math.abs(pnl) > MAX_ABSOLUTE_ACCOUNT_UPNL_USD) {
-          throw new Error(`Rejected suspicious currentUnrealizedPnl value (${String(pnlValue).slice(0, 80)}); endpoint field/units must be verified`);
+          throw new Error(`Rejected suspicious account uPnL after WAD-to-USD conversion: usd=${pnl}; rawWad=${String(pnlValue).slice(0, 80)}`);
         }
         const identity = String(value.wallet ?? value.address ?? value.account ?? value.accountId ?? value.id ?? '');
         const dedupeKey = identity ? `${identity.toLowerCase()}:${pnl}` : null;
@@ -206,7 +206,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'aggregate_upnl_monitor_started', version: VERSION,
   endpoint: UPNL_URL, pollMs: POLL_MS, comparisonSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alertPolicy: 'alert on any aggregate uPnL change of at least $0.01 versus approximately 5 minutes earlier; no trader names',
+  statePath: STATE_PATH, pnlUnits: 'WAD_18_DECIMALS_CONVERTED_TO_USD', alertPolicy: 'alert on any aggregate uPnL change of at least $0.01 versus approximately 5 minutes earlier; no trader names',
 }));
 
 let stopping = false;
