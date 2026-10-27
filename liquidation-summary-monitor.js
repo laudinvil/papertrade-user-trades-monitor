@@ -347,7 +347,14 @@ function formatAlert(periodStart, window) {
 }
 
 async function poll() {
-  const events = await fetchRecentTrades();
+  let events = [];
+  let fetchError = null;
+  try {
+    events = await fetchRecentTrades();
+  } catch (error) {
+    // A failure in the protocol-wide feed must not block summaries from confirmed wallet streams.
+    fetchError = error;
+  }
   const now = Math.floor(Date.now() / 1000);
   const currentStart = periodStartFor(now);
   const firstRun = !state.initialized;
@@ -408,6 +415,7 @@ async function poll() {
       long: { count: 0, usd: 0 }, short: { count: 0, usd: 0 }, unknown: { count: 0, usd: 0 }, total: { count: 0, usd: 0 },
     }])),
   }));
+  if (fetchError) throw fetchError;
 }
 
 console.log(JSON.stringify({
