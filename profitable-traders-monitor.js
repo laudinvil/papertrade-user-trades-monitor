@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const RECENT_TRADES_URL = (process.env.PAPERTRADE_RECENT_TRADES_URL || 'https://exchange.papertrade.xyz/query/protocol/trades/recent').trim();
+const DIRECT_RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
+const CONFIGURED_RECENT_TRADES_URL = (process.env.PAPERTRADE_RECENT_TRADES_URL || '').trim();
+// The old workers.dev tool wrapper is returning Cloudflare HTML 429s. Never let a stale Deplexo env var override the direct read API.
+const RECENT_TRADES_URL = !CONFIGURED_RECENT_TRADES_URL || CONFIGURED_RECENT_TRADES_URL.includes('papertrade-ai.ninabrekkerese.workers.dev')
+  ? DIRECT_RECENT_TRADES_URL
+  : CONFIGURED_RECENT_TRADES_URL;
 const POLL_MS = 10_000;
 const RATE_LIMIT_BACKOFF_MS = 300_000;
 const STATE_PATH = process.env.PAPERTRADE_CLOSED_PNL_STATE_PATH || '/data/papertrade-closed-pnl-state.json';
@@ -9,7 +14,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-direct-papertrade-api-v21';
+const VERSION = 'closed-greater-than-open-direct-api-stale-env-override-fix-v22';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -84,7 +89,7 @@ function saveState() {
 async function fetchRecentTrades() {
   const response = await fetch(RECENT_TRADES_URL, {
     method: 'GET',
-    headers: { accept: 'application/json', 'user-agent': 'papertrade-monitor' },
+    headers: { accept: 'application/json', 'user-agent': 'papertrade-ai' },
     signal: AbortSignal.timeout(15_000),
   });
   const rawBody = await response.text().catch(() => '');
