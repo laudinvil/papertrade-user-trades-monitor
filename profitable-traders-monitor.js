@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-btc-eth-closed-win-loss-difference-period-comparison-v3';
+const VERSION = 'papertrade-btc-eth-closed-win-loss-difference-period-comparison-v4';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -248,11 +248,16 @@ async function poll() {
     const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`] || null;
     const currentDifference = Number(window.wins ?? 0) - Number(window.losses ?? 0);
     const previousDifference = previousWindow ? Number(previousWindow.wins ?? 0) - Number(previousWindow.losses ?? 0) : null;
+    if (previousDifference === null || currentDifference === previousDifference) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: previousDifference === null ? 'NO_PREVIOUS_PERIOD' : 'WIN_LOSS_DIFFERENCE_UNCHANGED', currentDifference, previousDifference }));
+      continue;
+    }
     console.log(JSON.stringify({
       ...diagnostic, decision: 'send_attempt', reason: 'PERIOD_WIN_LOSS_DIFFERENCE_COMPARISON',
       currentDifference,
       previousDifference,
-      differenceDirection: previousDifference === null ? 'NO_PREVIOUS_PERIOD' : currentDifference > previousDifference ? 'UP' : currentDifference < previousDifference ? 'DOWN' : 'EQUAL',
+      differenceDirection: currentDifference > previousDifference ? 'UP' : 'DOWN',
     }));
     await send(alertText(window, previousWindow));
     alertedWindows.add(key);
