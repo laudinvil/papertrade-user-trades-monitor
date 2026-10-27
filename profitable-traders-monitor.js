@@ -1,109 +1,103 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DIRECT_RECENT_TRADES_URL = 'https://exchange.papertrade.xyz/query/protocol/trades/recent';
-const CONFIGURED_RECENT_TRADES_URL = (process.env.PAPERTRADE_RECENT_TRADES_URL || '').trim();
-// The old workers.dev tool wrapper is returning Cloudflare HTML 429s. Never let a stale Deplexo env var override the direct read API.
-const RECENT_TRADES_URL = !CONFIGURED_RECENT_TRADES_URL || CONFIGURED_RECENT_TRADES_URL.includes('papertrade-ai.ninabrekkerese.workers.dev')
-  ? DIRECT_RECENT_TRADES_URL
-  : CONFIGURED_RECENT_TRADES_URL;
-const POLL_MS = 3_000;
+const UPNL_URL = 'https://exchange.papertrade.xyz/state/leaderboard/accounts';
+const POLL_MS = 15_000;
 const RATE_LIMIT_BACKOFF_MS = 300_000;
-const STATE_PATH = process.env.PAPERTRADE_CLOSED_PNL_STATE_PATH || '/data/papertrade-closed-pnl-state.json';
+const PERIOD_SECONDS = 300;
+const STATE_PATH = process.env.PAPERTRADE_UPNL_STATE_PATH || '/data/papertrade-upnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const PERIOD_SECONDS = 300;
-const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-direct-api-poll-3s-v23';
+const VERSION = 'aggregate-upnl-change-5m-v1';
+const MAX_SNAPSHOTS = 2_000;
+const SAMPLE_TOLERANCE_SECONDS = 45;
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const money = value => {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
   return `${n < 0 ? '-$' : '$'}${Math.abs(n).toFixed(2)}`;
 };
-const unixSeconds = value => {
-  if (value == null || value === '') return 0;
-  if (typeof value === 'string' && !/^\d+(\.\d+)?$/.test(value)) {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
-  }
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.floor(n > 1e12 ? n / 1000 : n);
-};
 const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_SECONDS;
-const instrumentOf = event => {
-  const value = String(event?.instrument || event?.symbol || event?.market || '').toUpperCase();
-  if (value.includes('BTC') || value.includes('BITCOIN')) return 'BTC';
-  if (value.includes('ETH') || value.includes('ETHEREUM')) return 'ETH';
-  return 'OTHER';
-};
-const eventKind = event => String(event?.kind || event?.type || event?.action || '').toLowerCase();
-const isOpen = event => ['open', 'opened', 'position_opened', 'open_position'].includes(eventKind(event));
-const isClosed = event => ['close', 'closed', 'position_closed', 'close_position'].includes(eventKind(event));
+const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 function loadState() {
   try {
     const saved = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     if (saved.version !== 1) throw new Error('unsupported state version');
     return {
-      initialized: saved.initialized === true,
-      seenEvents: Array.isArray(saved.seenEvents) ? saved.seenEvents.map(String).slice(-MAX_SEEN) : [],
-      windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
-      alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
+      snapshots: Array.isArray(saved.snapshots)
+        ? saved.snapshots.filter(x => Number.isFinite(Number(x?.ts)) && Number.isFinite(Number(x?.totalUpnl))).slice(-MAX_SNAPSHOTS)
+        : [],
+      alertedPeriods: Array.isArray(saved.alertedPeriods) ? saved.alertedPeriods.map(Number) : [],
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [] };
-    throw new Error(`Cannot load OPEN/CLOSED state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
+    if (error?.code === 'ENOENT') return { snapshots: [], alertedPeriods: [] };
+    throw new Error(`Cannot load uPnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 let state = loadState();
-const seenEvents = new Set(state.seenEvents);
-const alertedWindows = new Set(state.alertedWindows);
 
 function saveState() {
-  const next = {
-    version: 1,
-    initialized: state.initialized,
-    seenEvents: [...seenEvents].slice(-MAX_SEEN),
-    windows: state.windows,
-    alertedWindows: [...alertedWindows].slice(-5000),
-    savedAt: new Date().toISOString(),
-  };
+  state.snapshots = state.snapshots.slice(-MAX_SNAPSHOTS);
+  state.alertedPeriods = state.alertedPeriods.slice(-500);
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
   const temp = `${STATE_PATH}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(next));
+  fs.writeFileSync(temp, JSON.stringify({ version: 1, ...state, savedAt: new Date().toISOString() }));
   fs.renameSync(temp, STATE_PATH);
-  state = next;
-  if (seenEvents.size > MAX_SEEN) {
-    seenEvents.clear();
-    for (const key of next.seenEvents) seenEvents.add(key);
-  }
 }
 
-async function fetchRecentTrades() {
-  const response = await fetch(RECENT_TRADES_URL, {
+async function fetchAggregateUpnl() {
+  const response = await fetch(UPNL_URL, {
     method: 'GET',
-    headers: { accept: 'application/json', 'user-agent': 'papertrade-ai' },
+    headers: { accept: 'application/json', 'user-agent': 'papertrade-upnl-monitor' },
     signal: AbortSignal.timeout(15_000),
   });
   const rawBody = await response.text().catch(() => '');
-  let body = {};
-  try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
-  if (!response.ok || body?.ok !== true || !Array.isArray(body?.events)) {
-    const retryAfter = response.headers.get('retry-after');
-    const details = body?.error?.message || body?.message || rawBody.slice(0, 300) || 'empty or invalid response';
-    const error = new Error(`Papertrade recent trades HTTP ${response.status}: ${details}`);
+  let body;
+  try { body = rawBody ? JSON.parse(rawBody) : null; } catch {}
+  if (!response.ok || !body || typeof body !== 'object') {
+    const error = new Error(`Papertrade accounts HTTP ${response.status}: ${rawBody.slice(0, 250) || 'empty or invalid response'}`);
     error.status = response.status;
-    error.retryAfter = retryAfter;
+    error.retryAfter = response.headers.get('retry-after');
     throw error;
   }
-  return { events: body.events };
+
+  // The endpoint may wrap its account rows in different envelope keys.
+  // Sum the current uPnL field for each account row; never include trader names in alerts.
+  const accounts = [];
+  const visited = new Set();
+  function walk(value) {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    const pnlValue = value.currentUnrealizedPnl ?? value.currentUnrealizedPnL ?? value.current_unrealized_pnl;
+    if (pnlValue !== undefined && pnlValue !== null && pnlValue !== '') {
+      const pnl = Number(pnlValue);
+      if (Number.isFinite(pnl)) {
+        const identity = String(value.wallet ?? value.address ?? value.account ?? value.accountId ?? value.id ?? '');
+        const dedupeKey = identity ? `${identity.toLowerCase()}:${pnl}` : null;
+        if (!dedupeKey || !visited.has(dedupeKey)) {
+          accounts.push(pnl);
+          if (dedupeKey) visited.add(dedupeKey);
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (['currentUnrealizedPnl', 'currentUnrealizedPnL', 'current_unrealized_pnl'].includes(key)) continue;
+      if (child && typeof child === 'object') walk(child);
+    }
+  }
+  walk(body);
+  if (accounts.length === 0) {
+    throw new Error('Papertrade accounts response contains no numeric currentUnrealizedPnl account rows');
+  }
+  return { totalUpnl: accounts.reduce((sum, pnl) => sum + pnl, 0), accountCount: accounts.length };
 }
 
 async function send(message) {
@@ -117,162 +111,97 @@ async function send(message) {
   if (!response.ok || body.ok !== true) throw new Error(`Telegram HTTP ${response.status}: ${body.description || 'send failed'}`);
 }
 
-function eventKey(event) {
-  if (event?.seq != null) return `seq:${event.seq}`;
+function marketLinks(periodStart) {
+  const marketStart = periodStart + PERIOD_SECONDS;
   return [
-    String(event?.wallet || '').toLowerCase(),
-    String(event?.positionId ?? ''),
-    String(event?.intentId ?? ''),
-    eventKind(event),
-    String(event?.ts ?? event?.time ?? event?.timestamp ?? ''),
-    String(event?.notionalUsd ?? ''),
-  ].join(':');
+    `<a href="https://polymarket.com/event/btc-updown-5m-${marketStart}">BTC маркет</a>`,
+    `<a href="https://polymarket.com/event/eth-updown-5m-${marketStart}">ETH маркет</a>`,
+  ].join(' | ');
 }
 
-function addEvent(event, periodStart, instrument, kind) {
-  const notional = Number(event?.notionalUsd);
-  if (!Number.isFinite(notional) || notional < 0) return false;
-  const key = String(periodStart);
-  const window = state.windows[key] || {
-    periodStart,
-    openUsd: 0,
-    closedUsd: 0,
-    openCount: 0,
-    closedCount: 0,
-    byInstrument: {},
-  };
-  const bucket = window.byInstrument[instrument] || { openUsd: 0, closedUsd: 0, openCount: 0, closedCount: 0 };
-  if (kind === 'open') {
-    window.openUsd += notional;
-    window.openCount += 1;
-    bucket.openUsd += notional;
-    bucket.openCount += 1;
-  } else {
-    window.closedUsd += notional;
-    window.closedCount += 1;
-    bucket.closedUsd += notional;
-    bucket.closedCount += 1;
-  }
-  window.byInstrument[instrument] = bucket;
-  state.windows[key] = window;
-  return true;
-}
-
-function alertText(window, instrument, bucket) {
-  const marketStart = Number(window.periodStart) + PERIOD_SECONDS;
-  const marketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${marketStart}`;
-  const excessPercent = Number(bucket.openUsd) > 0
-    ? ((Number(bucket.closedUsd) - Number(bucket.openUsd)) / Number(bucket.openUsd)) * 100
-    : Infinity;
-  const arrow = excessPercent > 82 ? '⬆️' : '⬇️';
+function alertText(previous, current, delta, periodStart) {
+  const direction = delta > 0 ? '⬆️ ОБЩИЙ uPnL УВЕЛИЧИЛСЯ' : '⬇️ ОБЩИЙ uPnL УМЕНЬШИЛСЯ';
   return [
-    `<b>${arrow} ${esc(instrument)} — CLOSED больше OPEN на ${Number.isFinite(excessPercent) ? excessPercent.toFixed(2) : '∞'}%</b>`,
-    `OPEN: ${esc(money(bucket.openUsd))} (${bucket.openCount} сделок)`,
-    `CLOSED: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
+    `<b>${direction} за 5 минут</b>`,
+    `uPnL 5 минут назад: ${esc(money(previous.totalUpnl))}`,
+    `Текущий общий uPnL: ${esc(money(current.totalUpnl))}`,
+    `Изменение: <b>${delta > 0 ? '+' : ''}${esc(money(delta))}</b>`,
     '',
-    `<a href="${marketUrl}">${esc(instrument)} маркет</a>`,
+    marketLinks(periodStart),
   ].join(String.fromCharCode(10));
 }
 
 async function poll() {
-  const firstRun = !state.initialized;
-  const result = await fetchRecentTrades();
   const now = Math.floor(Date.now() / 1000);
-  const currentPeriodStart = periodStartFor(now);
-  const events = Array.isArray(result.events) ? result.events : [];
+  const { totalUpnl, accountCount } = await fetchAggregateUpnl();
+  const current = { ts: now, totalUpnl: Number(totalUpnl.toFixed(8)) };
+  const last = state.snapshots[state.snapshots.length - 1];
+  if (!last || now - Number(last.ts) >= 10) state.snapshots.push(current);
+  else state.snapshots[state.snapshots.length - 1] = current;
 
-  for (const event of events) {
-    const kind = isOpen(event) ? 'open' : isClosed(event) ? 'closed' : null;
-    if (!kind) continue;
-    const timestamp = unixSeconds(event?.ts ?? event?.time ?? event?.timestamp ?? event?.closedAt);
-    if (!timestamp) continue;
-    const periodStart = periodStartFor(timestamp);
-    // On first start, establish a baseline only from the currently active window.
-    if (firstRun && periodStart < currentPeriodStart) continue;
-    const key = eventKey(event);
-    if (seenEvents.has(key)) continue;
-    if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
-  }
+  const targetTs = now - PERIOD_SECONDS;
+  const candidates = state.snapshots.filter(s => Math.abs(Number(s.ts) - targetTs) <= SAMPLE_TOLERANCE_SECONDS);
+  const previous = candidates.sort((a, b) => Math.abs(Number(a.ts) - targetTs) - Math.abs(Number(b.ts) - targetTs))[0];
+  const periodStart = periodStartFor(now);
 
-  // Evaluate BTC and ETH independently. Both may alert in the same completed 5-minute window.
-  const completed = Object.values(state.windows)
-    .filter(window =>
-      Number(window.periodStart) === currentPeriodStart - PERIOD_SECONDS &&
-      window.byInstrument && typeof window.byInstrument === 'object'
-    )
-    .sort((a, b) => Number(a.periodStart) - Number(b.periodStart));
-
-  for (const window of completed) {
-    const evaluated = ['BTC', 'ETH']
-      .map(instrument => ({ instrument, bucket: window.byInstrument[instrument] }))
-      .filter(item => item.bucket && !alertedWindows.has(`${window.periodStart}:${item.instrument}`));
-    const eligible = evaluated.filter(({ bucket }) => Number(bucket.closedUsd) > Number(bucket.openUsd));
-
-    for (const { instrument, bucket } of evaluated) {
-      if (Number(bucket.closedUsd) <= Number(bucket.openUsd)) {
-        console.log(JSON.stringify({
-          level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
-          instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
-          openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
-          reason: 'CLOSED_NOT_GREATER_THAN_OPEN',
-        }));
-        alertedWindows.add(`${window.periodStart}:${instrument}`);
-      }
-    }
-
-    for (const { instrument, bucket } of eligible) {
-      await send(alertText(window, instrument, bucket));
-      alertedWindows.add(`${window.periodStart}:${instrument}`);
+  if (previous && !state.alertedPeriods.includes(periodStart)) {
+    const delta = Number((current.totalUpnl - Number(previous.totalUpnl)).toFixed(2));
+    if (delta !== 0) {
+      await send(alertText(previous, current, delta, periodStart));
       console.log(JSON.stringify({
-        level: 'info', event: 'papertrade_open_closed_alert_sent', version: VERSION,
-        instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
-        openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
+        level: 'info', event: 'aggregate_upnl_alert_sent', version: VERSION,
+        periodStart: new Date(periodStart * 1000).toISOString(),
+        previousUpnl: previous.totalUpnl, currentUpnl: current.totalUpnl,
+        delta, direction: delta > 0 ? 'increase' : 'decrease', accountCount,
+      }));
+    } else {
+      console.log(JSON.stringify({
+        level: 'info', event: 'aggregate_upnl_unchanged', version: VERSION,
+        periodStart: new Date(periodStart * 1000).toISOString(), totalUpnl: current.totalUpnl,
       }));
     }
-    saveState();
+    state.alertedPeriods.push(periodStart);
+  } else if (!previous && !state.alertedPeriods.includes(periodStart)) {
+    console.log(JSON.stringify({
+      level: 'info', event: 'aggregate_upnl_waiting_for_5m_baseline', version: VERSION,
+      snapshotCount: state.snapshots.length, targetTs,
+    }));
   }
 
-  const cutoff = now - 48 * 60 * 60;
-  for (const [key, window] of Object.entries(state.windows)) {
-    if (Number(window.periodStart) < cutoff) delete state.windows[key];
-  }
-  state.initialized = true;
+  const cutoff = now - 60 * 60;
+  state.snapshots = state.snapshots.filter(s => Number(s.ts) >= cutoff);
+  state.alertedPeriods = state.alertedPeriods.filter(p => p >= periodStart - 24 * 60 * 60);
   saveState();
+  console.log(JSON.stringify({
+    level: 'info', event: 'aggregate_upnl_snapshot', version: VERSION,
+    totalUpnl: current.totalUpnl, accountCount, pollMs: POLL_MS,
+  }));
 }
 
 console.log(JSON.stringify({
-  level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
-  recentTradesUrl: RECENT_TRADES_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'BTC and ETH CLOSED notionalUsd compared with OPEN notionalUsd independently per completed 5-minute window; alert whenever CLOSED > OPEN with no percentage threshold; both may alert in the same window; no streaks',
+  level: 'info', event: 'aggregate_upnl_monitor_started', version: VERSION,
+  endpoint: UPNL_URL, pollMs: POLL_MS, comparisonSeconds: PERIOD_SECONDS,
+  statePath: STATE_PATH, alertPolicy: 'alert on any aggregate uPnL change of at least $0.01 versus approximately 5 minutes earlier; no trader names',
 }));
 
 let stopping = false;
 async function loop() {
   while (!stopping) {
     const started = Date.now();
-    let delayMs = POLL_MS;
+    let delayMs = Math.max(0, POLL_MS - (Date.now() - started));
     try {
       await poll();
     } catch (error) {
-      const isRateLimited = Number(error?.status) === 429 || Number(error?.statusCode) === 429 || /HTTP 429\b/.test(error instanceof Error ? error.message : String(error));
+      const isRateLimited = Number(error?.status) === 429 || /HTTP 429\\b/.test(error instanceof Error ? error.message : String(error));
       if (isRateLimited) {
         const retryAfterSeconds = Number(error?.retryAfter);
-        delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-          ? retryAfterSeconds * 1000
-          : RATE_LIMIT_BACKOFF_MS;
+        delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : RATE_LIMIT_BACKOFF_MS;
       } else {
-        delayMs = Math.max(0, POLL_MS - (Date.now() - started));
+        delayMs = POLL_MS;
       }
-      const cause = error && typeof error === 'object' ? error.cause : null;
       console.error(JSON.stringify({
-        level: 'error', event: 'papertrade_open_closed_poll_failed',
+        level: 'error', event: 'aggregate_upnl_poll_failed',
         message: error instanceof Error ? error.message : String(error),
-        errorName: error instanceof Error ? error.name : typeof error,
-        errorCode: error && typeof error === 'object' ? (error.code ?? error.errno ?? null) : null,
-        causeName: cause && typeof cause === 'object' ? (cause.name ?? null) : null,
-        causeMessage: cause instanceof Error ? cause.message : (cause == null ? null : String(cause)),
-        causeCode: cause && typeof cause === 'object' ? (cause.code ?? cause.errno ?? null) : null,
-        stack: error instanceof Error ? error.stack : null,
       }));
     }
     await sleep(delayMs);
