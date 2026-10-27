@@ -138,7 +138,11 @@ async function fetchAggregateUpnl() {
 
     if (rows.length === 0) break;
     if (reportedTotalPages !== null && page + 1 >= reportedTotalPages) break;
-    if (reportedAccountCount !== null && accountsByIdentity.size >= reportedAccountCount) break;
+    if (reportedAccountCount !== null) {
+      if (accountsByIdentity.size >= reportedAccountCount) break;
+      // Some API deployments may cap pageSize below the requested value; keep paging until the reported total is reached.
+      continue;
+    }
     if (rows.length < ACCOUNTS_PAGE_SIZE) break;
     if (page === MAX_ACCOUNT_PAGES - 1) {
       throw new Error(`Reached MAX_ACCOUNT_PAGES=${MAX_ACCOUNT_PAGES}; refusing to report a partial account total`);
