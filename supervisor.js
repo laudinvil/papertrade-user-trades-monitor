@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 
 const services = [
   { name: "profitable-traders-monitor", script: "profitable-traders-monitor.js" },
+  { name: "trade-activity-monitor", script: "trade-activity-monitor.js" },
 ];
 
 const bootDiagnostics = {
