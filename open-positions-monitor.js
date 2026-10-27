@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10000;
-const VERSION = 'papertrade-btc-eth-open-positions-5m-v1';
+const VERSION = 'papertrade-btc-eth-open-short-dominance-5m-v2';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -201,15 +201,28 @@ async function poll() {
       const key = justCompletedStart + ':' + instrument;
       if (alertedWindows.has(key)) continue;
       const window = state.windows[key] || createWindow(justCompletedStart, instrument);
-      await send(alertText(window));
+      const shortCountDominates = window.shortCount > window.longCount;
+      const shortUsdDominates = window.shortUsd > window.longUsd;
+      if (shortCountDominates || shortUsdDominates) {
+        await send(alertText(window));
+        console.log(JSON.stringify({
+          level: 'info', event: 'papertrade_open_positions_alert_sent',
+          version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
+          longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
+          shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
+          shortCountDominates, shortUsdDominates,
+          newOpensSeenThisPoll: newOpens, ignoredEvents: ignored,
+        }));
+      } else {
+        console.log(JSON.stringify({
+          level: 'info', event: 'papertrade_open_positions_alert_skipped',
+          version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
+          reason: 'SHORT_PERCENTAGES_NOT_GREATER_THAN_LONG',
+          longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
+          shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
+        }));
+      }
       alertedWindows.add(key);
-      console.log(JSON.stringify({
-        level: 'info', event: 'papertrade_open_positions_alert_sent',
-        version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
-        longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
-        shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
-        newOpensSeenThisPoll: newOpens, ignoredEvents: ignored,
-      }));
     }
   } else {
     alertedWindows.add(justCompletedStart + ':BTC');
