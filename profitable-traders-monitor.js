@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/+$/, '');
+const RECENT_TRADES_URL = (process.env.PAPERTRADE_RECENT_TRADES_URL || 'https://exchange.papertrade.xyz/query/protocol/trades/recent').trim();
 const POLL_MS = 10_000;
 const RATE_LIMIT_BACKOFF_MS = 300_000;
 const STATE_PATH = process.env.PAPERTRADE_CLOSED_PNL_STATE_PATH || '/data/papertrade-closed-pnl-state.json';
@@ -9,7 +9,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-arrow-82-percent-loop-crash-fix-v20';
+const VERSION = 'closed-greater-than-open-direct-papertrade-api-v21';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -81,25 +81,24 @@ function saveState() {
   }
 }
 
-async function callTool(name, args = {}) {
-  const response = await fetch(`${API_BASE}/${name}`, {
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify(args),
+async function fetchRecentTrades() {
+  const response = await fetch(RECENT_TRADES_URL, {
+    method: 'GET',
+    headers: { accept: 'application/json', 'user-agent': 'papertrade-monitor' },
     signal: AbortSignal.timeout(15_000),
   });
   const rawBody = await response.text().catch(() => '');
   let body = {};
   try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
-  if (!response.ok || body?.ok !== true) {
+  if (!response.ok || body?.ok !== true || !Array.isArray(body?.events)) {
     const retryAfter = response.headers.get('retry-after');
-    const details = body?.error?.message || body?.message || rawBody.slice(0, 300) || 'empty response';
-    const error = new Error(`Papertrade ${name} HTTP ${response.status}: ${details}`);
+    const details = body?.error?.message || body?.message || rawBody.slice(0, 300) || 'empty or invalid response';
+    const error = new Error(`Papertrade recent trades HTTP ${response.status}: ${details}`);
     error.status = response.status;
     error.retryAfter = retryAfter;
     throw error;
   }
-  return body.data ?? {};
+  return { events: body.events };
 }
 
 async function send(message) {
@@ -172,7 +171,7 @@ function alertText(window, instrument, bucket) {
 
 async function poll() {
   const firstRun = !state.initialized;
-  const result = await callTool('get_recent_trades');
+  const result = await fetchRecentTrades();
   const now = Math.floor(Date.now() / 1000);
   const currentPeriodStart = periodStartFor(now);
   const events = Array.isArray(result.events) ? result.events : [];
@@ -238,7 +237,7 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
-  apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
+  recentTradesUrl: RECENT_TRADES_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
   scope: 'BTC and ETH CLOSED notionalUsd compared with OPEN notionalUsd independently per completed 5-minute window; alert whenever CLOSED > OPEN with no percentage threshold; both may alert in the same window; no streaks',
 }));
 
