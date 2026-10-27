@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-btc-eth-closed-win-loss-difference-period-comparison-v4';
+const VERSION = 'papertrade-btc-eth-closed-pnl-two-consecutive-same-direction-v5';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -51,9 +51,10 @@ function loadState() {
       lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
       lastAlertPeriodStart: Number.isFinite(Number(saved.lastAlertPeriodStart)) ? Number(saved.lastAlertPeriodStart) : null,
       lastAlertClosed: saved.lastAlertClosed == null ? null : Number(saved.lastAlertClosed),
+      streaks: saved.streaks && typeof saved.streaks === 'object' ? saved.streaks : {},
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null, lastAlertPeriodStart: null, lastAlertClosed: null };
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null, lastAlertPeriodStart: null, lastAlertClosed: null, streaks: {} };
     throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -73,6 +74,7 @@ function saveState() {
     lastAlertInstrument: state.lastAlertInstrument || null,
     lastAlertPeriodStart: state.lastAlertPeriodStart ?? null,
     lastAlertClosed: state.lastAlertClosed ?? null,
+    streaks: state.streaks || {},
     savedAt: new Date().toISOString(),
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -148,16 +150,15 @@ function formatPeriod(start) {
   return new Date(start * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
 
-function alertText(window, previousWindow) {
+function alertText(window) {
   const start = Number(window.periodStart);
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   // Link directly to the market opening at this alert boundary.
   const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
-  const currentDifference = Number(window.wins ?? 0) - Number(window.losses ?? 0);
-  const previousDifference = previousWindow ? Number(previousWindow.wins ?? 0) - Number(previousWindow.losses ?? 0) : null;
-  const differenceArrow = previousDifference === null ? '' : currentDifference > previousDifference ? ' ↑' : currentDifference < previousDifference ? ' ↓' : '';
+  const pnl = Number(window.grossPnl ?? 0);
+  const pnlDirection = pnl > 0 ? 'ПЛЮСОВОЙ PNL' : pnl < 0 ? 'МИНУСОВОЙ PNL' : 'PNL = 0';
   return [
-    `<b>${esc(window.instrument)}${differenceArrow}</b>`,
+    `<b>${esc(window.instrument)} — ${pnlDirection}</b>`,
     `CLOSED: ${window.closedTrades}`,
     `Плюсовых сделок: ${window.wins} (+${window.closedTrades > 0 ? (window.wins / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
     `Минусовых сделок: ${window.losses} (-${window.closedTrades > 0 ? (window.losses / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
@@ -237,36 +238,46 @@ async function poll() {
 
     if (alertedWindows.has(key)) continue;
 
-    // No positive/negative PnL thresholds. Compare (wins - losses) in this window
-    // with the immediately preceding 5-minute window for the same instrument.
-    // Process the just-completed period on the next successful poll; do not
-    // drop it merely because the API response arrived more than 2 seconds late.
+    // Only count consecutive completed 5-minute windows with PnL of the same sign.
+    // One alert is sent when a streak first reaches 2; further same-sign windows
+    // do not repeat it. An opposite-sign window starts a new streak at 1; zero resets it.
     if (periodStart !== currentPeriodStart - PERIOD_SECONDS) {
       alertedWindows.add(key);
       continue;
     }
-    const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`] || null;
-    const currentDifference = Number(window.wins ?? 0) - Number(window.losses ?? 0);
-    const previousDifference = previousWindow ? Number(previousWindow.wins ?? 0) - Number(previousWindow.losses ?? 0) : null;
-    if (previousDifference === null || currentDifference === previousDifference) {
+    const pnl = Number(window.grossPnl ?? 0);
+    const direction = pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : null;
+    const streak = state.streaks[window.instrument] || { direction: null, count: 0, alerted: false };
+    if (direction === null) {
+      state.streaks[window.instrument] = { direction: null, count: 0, alerted: false };
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: previousDifference === null ? 'NO_PREVIOUS_PERIOD' : 'WIN_LOSS_DIFFERENCE_UNCHANGED', currentDifference, previousDifference }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'ZERO_PNL_RESETS_STREAK', streakDirection: null, streakCount: 0 }));
       continue;
     }
-    console.log(JSON.stringify({
-      ...diagnostic, decision: 'send_attempt', reason: 'PERIOD_WIN_LOSS_DIFFERENCE_COMPARISON',
-      currentDifference,
-      previousDifference,
-      differenceDirection: currentDifference > previousDifference ? 'UP' : 'DOWN',
-    }));
-    await send(alertText(window, previousWindow));
+    if (streak.direction === direction) {
+      streak.count = Number(streak.count || 0) + 1;
+    } else {
+      streak.direction = direction;
+      streak.count = 1;
+      streak.alerted = false;
+    }
+    state.streaks[window.instrument] = streak;
+    if (streak.count < 2 || streak.alerted) {
+      alertedWindows.add(key);
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: streak.alerted ? 'ALREADY_ALERTED_IN_THIS_DIRECTION_STREAK' : 'ONLY_ONE_CONSECUTIVE_PNL_WINDOW', streakDirection: direction, streakCount: streak.count }));
+      continue;
+    }
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'TWO_CONSECUTIVE_SAME_DIRECTION_PNL_WINDOWS', streakDirection: direction, streakCount: streak.count }));
+    await send(alertText(window));
     alertedWindows.add(key);
+    streak.alerted = true;
+    state.streaks[window.instrument] = streak;
     alertsSent++;
-    state.lastAlertType = 'period_win_loss_difference_comparison';
+    state.lastAlertType = direction;
     state.lastAlertInstrument = window.instrument;
     state.lastAlertPeriodStart = periodStart;
     saveState();
-    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_period_win_loss_difference_comparison' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_two_consecutive_same_direction_pnl_windows', streakDirection: direction, streakCount: streak.count }));
   }
 
   // Retain only the last 48 hours of window data; keep alert keys for deduplication.
@@ -282,7 +293,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_closed_pnl_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; arrows compare wins minus losses with previous period',
+  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; alert after 2 consecutive same-sign gross-PnL windows, once per streak',
 }));
 let stopping = false;
 async function loop() {
