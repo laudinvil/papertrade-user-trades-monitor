@@ -198,29 +198,31 @@ async function poll() {
     alertedWindows.add(justCompletedStart + ':ETH');
   }
 
-  if (now - currentPeriodStart <= 10) {
-    for (const instrument of ['BTC', 'ETH']) {
-      const key = justCompletedStart + ':' + instrument;
-      if (alertedWindows.has(key)) continue;
-      const window = state.windows[key] || createWindow(justCompletedStart, instrument);
-      const previousWindow = state.windows[(justCompletedStart - PERIOD_SECONDS) + ':' + instrument] || null;
-      await send(alertText(window, previousWindow));
-      alertedWindows.add(key);
-      console.log(JSON.stringify({
-        level: 'info', event: 'papertrade_open_positions_alert_sent',
-        version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
-        totalCount: window.longCount + window.shortCount,
-        previousPeriodTotalCount: previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0,
-        longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
-        shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
-        countDirection: (window.longCount + window.shortCount) > (previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0) ? 'UP' : (window.longCount + window.shortCount) < (previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0) ? 'DOWN' : 'TIE',
-        newOpensSeenThisPoll: newOpens, ignoredEvents: ignored,
-      }));
-    }
-  } else {
-    alertedWindows.add(justCompletedStart + ':BTC');
-    alertedWindows.add(justCompletedStart + ':ETH');
+  // Send each completed 5-minute window once, even if the API call or process
+  // was slow and the boundary was missed by more than 10 seconds.
+  for (const instrument of ['BTC', 'ETH']) {
+    const key = justCompletedStart + ':' + instrument;
+    if (alertedWindows.has(key)) continue;
+    const window = state.windows[key] || createWindow(justCompletedStart, instrument);
+    const previousWindow = state.windows[(justCompletedStart - PERIOD_SECONDS) + ':' + instrument] || null;
+    await send(alertText(window, previousWindow));
+    alertedWindows.add(key);
+    console.log(JSON.stringify({
+      level: 'info', event: 'papertrade_open_positions_alert_sent',
+      version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
+      totalCount: window.longCount + window.shortCount,
+      previousPeriodTotalCount: previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0,
+      longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
+      shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
+      countDirection: (window.longCount + window.shortCount) > (previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0) ? 'UP' : (window.longCount + window.shortCount) < (previousWindow ? previousWindow.longCount + previousWindow.shortCount : 0) ? 'DOWN' : 'TIE',
+      newOpensSeenThisPoll: newOpens, ignoredEvents: ignored,
+    }));
   }
+  console.log(JSON.stringify({
+    level: 'info', event: 'papertrade_open_positions_poll_summary',
+    version: VERSION, eventCount: events.length, newOpensSeenThisPoll: newOpens,
+    ignoredOpenEvents: ignored, currentPeriodStart: new Date(currentPeriodStart * 1000).toISOString(),
+  }));
 
   const cutoff = now - 48 * 60 * 60;
   for (const [key, window] of Object.entries(state.windows)) {
