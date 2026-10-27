@@ -26,6 +26,21 @@ const money = value => {
 const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_SECONDS;
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
+// Papertrade stores these account-state amounts as 18-decimal fixed-point (WAD) integers.
+// Convert exactly before applying dollar-scale sanity limits.
+function wadToUsd(value) {
+  if (typeof value !== 'string' || !/^-?\\d+$/.test(value.trim())) {
+    throw new Error(`Unexpected currentUnrealizedPnl format; expected an integer WAD string, received ${String(value).slice(0, 80)}`);
+  }
+  const raw = BigInt(value.trim());
+  const scale = 10n ** 18n;
+  const sign = raw < 0n ? -1 : 1;
+  const absolute = raw < 0n ? -raw : raw;
+  const whole = absolute / scale;
+  const fraction = absolute % scale;
+  return sign * (Number(whole) + Number(fraction) / 1e18);
+}
+
 function loadState() {
   try {
     const saved = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
@@ -70,7 +85,7 @@ async function fetchAggregateUpnl() {
   }
 
   // The endpoint may wrap its account rows in different envelope keys.
-  // Sum the current uPnL field for each account row; never include trader names in alerts.
+  // Sum the current uPnL field for each account row. The API field is an 18-decimal WAD integer, not USD; convert before summing. Never include trader names in alerts.
   const accounts = [];
   const visited = new Set();
   function walk(value) {
@@ -81,7 +96,7 @@ async function fetchAggregateUpnl() {
     }
     const pnlValue = value.currentUnrealizedPnl ?? value.currentUnrealizedPnL ?? value.current_unrealized_pnl;
     if (pnlValue !== undefined && pnlValue !== null && pnlValue !== '') {
-      const pnl = Number(pnlValue);
+      const pnl = wadToUsd(String(pnlValue));
       if (Number.isFinite(pnl)) {
         if (Math.abs(pnl) > MAX_ABSOLUTE_ACCOUNT_UPNL_USD) {
           throw new Error(`Rejected suspicious currentUnrealizedPnl value (${String(pnlValue).slice(0, 80)}); endpoint field/units must be verified`);
