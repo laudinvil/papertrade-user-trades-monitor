@@ -1,8 +1,10 @@
 name: Deploy and verify Deplexo
 
-# Automatic deployment is handled by Deplexo Auto Deploy.
-# Keep this workflow available only for explicit manual recovery.
+# Deploy every main-branch commit to the existing Deplexo app and verify runtime.
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -122,7 +124,7 @@ jobs:
               "$BASE/apps/$APP_ID/logs/runtime?limit=1000")" || RUNTIME_CODE="000"
             if [[ "$RUNTIME_CODE" == "200" ]]; then
               cat /tmp/deplexo-runtime.json | jq -r '.lines[]? | if type == "string" then . else tostring end' > /tmp/deplexo-runtime-lines.txt
-              if grep -q 'papertrade-closed-pnl-5m-v33-loss-majority-period-boundary' /tmp/deplexo-runtime-lines.txt; then
+              if grep -q 'papertrade-btc-eth-net-pnl-pos80000-neg20000-arrows' /tmp/deplexo-runtime-lines.txt; then
                 RUNTIME_OK="true"
                 break
               fi
@@ -139,5 +141,5 @@ jobs:
             exit 1
           fi
 
-          echo "Verified: deployment $DEPLOYMENT_ID succeeded and runtime logs show papertrade-closed-pnl-5m-v33-loss-majority-period-boundary."
+          echo "Verified: deployment $DEPLOYMENT_ID succeeded and runtime logs show papertrade-btc-eth-net-pnl-pos80000-neg20000-arrows."
           echo "Requested source commit: $PUSH_SHA"
