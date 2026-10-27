@@ -8,7 +8,7 @@ const PERIOD_SECONDS = 300;
 const STATE_PATH = process.env.PAPERTRADE_UPNL_STATE_PATH || '/data/papertrade-upnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'aggregate-upnl-change-5m-v2-wad-usd';
+const VERSION = 'aggregate-upnl-change-5m-v3-clean-legacy-snapshots';
 const MAX_SNAPSHOTS = 2_000;
 const SAMPLE_TOLERANCE_SECONDS = 45;
 // Fail closed rather than sending alerts if the endpoint is misparsed or returns non-dollar-scaled values.
@@ -47,7 +47,11 @@ function loadState() {
     if (saved.version !== 1) throw new Error('unsupported state version');
     return {
       snapshots: Array.isArray(saved.snapshots)
-        ? saved.snapshots.filter(x => Number.isFinite(Number(x?.ts)) && Number.isFinite(Number(x?.totalUpnl))).slice(-MAX_SNAPSHOTS)
+        ? saved.snapshots.filter(x =>
+            Number.isFinite(Number(x?.ts)) &&
+            Number.isFinite(Number(x?.totalUpnl)) &&
+            Math.abs(Number(x.totalUpnl)) <= MAX_ABSOLUTE_AGGREGATE_UPNL_USD
+          ).slice(-MAX_SNAPSHOTS)
         : [],
       alertedPeriods: Array.isArray(saved.alertedPeriods) ? saved.alertedPeriods.map(Number) : [],
     };
