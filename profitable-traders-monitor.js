@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'open-vs-closed-notional-min-0.15-percent-5m-link-v11';
+const VERSION = 'open-vs-closed-notional-min-0.15-percent-btc-eth-independent-v12';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -178,7 +178,7 @@ async function poll() {
     if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
   }
 
-  // Evaluate BTC and ETH together. Send an alert only when exactly one instrument qualifies.
+  // Evaluate BTC and ETH independently. Both may alert in the same completed 5-minute window.
   const completed = Object.values(state.windows)
     .filter(window =>
       Number(window.periodStart) === currentPeriodStart - PERIOD_SECONDS &&
@@ -210,8 +210,7 @@ async function poll() {
       }
     }
 
-    if (eligible.length === 1) {
-      const { instrument, bucket } = eligible[0];
+    for (const { instrument, bucket } of eligible) {
       await send(alertText(window, instrument, bucket));
       alertedWindows.add(`${window.periodStart}:${instrument}`);
       console.log(JSON.stringify({
@@ -219,16 +218,6 @@ async function poll() {
         instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
         openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
       }));
-    } else if (eligible.length > 1) {
-      for (const { instrument, bucket } of eligible) {
-        alertedWindows.add(`${window.periodStart}:${instrument}`);
-        console.log(JSON.stringify({
-          level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
-          instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
-          openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
-          reason: 'MULTIPLE_INSTRUMENTS_QUALIFIED_ONLY_SINGLE_ALERT_ALLOWED',
-        }));
-      }
     }
     saveState();
   }
@@ -244,7 +233,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd per completed 5-minute window; alert only if exactly one instrument qualifies; no streaks',
+  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd independently per completed 5-minute window; each alerts at >=0.15% excess; both may alert in the same window; no streaks',
 }));
 
 let stopping = false;
