@@ -29,7 +29,7 @@ const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll(
 // Papertrade stores these account-state amounts as 18-decimal fixed-point (WAD) integers.
 // Convert exactly before applying dollar-scale sanity limits.
 function wadToUsd(value) {
-  if (typeof value !== 'string' || !/^-?\\d+$/.test(value.trim())) {
+  if (typeof value !== 'string' || !/^-?\d+$/.test(value.trim())) {
     throw new Error(`Unexpected currentUnrealizedPnl format; expected an integer WAD string, received ${String(value).slice(0, 80)}`);
   }
   const raw = BigInt(value.trim());
