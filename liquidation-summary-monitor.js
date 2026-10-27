@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { PapertradeClient, streamWallet } from 'papertrade-sdk';
 
 const RECENT_TRADES_URL = 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools/get_recent_trades';
 const POLL_MS = Math.max(60_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 60_000));
@@ -11,6 +12,13 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const MAX_SEEN = 20_000;
 const MAX_WINDOWS = 288;
+const STREAM_BASE = 'https://exchange.papertrade.xyz';
+const STREAM_WALLET_LIMIT = 6;
+const WALLET_REFRESH_MS = 5 * 60_000;
+const walletClient = new PapertradeClient({ baseUrl: STREAM_BASE, retries: 0, clientBuild: 'papertrade-liquidation-summary-wallet-stream' });
+const walletAbort = new AbortController();
+const followedWallets = new Map();
+let walletInstrumentNames = new Map([[0, 'BTC'], [1, 'ETH']]);
 const VERSION = 'papertrade-liquidation-summary-5m-v4-post-json-request';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
@@ -134,6 +142,7 @@ async function send(message) {
 }
 
 function eventKey(event) {
+  if (event?.wallet && event?.positionId != null) return `position:${String(event.wallet).toLowerCase()}:${String(event.positionId)}`;
   if (event?.seq != null) return `seq:${event.seq}`;
   return [
     String(event?.wallet || event?.address || '').toLowerCase(),
@@ -172,6 +181,137 @@ function recordLiquidation(event, periodStart, instrument) {
   bucket.total.count++;
   bucket.total.usd += rawUsd;
   return true;
+}
+
+
+function walletEvent(wallet, position, timestampMs, instrumentId) {
+  const instrument = walletInstrumentNames.get(Number(instrumentId));
+  if (!instrument || !['BTC', 'ETH'].includes(instrument)) return null;
+  const marginUsd = Number(position.marginRaw) / 1e18;
+  const notionalUsd = marginUsd * Number(position.leverage);
+  if (!Number.isFinite(notionalUsd) || notionalUsd < 0) return null;
+  return {
+    wallet: String(wallet).toLowerCase(),
+    positionId: String(position.positionId),
+    kind: 'liquidation',
+    ts: Math.floor(Number(timestampMs) / 1000),
+    instrument,
+    instrumentId: Number(instrumentId),
+    side: position.isLong ? 'long' : 'short',
+    notionalUsd,
+  };
+}
+
+function ingestWalletEvent(event, origin) {
+  const timestamp = unixSeconds(event?.ts ?? event?.timestampMs);
+  if (!timestamp) return;
+  const now = Math.floor(Date.now() / 1000);
+  const currentStart = periodStartFor(now);
+  const periodStart = periodStartFor(timestamp);
+  if (periodStart > currentStart || periodStart < currentStart - MAX_WINDOWS * PERIOD_SECONDS) return;
+  const key = eventKey(event);
+  if (seenEvents.has(key)) return;
+  const instrument = instrumentOf(event);
+  if (!instrument || !isLiquidation(event)) return;
+  if (recordLiquidation(event, periodStart, instrument)) {
+    seenEvents.add(key);
+    saveState();
+    console.log(JSON.stringify({
+      level: 'info', event: 'wallet_liquidation_confirmed', version: VERSION,
+      source: origin, wallet: event.wallet, positionId: event.positionId,
+      instrument, side: sideOf(event), notionalUsd: event.notionalUsd,
+      periodStart: new Date(periodStart * 1000).toISOString(),
+    }));
+  }
+}
+
+async function verifyVanishedPosition(wallet, positionId, previousPosition) {
+  try {
+    const page = await walletClient.accountTrades(wallet, { filter: 'all' }, walletAbort.signal);
+    const trade = page.items.find(item => String(item.positionId) === String(positionId));
+    if (!trade || trade.kind !== 'Liquidated') return;
+    const event = walletEvent(wallet, {
+      positionId: trade.positionId,
+      isLong: trade.isLong,
+      marginRaw: trade.marginRaw,
+      leverage: trade.leverage,
+    }, trade.timestampMs, trade.instrumentId);
+    if (event) ingestWalletEvent(event, 'account_trade_history');
+  } catch (error) {
+    if (!walletAbort.signal.aborted) {
+      console.warn(JSON.stringify({
+        level: 'warn', event: 'wallet_history_verification_failed',
+        wallet, positionId, message: (error instanceof Error ? error.message : String(error)).slice(0, 180),
+      }));
+    }
+  }
+}
+
+function applyWalletState(wallet, walletState, kind) {
+  const entry = followedWallets.get(String(wallet).toLowerCase());
+  if (!entry) return;
+  const now = Date.now();
+  const current = new Map(walletState.positions.map(position => [String(position.positionId), position]));
+  if (entry.loaded) {
+    const explicitClosed = new Set((kind === 'update' ? walletState.closedPositions : []).map(p => String(p.positionId)));
+    if (kind === 'update') {
+      for (const closed of walletState.closedPositions) {
+        if (!closed.liquidated) continue;
+        const event = walletEvent(wallet, closed, now, closed.instrumentId);
+        if (event) ingestWalletEvent(event, 'live_wallet_stream');
+      }
+    }
+    for (const [id, position] of entry.positions) {
+      if (!current.has(id) && !explicitClosed.has(id)) void verifyVanishedPosition(wallet, id, position);
+    }
+  }
+  entry.positions = current;
+  entry.loaded = true;
+}
+
+async function refreshWalletStreams() {
+  try {
+    const [trading, board] = await Promise.all([
+      walletClient.tradingState(walletAbort.signal),
+      walletClient.leaderboard({ window: '24h', sortKey: 'currentOpenNotional', sortDir: 'desc', page: 0, pageSize: 25 }, walletAbort.signal),
+    ]);
+    walletInstrumentNames = new Map(trading.instruments.map(item => [Number(item.id), String(item.symbol).toUpperCase()]));
+    const targets = board.accounts
+      .filter(account => Number(account.currentOpenPositionCount) > 0)
+      .slice(0, STREAM_WALLET_LIMIT)
+      .map(account => String(account.address).toLowerCase());
+    const keep = new Set(targets);
+    for (const [wallet, entry] of followedWallets) {
+      if (keep.has(wallet)) continue;
+      entry.stop();
+      followedWallets.delete(wallet);
+    }
+    for (const wallet of targets) {
+      if (followedWallets.has(wallet)) continue;
+      const entry = { loaded: false, positions: new Map(), stop: () => {} };
+      followedWallets.set(wallet, entry);
+      entry.stop = streamWallet({
+        wallet,
+        baseUrl: STREAM_BASE,
+        signal: walletAbort.signal,
+        onState: (walletState, kind) => applyWalletState(wallet, walletState, kind),
+        onStatus: status => {
+          if (status === 'reconnecting') {
+            console.warn(JSON.stringify({ level: 'warn', event: 'wallet_stream_reconnecting', wallet }));
+          }
+        },
+      });
+    }
+    console.log(JSON.stringify({
+      level: 'info', event: 'wallet_streams_refreshed', version: VERSION,
+      trackedWallets: followedWallets.size, streamWalletLimit: STREAM_WALLET_LIMIT,
+    }));
+  } catch (error) {
+    if (!walletAbort.signal.aborted) console.warn(JSON.stringify({
+      level: 'warn', event: 'wallet_stream_refresh_failed',
+      message: (error instanceof Error ? error.message : String(error)).slice(0, 220),
+    }));
+  }
 }
 
 function marketLink(instrument, periodStart) {
@@ -279,6 +419,8 @@ console.log(JSON.stringify({
 
 let stopping = false;
 let consecutiveRateLimits = 0;
+void refreshWalletStreams();
+const walletRefreshTimer = setInterval(() => void refreshWalletStreams(), WALLET_REFRESH_MS);
 async function loop() {
   while (!stopping) {
     const started = Date.now();
@@ -316,6 +458,6 @@ async function loop() {
     await sleep(delayMs);
   }
 }
-process.on('SIGTERM', () => { stopping = true; });
-process.on('SIGINT', () => { stopping = true; });
+process.on('SIGTERM', () => { stopping = true; clearInterval(walletRefreshTimer); walletAbort.abort(); for (const entry of followedWallets.values()) entry.stop(); });
+process.on('SIGINT', () => { stopping = true; clearInterval(walletRefreshTimer); walletAbort.abort(); for (const entry of followedWallets.values()) entry.stop(); });
 loop();
