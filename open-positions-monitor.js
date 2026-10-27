@@ -141,13 +141,16 @@ function alertText(window) {
   const start = Number(window.periodStart);
   const slug = window.instrument.toLowerCase() + '-updown-5m-';
   const marketUrl = 'https://polymarket.com/event/' + slug + (start + PERIOD_SECONDS);
+  const totalCount = window.longCount + window.shortCount;
+  const totalUsd = window.longUsd + window.shortUsd;
+  const percent = (value, total) => (total > 0 ? value / total * 100 : 0).toFixed(1) + '%';
   return [
     '<b>' + window.instrument + ' OPEN · 5M</b>',
-    'LONG: ' + window.longCount + ' позиций — ' + money(window.longUsd),
-    'SHORT: ' + window.shortCount + ' позиций — ' + money(window.shortUsd),
-    'Всего открытий: ' + (window.longCount + window.shortCount),
+    'LONG: ' + window.longCount + ' (' + percent(window.longCount, totalCount) + ') позиций — ' + money(window.longUsd) + ' (' + percent(window.longUsd, totalUsd) + ')',
+    'SHORT: ' + window.shortCount + ' (' + percent(window.shortCount, totalCount) + ') позиций — ' + money(window.shortUsd) + ' (' + percent(window.shortUsd, totalUsd) + ')',
+    'Всего открытий: ' + totalCount,
     '',
-    '<a href="' + marketUrl + '">Маркет 5m</a>',
+    '<a href="' + marketUrl + '">Начинающийся маркет</a>',
   ].join('\n');
 }
 
