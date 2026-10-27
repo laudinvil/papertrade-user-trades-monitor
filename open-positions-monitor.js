@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10000;
-const VERSION = 'papertrade-btc-eth-open-short-dominance-5m-v2';
+const VERSION = 'papertrade-btc-eth-open-amount-arrows-5m-v3';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -144,10 +144,11 @@ function alertText(window) {
   const totalCount = window.longCount + window.shortCount;
   const totalUsd = window.longUsd + window.shortUsd;
   const percent = (value, total) => (total > 0 ? value / total * 100 : 0).toFixed(1) + '%';
+  const amountArrow = window.longUsd > window.shortUsd ? ' ↑' : window.shortUsd > window.longUsd ? ' ↓' : '';
   return [
-    '<b>' + window.instrument + ' OPEN · 5M</b>',
-    'LONG: ' + window.longCount + ' (' + percent(window.longCount, totalCount) + ') — ' + money(window.longUsd) + ' (' + percent(window.longUsd, totalUsd) + ')',
-    'SHORT: ' + window.shortCount + ' (' + percent(window.shortCount, totalCount) + ') — ' + money(window.shortUsd) + ' (' + percent(window.shortUsd, totalUsd) + ')',
+    '<b>' + window.instrument + ' OPEN · 5M' + amountArrow + '</b>',
+    'LONG: ' + window.longCount + ' — ' + money(window.longUsd) + ' (' + percent(window.longUsd, totalUsd) + ')',
+    'SHORT: ' + window.shortCount + ' — ' + money(window.shortUsd) + ' (' + percent(window.shortUsd, totalUsd) + ')',
     'Всего открытий: ' + totalCount,
     '',
     '<a href="' + marketUrl + '">Начинающийся маркет</a>',
@@ -201,28 +202,16 @@ async function poll() {
       const key = justCompletedStart + ':' + instrument;
       if (alertedWindows.has(key)) continue;
       const window = state.windows[key] || createWindow(justCompletedStart, instrument);
-      const shortCountDominates = window.shortCount > window.longCount;
-      const shortUsdDominates = window.shortUsd > window.longUsd;
-      if (shortCountDominates || shortUsdDominates) {
-        await send(alertText(window));
-        console.log(JSON.stringify({
-          level: 'info', event: 'papertrade_open_positions_alert_sent',
-          version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
-          longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
-          shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
-          shortCountDominates, shortUsdDominates,
-          newOpensSeenThisPoll: newOpens, ignoredEvents: ignored,
-        }));
-      } else {
-        console.log(JSON.stringify({
-          level: 'info', event: 'papertrade_open_positions_alert_skipped',
-          version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
-          reason: 'SHORT_PERCENTAGES_NOT_GREATER_THAN_LONG',
-          longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
-          shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
-        }));
-      }
+      await send(alertText(window));
       alertedWindows.add(key);
+      console.log(JSON.stringify({
+        level: 'info', event: 'papertrade_open_positions_alert_sent',
+        version: VERSION, instrument, periodStart: new Date(justCompletedStart * 1000).toISOString(),
+        longCount: window.longCount, longUsd: Number(window.longUsd.toFixed(2)),
+        shortCount: window.shortCount, shortUsd: Number(window.shortUsd.toFixed(2)),
+        amountDirection: window.longUsd > window.shortUsd ? 'LONG' : window.shortUsd > window.longUsd ? 'SHORT' : 'TIE',
+        newOpensSeenThisPoll: newOpens, ignoredEvents: ignored,
+      }));
     }
   } else {
     alertedWindows.add(justCompletedStart + ':BTC');
