@@ -146,8 +146,8 @@ function alertText(window) {
   const percent = (value, total) => (total > 0 ? value / total * 100 : 0).toFixed(1) + '%';
   return [
     '<b>' + window.instrument + ' OPEN · 5M</b>',
-    'LONG: ' + window.longCount + ' (' + percent(window.longCount, totalCount) + ') позиций — ' + money(window.longUsd) + ' (' + percent(window.longUsd, totalUsd) + ')',
-    'SHORT: ' + window.shortCount + ' (' + percent(window.shortCount, totalCount) + ') позиций — ' + money(window.shortUsd) + ' (' + percent(window.shortUsd, totalUsd) + ')',
+    'LONG: ' + window.longCount + ' (' + percent(window.longCount, totalCount) + ') — ' + money(window.longUsd) + ' (' + percent(window.longUsd, totalUsd) + ')',
+    'SHORT: ' + window.shortCount + ' (' + percent(window.shortCount, totalCount) + ') — ' + money(window.shortUsd) + ' (' + percent(window.shortUsd, totalUsd) + ')',
     'Всего открытий: ' + totalCount,
     '',
     '<a href="' + marketUrl + '">Начинающийся маркет</a>',
