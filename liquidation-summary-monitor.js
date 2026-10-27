@@ -88,7 +88,7 @@ function formatMarketLine(market, window) {
 }
 
 async function finishPeriod(periodStart, window) {
-  if (!window || window.alerted) return;
+  if (!window || window.alerted || window.partial === true) return;
   const start = new Date(periodStart * 1000).toISOString().slice(11, 16);
   const end = new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString().slice(11, 16);
   await send([
@@ -128,7 +128,7 @@ async function poll() {
   if (!state.initialized) {
     state.initialized = true;
     state.currentPeriod = currentStart;
-    state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false };
+    state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: true };
     for (const market of ['BTC', 'ETH']) {
       if (snapshots[market]) {
         state.windows[String(currentStart)][market] = {
@@ -149,12 +149,12 @@ async function poll() {
   const previousStart = Number(state.currentPeriod);
   if (currentStart !== previousStart) {
     const previous = state.windows[String(previousStart)];
-    if (previous && !previous.alerted) await finishPeriod(previousStart, previous);
+    if (previousStart === currentStart - PERIOD_SECONDS && previous && !previous.alerted) await finishPeriod(previousStart, previous);
     state.currentPeriod = currentStart;
-    state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false };
+    state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false };
   }
 
-  const active = state.windows[String(currentStart)] || (state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false });
+  const active = state.windows[String(currentStart)] || (state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false });
   for (const market of ['BTC', 'ETH']) {
     const snapshot = snapshots[market];
     if (!snapshot) continue;
