@@ -11,6 +11,9 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const VERSION = 'aggregate-upnl-change-5m-v1';
 const MAX_SNAPSHOTS = 2_000;
 const SAMPLE_TOLERANCE_SECONDS = 45;
+// Fail closed rather than sending alerts if the endpoint is misparsed or returns non-dollar-scaled values.
+const MAX_ABSOLUTE_ACCOUNT_UPNL_USD = 1_000_000_000;
+const MAX_ABSOLUTE_AGGREGATE_UPNL_USD = 10_000_000_000;
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -80,6 +83,9 @@ async function fetchAggregateUpnl() {
     if (pnlValue !== undefined && pnlValue !== null && pnlValue !== '') {
       const pnl = Number(pnlValue);
       if (Number.isFinite(pnl)) {
+        if (Math.abs(pnl) > MAX_ABSOLUTE_ACCOUNT_UPNL_USD) {
+          throw new Error(`Rejected suspicious currentUnrealizedPnl value (${String(pnlValue).slice(0, 80)}); endpoint field/units must be verified`);
+        }
         const identity = String(value.wallet ?? value.address ?? value.account ?? value.accountId ?? value.id ?? '');
         const dedupeKey = identity ? `${identity.toLowerCase()}:${pnl}` : null;
         if (!dedupeKey || !visited.has(dedupeKey)) {
@@ -97,7 +103,11 @@ async function fetchAggregateUpnl() {
   if (accounts.length === 0) {
     throw new Error('Papertrade accounts response contains no numeric currentUnrealizedPnl account rows');
   }
-  return { totalUpnl: accounts.reduce((sum, pnl) => sum + pnl, 0), accountCount: accounts.length };
+  const totalUpnl = accounts.reduce((sum, pnl) => sum + pnl, 0);
+  if (!Number.isFinite(totalUpnl) || Math.abs(totalUpnl) > MAX_ABSOLUTE_AGGREGATE_UPNL_USD) {
+    throw new Error(`Rejected suspicious aggregate uPnL (${String(totalUpnl)}); refusing to store snapshots or send alerts`);
+  }
+  return { totalUpnl, accountCount: accounts.length };
 }
 
 async function send(message) {
