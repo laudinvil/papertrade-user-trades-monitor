@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-no-threshold-btc-eth-independent-v15';
+const VERSION = 'closed-greater-than-open-arrow-82-percent-v16';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -149,8 +149,12 @@ function addEvent(event, periodStart, instrument, kind) {
 function alertText(window, instrument, bucket) {
   const marketStart = Number(window.periodStart) + PERIOD_SECONDS;
   const marketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${marketStart}`;
+  const excessPercent = Number(bucket.openUsd) > 0
+    ? ((Number(bucket.closedUsd) - Number(bucket.openUsd)) / Number(bucket.openUsd)) * 100
+    : Infinity;
+  const arrow = excessPercent > 82 ? '⬆️' : '⬇️';
   return [
-    `<b>${esc(instrument)} — CLOSED больше OPEN на ${Number(bucket.openUsd) > 0 ? (((Number(bucket.closedUsd) - Number(bucket.openUsd)) / Number(bucket.openUsd)) * 100).toFixed(2) : '∞'}%</b>`,
+    `<b>${arrow} ${esc(instrument)} — CLOSED больше OPEN на ${Number.isFinite(excessPercent) ? excessPercent.toFixed(2) : '∞'}%</b>`,
     `OPEN: ${esc(money(bucket.openUsd))} (${bucket.openCount} сделок)`,
     `CLOSED: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
     '',
