@@ -2,13 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const UPNL_URL = 'https://exchange.papertrade.xyz/state/leaderboard/accounts';
+const ACCOUNTS_PAGE_SIZE = 200;
+const MAX_ACCOUNT_PAGES = 1000;
 const POLL_MS = 15_000;
 const RATE_LIMIT_BACKOFF_MS = 300_000;
 const PERIOD_SECONDS = 300;
 const STATE_PATH = process.env.PAPERTRADE_UPNL_STATE_PATH || '/data/papertrade-upnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'aggregate-upnl-change-5m-v3-clean-legacy-snapshots';
+const VERSION = 'aggregate-upnl-change-5m-v4-all-account-pages';
 const MAX_SNAPSHOTS = 2_000;
 const SAMPLE_TOLERANCE_SECONDS = 45;
 // Fail closed rather than sending alerts if the endpoint is misparsed or returns non-dollar-scaled values.
@@ -73,60 +75,87 @@ function saveState() {
 }
 
 async function fetchAggregateUpnl() {
-  const response = await fetch(UPNL_URL, {
-    method: 'GET',
-    headers: { accept: 'application/json', 'user-agent': 'papertrade-upnl-monitor' },
-    signal: AbortSignal.timeout(15_000),
-  });
-  const rawBody = await response.text().catch(() => '');
-  let body;
-  try { body = rawBody ? JSON.parse(rawBody) : null; } catch {}
-  if (!response.ok || !body || typeof body !== 'object') {
-    const error = new Error(`Papertrade accounts HTTP ${response.status}: ${rawBody.slice(0, 250) || 'empty or invalid response'}`);
-    error.status = response.status;
-    error.retryAfter = response.headers.get('retry-after');
-    throw error;
+  const accountsByIdentity = new Map();
+  let reportedAccountCount = null;
+  let reportedTotalPages = null;
+  let pagesFetched = 0;
+
+  for (let page = 0; page < MAX_ACCOUNT_PAGES; page++) {
+    const url = new URL(UPNL_URL);
+    url.searchParams.set('window', 'all');
+    url.searchParams.set('sortKey', 'address');
+    url.searchParams.set('sortDir', 'asc');
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('pageSize', String(ACCOUNTS_PAGE_SIZE));
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { accept: 'application/json', 'user-agent': 'papertrade-upnl-monitor' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const rawBody = await response.text().catch(() => '');
+    let body;
+    try { body = rawBody ? JSON.parse(rawBody) : null; } catch {}
+    if (!response.ok || !body || typeof body !== 'object') {
+      const error = new Error(`Papertrade accounts page=${page} HTTP ${response.status}: ${rawBody.slice(0, 250) || 'empty or invalid response'}`);
+      error.status = response.status;
+      error.retryAfter = response.headers.get('retry-after');
+      throw error;
+    }
+
+    const rows = Array.isArray(body.accounts) ? body.accounts
+      : Array.isArray(body.data?.accounts) ? body.data.accounts
+      : Array.isArray(body.results) ? body.results
+      : Array.isArray(body.data) ? body.data
+      : null;
+    if (!rows) {
+      throw new Error(`Papertrade accounts page=${page} response has no recognized account array`);
+    }
+    if (Number.isFinite(Number(body.summary?.uniqueAccounts))) {
+      reportedAccountCount = Number(body.summary.uniqueAccounts);
+    } else if (Number.isFinite(Number(body.count))) {
+      reportedAccountCount = Number(body.count);
+    }
+    const totalPagesValue = body.pageInfo?.totalPages ?? body.pageInfo?.total_pages ?? body.pagination?.totalPages;
+    if (Number.isFinite(Number(totalPagesValue)) && Number(totalPagesValue) > 0) {
+      reportedTotalPages = Number(totalPagesValue);
+    }
+    pagesFetched++;
+
+    for (const account of rows) {
+      const identity = String(account.address ?? account.wallet ?? account.account ?? account.accountId ?? account.id ?? '').toLowerCase();
+      if (!identity) throw new Error(`Papertrade account row on page=${page} has no stable identity; refusing to risk double-counting`);
+      const pnlValue = account.currentUnrealizedPnl ?? account.currentUnrealizedPnL ?? account.current_unrealized_pnl;
+      if (pnlValue === undefined || pnlValue === null || pnlValue === '') {
+        throw new Error(`Papertrade account ${identity} has no currentUnrealizedPnl field`);
+      }
+      const pnl = wadToUsd(String(pnlValue));
+      if (!Number.isFinite(pnl) || Math.abs(pnl) > MAX_ABSOLUTE_ACCOUNT_UPNL_USD) {
+        throw new Error(`Rejected suspicious account uPnL after WAD-to-USD conversion: usd=${pnl}; rawWad=${String(pnlValue).slice(0, 80)}`);
+      }
+      accountsByIdentity.set(identity, pnl);
+    }
+
+    if (rows.length === 0) break;
+    if (reportedTotalPages !== null && page + 1 >= reportedTotalPages) break;
+    if (reportedAccountCount !== null && accountsByIdentity.size >= reportedAccountCount) break;
+    if (rows.length < ACCOUNTS_PAGE_SIZE) break;
+    if (page === MAX_ACCOUNT_PAGES - 1) {
+      throw new Error(`Reached MAX_ACCOUNT_PAGES=${MAX_ACCOUNT_PAGES}; refusing to report a partial account total`);
+    }
   }
 
-  // The endpoint may wrap its account rows in different envelope keys.
-  // Sum the current uPnL field for each account row. The API field is an 18-decimal WAD integer, not USD; convert before summing. Never include trader names in alerts.
-  const accounts = [];
-  const visited = new Set();
-  function walk(value) {
-    if (!value || typeof value !== 'object') return;
-    if (Array.isArray(value)) {
-      for (const item of value) walk(item);
-      return;
-    }
-    const pnlValue = value.currentUnrealizedPnl ?? value.currentUnrealizedPnL ?? value.current_unrealized_pnl;
-    if (pnlValue !== undefined && pnlValue !== null && pnlValue !== '') {
-      const pnl = wadToUsd(String(pnlValue));
-      if (Number.isFinite(pnl)) {
-        if (Math.abs(pnl) > MAX_ABSOLUTE_ACCOUNT_UPNL_USD) {
-          throw new Error(`Rejected suspicious account uPnL after WAD-to-USD conversion: usd=${pnl}; rawWad=${String(pnlValue).slice(0, 80)}`);
-        }
-        const identity = String(value.wallet ?? value.address ?? value.account ?? value.accountId ?? value.id ?? '');
-        const dedupeKey = identity ? `${identity.toLowerCase()}:${pnl}` : null;
-        if (!dedupeKey || !visited.has(dedupeKey)) {
-          accounts.push(pnl);
-          if (dedupeKey) visited.add(dedupeKey);
-        }
-      }
-    }
-    for (const [key, child] of Object.entries(value)) {
-      if (['currentUnrealizedPnl', 'currentUnrealizedPnL', 'current_unrealized_pnl'].includes(key)) continue;
-      if (child && typeof child === 'object') walk(child);
-    }
+  if (accountsByIdentity.size === 0) {
+    throw new Error('Papertrade accounts response contains no account rows');
   }
-  walk(body);
-  if (accounts.length === 0) {
-    throw new Error('Papertrade accounts response contains no numeric currentUnrealizedPnl account rows');
+  if (reportedAccountCount !== null && accountsByIdentity.size < reportedAccountCount) {
+    throw new Error(`Incomplete Papertrade account scan: fetched=${accountsByIdentity.size}, reported=${reportedAccountCount}, pages=${pagesFetched}; refusing to alert on partial totals`);
   }
-  const totalUpnl = accounts.reduce((sum, pnl) => sum + pnl, 0);
+  const totalUpnl = [...accountsByIdentity.values()].reduce((sum, pnl) => sum + pnl, 0);
   if (!Number.isFinite(totalUpnl) || Math.abs(totalUpnl) > MAX_ABSOLUTE_AGGREGATE_UPNL_USD) {
     throw new Error(`Rejected suspicious aggregate uPnL (${String(totalUpnl)}); refusing to store snapshots or send alerts`);
   }
-  return { totalUpnl, accountCount: accounts.length };
+  return { totalUpnl, accountCount: accountsByIdentity.size, reportedAccountCount, pagesFetched };
 }
 
 async function send(message) {
@@ -162,7 +191,7 @@ function alertText(previous, current, delta, periodStart) {
 
 async function poll() {
   const now = Math.floor(Date.now() / 1000);
-  const { totalUpnl, accountCount } = await fetchAggregateUpnl();
+  const { totalUpnl, accountCount, reportedAccountCount, pagesFetched } = await fetchAggregateUpnl();
   const current = { ts: now, totalUpnl: Number(totalUpnl.toFixed(8)) };
   const last = state.snapshots[state.snapshots.length - 1];
   if (!last || now - Number(last.ts) >= 10) state.snapshots.push(current);
@@ -181,7 +210,7 @@ async function poll() {
         level: 'info', event: 'aggregate_upnl_alert_sent', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         previousUpnl: previous.totalUpnl, currentUpnl: current.totalUpnl,
-        delta, direction: delta > 0 ? 'increase' : 'decrease', accountCount,
+        delta, direction: delta > 0 ? 'increase' : 'decrease', accountCount, reportedAccountCount, pagesFetched,
       }));
     } else {
       console.log(JSON.stringify({
@@ -203,13 +232,13 @@ async function poll() {
   saveState();
   console.log(JSON.stringify({
     level: 'info', event: 'aggregate_upnl_snapshot', version: VERSION,
-    totalUpnl: current.totalUpnl, accountCount, pollMs: POLL_MS,
+    totalUpnl: current.totalUpnl, accountCount, reportedAccountCount, pagesFetched, pageSize: ACCOUNTS_PAGE_SIZE, pollMs: POLL_MS,
   }));
 }
 
 console.log(JSON.stringify({
   level: 'info', event: 'aggregate_upnl_monitor_started', version: VERSION,
-  endpoint: UPNL_URL, pollMs: POLL_MS, comparisonSeconds: PERIOD_SECONDS,
+  endpoint: UPNL_URL, pollMs: POLL_MS, comparisonSeconds: PERIOD_SECONDS, pageSize: ACCOUNTS_PAGE_SIZE, accountPagination: 'all pages; refuses partial totals',
   statePath: STATE_PATH, pnlUnits: 'WAD_18_DECIMALS_CONVERTED_TO_USD', alertPolicy: 'alert on any aggregate uPnL change of at least $0.01 versus approximately 5 minutes earlier; no trader names',
 }));
 
