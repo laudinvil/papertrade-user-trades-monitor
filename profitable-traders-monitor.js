@@ -186,8 +186,14 @@ async function poll() {
     if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
   }
 
+  // Only evaluate the just-finished window, never replay historical alerts after a restart.
+  // Ignore legacy CLOSED-only state entries from the previous monitor version.
   const completed = Object.values(state.windows)
-    .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
+    .filter(window =>
+      Number(window.periodStart) === currentPeriodStart - PERIOD_SECONDS &&
+      Number.isFinite(Number(window.openUsd)) &&
+      Number.isFinite(Number(window.closedUsd))
+    )
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart));
 
   for (const window of completed) {
