@@ -164,8 +164,9 @@ function alertText(window) {
     lines.push(`${esc(instrument)}: OPEN ${esc(money(bucket.openUsd))} / CLOSED ${esc(money(bucket.closedUsd))}`);
   }
   const marketStart = start + PERIOD_SECONDS;
-  const marketUrl = `https://polymarket.com/event/btc-updown-5m-${marketStart}`;
-  lines.push('', `<a href="${marketUrl}">Открыть маркет</a>`);
+  const btcUrl = `https://polymarket.com/event/btc-updown-5m-${marketStart}`;
+  const ethUrl = `https://polymarket.com/event/eth-updown-5m-${marketStart}`;
+  lines.push('', `<a href="${btcUrl}">BTC маркет</a> · <a href="${ethUrl}">ETH маркет</a>`);
   return lines.join('\n');
 }
 
@@ -189,11 +190,11 @@ async function poll() {
     if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
   }
 
-  // Evaluate each completed 5-minute aggregate once. The alert key is the period,
-  // not the instrument, so BTC/ETH are combined into one total and one possible alert.
+  // Evaluate only the just-finished 5-minute aggregate. BTC and ETH are already
+  // combined in this window; one period can produce at most one alert.
   const completed = Object.values(state.windows)
     .filter(window =>
-      Number(window.periodStart) + PERIOD_SECONDS <= now &&
+      Number(window.periodStart) === currentPeriodStart - PERIOD_SECONDS &&
       Number.isFinite(Number(window.openUsd)) &&
       Number.isFinite(Number(window.closedUsd))
     )
