@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'open-vs-closed-notional-min-42-6-percent-btc-eth-independent-v14';
+const VERSION = 'closed-greater-than-open-no-threshold-btc-eth-independent-v15';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -150,7 +150,7 @@ function alertText(window, instrument, bucket) {
   const marketStart = Number(window.periodStart) + PERIOD_SECONDS;
   const marketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${marketStart}`;
   return [
-    `<b>${esc(instrument)} — OPEN больше CLOSED на ${Number(bucket.closedUsd) > 0 ? (((Number(bucket.openUsd) - Number(bucket.closedUsd)) / Number(bucket.closedUsd)) * 100).toFixed(2) : '∞'}%</b>`,
+    `<b>${esc(instrument)} — CLOSED больше OPEN на ${Number(bucket.openUsd) > 0 ? (((Number(bucket.closedUsd) - Number(bucket.openUsd)) / Number(bucket.openUsd)) * 100).toFixed(2) : '∞'}%</b>`,
     `OPEN: ${esc(money(bucket.openUsd))} (${bucket.openCount} сделок)`,
     `CLOSED: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
     '',
@@ -190,21 +190,15 @@ async function poll() {
     const evaluated = ['BTC', 'ETH']
       .map(instrument => ({ instrument, bucket: window.byInstrument[instrument] }))
       .filter(item => item.bucket && !alertedWindows.has(`${window.periodStart}:${item.instrument}`));
-    const eligible = evaluated.filter(({ bucket }) => {
-      const openUsd = Number(bucket.openUsd);
-      const closedUsd = Number(bucket.closedUsd);
-      if (!(openUsd > closedUsd)) return false;
-      const excessPercent = closedUsd > 0 ? ((openUsd - closedUsd) / closedUsd) * 100 : Infinity;
-      return excessPercent >= 42.6;
-    });
+    const eligible = evaluated.filter(({ bucket }) => Number(bucket.closedUsd) > Number(bucket.openUsd));
 
     for (const { instrument, bucket } of evaluated) {
-      if (Number(bucket.openUsd) <= Number(bucket.closedUsd)) {
+      if (Number(bucket.closedUsd) <= Number(bucket.openUsd)) {
         console.log(JSON.stringify({
           level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
           instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
           openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
-          reason: 'OPEN_NOT_GREATER_THAN_CLOSED_OR_BELOW_0_15_PERCENT',
+          reason: 'CLOSED_NOT_GREATER_THAN_OPEN',
         }));
         alertedWindows.add(`${window.periodStart}:${instrument}`);
       }
@@ -233,7 +227,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd independently per completed 5-minute window; each alerts at >=42.6% excess; both may alert in the same window; no streaks',
+  scope: 'BTC and ETH CLOSED notionalUsd compared with OPEN notionalUsd independently per completed 5-minute window; alert whenever CLOSED > OPEN with no percentage threshold; both may alert in the same window; no streaks',
 }));
 
 let stopping = false;
