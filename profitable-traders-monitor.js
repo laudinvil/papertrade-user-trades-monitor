@@ -9,7 +9,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-arrow-82-percent-diagnostic-backoff-v19';
+const VERSION = 'closed-greater-than-open-arrow-82-percent-loop-crash-fix-v20';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -246,15 +246,19 @@ let stopping = false;
 async function loop() {
   while (!stopping) {
     const started = Date.now();
-    let rateLimited = false;
-    let retryDelayMs = RATE_LIMIT_BACKOFF_MS;
-    try { await poll(); }
-    catch (error) {
-      rateLimited = Number(error?.status) === 429 || /HTTP 429\\b/.test(error instanceof Error ? error.message : String(error));
-      const retryAfterSeconds = Number(error?.retryAfter);
-      retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-        ? retryAfterSeconds * 1000
-        : RATE_LIMIT_BACKOFF_MS;
+    let delayMs = POLL_MS;
+    try {
+      await poll();
+    } catch (error) {
+      const isRateLimited = Number(error?.status) === 429 || Number(error?.statusCode) === 429 || /HTTP 429\b/.test(error instanceof Error ? error.message : String(error));
+      if (isRateLimited) {
+        const retryAfterSeconds = Number(error?.retryAfter);
+        delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1000
+          : RATE_LIMIT_BACKOFF_MS;
+      } else {
+        delayMs = Math.max(0, POLL_MS - (Date.now() - started));
+      }
       const cause = error && typeof error === 'object' ? error.cause : null;
       console.error(JSON.stringify({
         level: 'error', event: 'papertrade_open_closed_poll_failed',
@@ -267,7 +271,7 @@ async function loop() {
         stack: error instanceof Error ? error.stack : null,
       }));
     }
-    await sleep(rateLimited ? retryDelayMs : Math.max(0, POLL_MS - (Date.now() - started)));
+    await sleep(delayMs);
   }
 }
 process.on('SIGTERM', () => { stopping = true; });
