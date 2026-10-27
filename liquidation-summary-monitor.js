@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const MAX_SEEN = 20_000;
 const MAX_WINDOWS = 288;
-const VERSION = 'papertrade-liquidation-summary-5m-v4-post-json-request';
+const VERSION = 'papertrade-liquidation-summary-5m-v5-protocol-feed-only';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
