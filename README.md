@@ -42,3 +42,22 @@ These criteria screen for historical performance; they do not guarantee future p
 ## Deployment
 
 The Docker image runs only this scanner under the supervisor and exposes `/health`. Keep it as one Deplexo application. GitHub pushes trigger deployment only if auto-deploy is enabled for the connected repository; verify the deployed commit and runtime logs in Deplexo.
+
+## Trade activity monitor
+
+A separate `trade-activity-monitor.js` service runs inside the same Deplexo application. It reads the public recent-trades feed and sends deduplicated Telegram alerts for:
+- unusually high trade frequency in a completed 5-minute BTC or ETH window;
+- repeated per-wallet OPEN → CLOSED / CLOSED → OPEN transitions in that window;
+- a sharp increase in CLOSED notional versus the preceding six 5-minute windows.
+
+It uses its own state file, `/data/trade-activity-state.json`, and does not change the existing profitable-traders monitor's logic. Defaults are deliberately explicit and can be tuned through environment variables:
+- `TRADE_ACTIVITY_POLL_MS` (default 10000; minimum 3000)
+- `TRADE_ACTIVITY_STATE_PATH`
+- `TRADE_ACTIVITY_MIN_FREQUENCY_TRADES` (default 10)
+- `TRADE_ACTIVITY_FREQUENCY_MULTIPLIER` (default 2.5)
+- `TRADE_ACTIVITY_MIN_SEQUENCE_TRANSITIONS` (default 3)
+- `TRADE_ACTIVITY_CLOSE_VOLUME_MULTIPLIER` (default 2.5)
+- `TRADE_ACTIVITY_MIN_CLOSE_VOLUME_USD` (default 10000)
+
+The monitor evaluates completed 5-minute windows and uses its own persistent deduplication state. Both services run in the same single Deplexo app.
+
