@@ -40,19 +40,39 @@ function saveState() {
 async function fetchHeatmap(market) {
   const url = new URL(HEATMAP_URL);
   url.searchParams.set('market', market);
-  // Keep the public heatmap request load low; use its own markPrice as the price snapshot.
   const response = await fetch(url, {
     headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
     signal: AbortSignal.timeout(20_000),
   });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || body?.ok !== true || !Number.isFinite(Number(body?.markPrice)) || Number(body.markPrice) <= 0) {
-    const error = new Error(`Heatmap ${market} HTTP ${response.status}: ${body?.error?.message || 'missing markPrice'}`);
+  const contentType = response.headers.get('content-type') || '';
+  const raw = await response.text();
+  let body;
+  try { body = JSON.parse(raw); } catch { body = null; }
+
+  // The published API documents markPrice at the top level. Also tolerate common
+  // proxy/wrapper envelopes so a harmless response-shape change doesn't stop monitoring.
+  const candidates = [
+    body?.markPrice,
+    body?.data?.markPrice,
+    body?.heatmap?.markPrice,
+    body?.result?.markPrice,
+  ];
+  const markPrice = candidates.map(Number).find(value => Number.isFinite(value) && value > 0);
+  if (!response.ok || markPrice === undefined) {
+    const apiError = body?.error?.message || body?.message || body?.error || '';
+    const detail = apiError
+      ? String(apiError)
+      : !body
+        ? `non-JSON response (${contentType || 'unknown content type'}): ${raw.slice(0, 160).replace(/\\s+/g, ' ')}`
+        : `markPrice not found; keys=${Object.keys(body).join(',') || '(none)'}; contentType=${contentType}`;
+    const error = new Error(`Heatmap ${market} HTTP ${response.status}: ${detail}`);
     error.status = response.status;
     error.retryAfter = response.headers.get('retry-after');
     throw error;
   }
-  return { market, price: Number(body.markPrice), asOfMs: Number(body.asOfMs) || Date.now() };
+  const asOfCandidates = [body?.asOfMs, body?.data?.asOfMs, body?.heatmap?.asOfMs, body?.result?.asOfMs];
+  const asOfMs = asOfCandidates.map(Number).find(value => Number.isFinite(value) && value > 0) || Date.now();
+  return { market, price: markPrice, asOfMs };
 }
 
 async function send(message) {
