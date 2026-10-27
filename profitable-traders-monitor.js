@@ -239,12 +239,10 @@ async function poll() {
 
     // No positive/negative PnL thresholds. Compare this window's PnL with
     // the immediately preceding 5-minute window for the same instrument.
-    // Keep the existing deadline and avoid sending stale alerts.
-    if (periodStart !== currentPeriodStart - PERIOD_SECONDS || now - currentPeriodStart > 2) {
+    // Process the just-completed period on the next successful poll; do not
+    // drop it merely because the API response arrived more than 2 seconds late.
+    if (periodStart !== currentPeriodStart - PERIOD_SECONDS) {
       alertedWindows.add(key);
-      if (periodStart === currentPeriodStart - PERIOD_SECONDS && now - currentPeriodStart > 2) {
-        console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'ALERT_DEADLINE_EXPIRED', secondsAfterBoundary: now - currentPeriodStart }));
-      }
       continue;
     }
     const previousWindow = state.windows[`${periodStart - PERIOD_SECONDS}:${window.instrument}`] || null;
@@ -259,11 +257,11 @@ async function poll() {
     await send(alertText(window, previousWindow));
     alertedWindows.add(key);
     alertsSent++;
-    state.lastAlertType = 'positive';
+    state.lastAlertType = 'period_pnl_comparison';
     state.lastAlertInstrument = window.instrument;
     state.lastAlertPeriodStart = periodStart;
     saveState();
-    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_positive_period' }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_period_pnl_comparison' }));
   }
 
   // Retain only the last 48 hours of window data; keep alert keys for deduplication.
