@@ -9,7 +9,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-arrow-82-percent-rate-limit-backoff-v17';
+const VERSION = 'closed-greater-than-open-arrow-82-percent-rate-limit-backoff-v18';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -160,7 +160,7 @@ function alertText(window, instrument, bucket) {
     `CLOSED: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
     '',
     `<a href="${marketUrl}">${esc(instrument)} маркет</a>`,
-  ].join('\n');
+  ].join(String.fromCharCode(10));
 }
 
 async function poll() {
