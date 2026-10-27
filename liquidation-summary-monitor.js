@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const MAX_SEEN = 20_000;
 const MAX_WINDOWS = 288;
-const VERSION = 'papertrade-liquidation-summary-5m-v3-60s-rate-limit-recovery';
+const VERSION = 'papertrade-liquidation-summary-5m-v4-post-json-request';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -93,9 +93,16 @@ function saveState() {
 }
 
 async function fetchRecentTrades() {
+  // The public REST docs support POST with a JSON argument object. Use POST rather than
+  // repeatedly hitting the GET route that is currently returning HTTP 429.
   const response = await fetch(RECENT_TRADES_URL, {
-    method: 'GET',
-    headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-summary-monitor' },
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'user-agent': 'papertrade-liquidation-summary-monitor',
+    },
+    body: '{}',
     signal: AbortSignal.timeout(15_000),
   });
   const rawBody = await response.text().catch(() => '');
