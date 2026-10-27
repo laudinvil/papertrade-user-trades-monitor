@@ -5,7 +5,29 @@ const services = [
   { name: "profitable-traders-monitor", script: "profitable-traders-monitor.js" },
 ];
 
+const bootDiagnostics = {
+  startedAt: new Date().toISOString(),
+  node: process.version,
+  platform: process.platform,
+  arch: process.arch,
+  pid: process.pid,
+  cwd: process.cwd(),
+  requestedPort: process.env.PORT || "8080",
+  events: [],
+};
+function diagnostic(level, event, details = {}) {
+  const entry = { time: new Date().toISOString(), level, event, ...details };
+  bootDiagnostics.events.push(entry);
+  if (bootDiagnostics.events.length > 50) bootDiagnostics.events.shift();
+  const line = JSON.stringify(entry);
+  (level === "error" ? console.error : console.log)(line);
+}
 const healthServer = createServer((req, res) => {
+  if (req.url === "/diagnostics") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({ ...bootDiagnostics, uptimeSeconds: Math.floor(process.uptime()), services: services.map(service => ({ name: service.name, running: children.has(service.name) })) }));
+    return;
+  }
   if (req.url === "/health" || req.url === "/") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, services: services.map(service => ({ name: service.name, running: children.has(service.name) })) }));
@@ -68,23 +90,23 @@ function listenHealthServer(index = 0) {
 const children = new Map();
 function start(service, restartCount = 0) {
   if (stopping) return;
-  console.log(JSON.stringify({ level: "info", event: "service_starting", service: service.name, script: service.script, restartCount }));
+  diagnostic("info", "service_starting", { service: service.name, script: service.script, restartCount });
   const child = spawn(process.execPath, [service.script], { stdio: "inherit", env: process.env });
   children.set(service.name, child);
   child.on("error", error => {
-    if (!stopping) console.error(JSON.stringify({ level: "error", event: "service_spawn_error", service: service.name, message: error.message }));
+    if (!stopping) diagnostic("error", "service_spawn_error", { service: service.name, code: error.code || null, message: error.message });
   });
   child.on("exit", (code, signal) => {
     if (children.get(service.name) === child) children.delete(service.name);
     if (stopping) return;
     const delay = Math.min(30_000, 1000 * (2 ** Math.min(restartCount, 5)));
-    console.error(JSON.stringify({ level: "error", event: "service_exited", service: service.name, code, signal, restartInMs: delay }));
+    diagnostic("error", "service_exited", { service: service.name, code, signal, restartInMs: delay });
     setTimeout(() => start(service, restartCount + 1), delay);
   });
 }
 
 healthServer.on("error", error => {
-  console.error(JSON.stringify({ level: "error", event: "health_server_unhandled_error", code: error.code || null, message: error.message }));
+  diagnostic("error", "health_server_unhandled_error", { code: error.code || null, message: error.message });
 });
 listenHealthServer();
 for (const service of services) start(service);
@@ -99,4 +121,4 @@ function shutdown(signal) {
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
-console.log(JSON.stringify({ level: "info", event: "supervisor_started", services: services.map(s => s.name) }));
+diagnostic("info", "supervisor_started", { services: services.map(s => s.name) });
