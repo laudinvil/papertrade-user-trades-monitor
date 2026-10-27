@@ -251,10 +251,10 @@ async function poll() {
     const qualifies = netPnl >= 80000 || netPnl <= -20000;
     if (!qualifies) {
       alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_DIRECTIONAL_THRESHOLD', netPnl, positiveThreshold: 80000, negativeThreshold: -20000 }));
+      console.log(JSON.stringify({ ...diagnostic, decision: 'skipped', reason: 'NET_PNL_BELOW_DIRECTIONAL_THRESHOLD', netPnl: Number(netPnl.toFixed(2)), positiveThreshold: 80000, negativeThreshold: -20000 }));
       continue;
     }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: netPnl < 0 ? 'NET_PNL_AT_MOST_NEGATIVE_20000' : 'NET_PNL_AT_LEAST_80000', netPnl }));
+    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: netPnl < 0 ? 'NET_PNL_AT_MOST_NEGATIVE_20000' : 'NET_PNL_AT_LEAST_80000', netPnl: Number(netPnl.toFixed(2)) }));
     await send(alertText(window));
     alertedWindows.add(key);
     alertsSent++;
