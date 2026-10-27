@@ -1,6 +1,6 @@
-# Papertrade Profitable Traders Monitor
+# Papertrade Monitoring Services
 
-Read-only Telegram scanner for Papertrade AI. It replaces the previous liquidation monitor; liquidation detection and liquidation alert logic have been removed.
+Read-only Telegram monitors for Papertrade AI, running as separate services inside one Deplexo application.
 
 ## What it does
 
@@ -61,3 +61,22 @@ It uses its own state file, `/data/trade-activity-state.json`, and does not chan
 
 The monitor evaluates completed 5-minute windows and uses its own persistent deduplication state. Both services run in the same single Deplexo app.
 
+
+
+## Five-minute liquidation summary monitor
+
+A separate `liquidation-summary-monitor.js` service polls the public `https://exchange.papertrade.xyz/query/protocol/trades/recent` feed and filters events whose `kind` identifies a liquidation. At the end of each completed UTC 5-minute window, it sends one Telegram summary if any BTC or ETH liquidations were observed.
+
+The alert reports, per instrument:
+- LONG liquidation count and summed `notionalUsd`;
+- SHORT liquidation count and summed `notionalUsd`;
+- separately labeled unknown-side events, rather than guessing their direction;
+- total liquidation count and USD notional, with a Polymarket 5-minute market link.
+
+It uses a separate persistent state file at `/data/liquidation-summary-state.json`, deduplicates by event sequence when available, and polls every 10 seconds by default. It does not change the other monitors' alert logic.
+
+Optional environment variables:
+- `LIQUIDATION_SUMMARY_POLL_MS` (default 10000; minimum 3000)
+- `LIQUIDATION_SUMMARY_STATE_PATH` (default `/data/liquidation-summary-state.json`)
+
+The source feed must actually include liquidation events for these summaries to be complete; check the `liquidation_summary_snapshot` logs to verify observed event kinds and counts.
