@@ -286,7 +286,18 @@ async function loop() {
     const started = Date.now();
     try { await poll(); }
     catch (error) {
-      console.error(JSON.stringify({ level: 'error', event: 'papertrade_closed_pnl_poll_failed', message: error instanceof Error ? error.message : String(error) }));
+      const cause = error && typeof error === 'object' ? error.cause : null;
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'papertrade_closed_pnl_poll_failed',
+        message: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorCode: error && typeof error === 'object' ? (error.code ?? error.errno ?? null) : null,
+        causeName: cause && typeof cause === 'object' ? (cause.name ?? null) : null,
+        causeMessage: cause instanceof Error ? cause.message : (cause == null ? null : String(cause)),
+        causeCode: cause && typeof cause === 'object' ? (cause.code ?? cause.errno ?? null) : null,
+        stack: error instanceof Error ? error.stack : null,
+      }));
     }
     await sleep(Math.max(0, POLL_MS - (Date.now() - started)));
   }
