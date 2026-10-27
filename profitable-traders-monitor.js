@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-open-vs-closed-notional-usd-per-5m-period-link-v7';
+const VERSION = 'open-vs-closed-notional-per-instrument-5m-link-v8';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -146,28 +146,16 @@ function addEvent(event, periodStart, instrument, kind) {
   return true;
 }
 
-function alertText(window) {
-  const start = Number(window.periodStart);
-  const difference = Number(window.openUsd) - Number(window.closedUsd);
-  const lines = [
-    '<b>Papertrade — OPEN больше CLOSED</b>',
-    `Период: ${new Date(start * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`,
-    `OPEN объём: ${esc(money(window.openUsd))} (${window.openCount} сделок)`,
-    `CLOSED объём: ${esc(money(window.closedUsd))} (${window.closedCount} сделок)`,
-    `Разница OPEN − CLOSED: ${esc(money(difference))}`,
+function alertText(window, instrument, bucket) {
+  const marketStart = Number(window.periodStart) + PERIOD_SECONDS;
+  const marketUrl = `https://polymarket.com/event/${instrument.toLowerCase()}-updown-5m-${marketStart}`;
+  return [
+    `<b>${esc(instrument)} — OPEN больше CLOSED</b>`,
+    `OPEN объём: ${esc(money(bucket.openUsd))} (${bucket.openCount} сделок)`,
+    `CLOSED объём: ${esc(money(bucket.closedUsd))} (${bucket.closedCount} сделок)`,
     '',
-    '<b>По инструментам:</b>',
-  ];
-  for (const instrument of ['BTC', 'ETH', 'OTHER']) {
-    const bucket = window.byInstrument?.[instrument];
-    if (!bucket) continue;
-    lines.push(`${esc(instrument)}: OPEN ${esc(money(bucket.openUsd))} / CLOSED ${esc(money(bucket.closedUsd))}`);
-  }
-  const marketStart = start + PERIOD_SECONDS;
-  const btcUrl = `https://polymarket.com/event/btc-updown-5m-${marketStart}`;
-  const ethUrl = `https://polymarket.com/event/eth-updown-5m-${marketStart}`;
-  lines.push('', `<a href="${btcUrl}">BTC маркет</a> · <a href="${ethUrl}">ETH маркет</a>`);
-  return lines.join('\n');
+    `<a href="${marketUrl}">${esc(instrument)} маркет</a>`,
+  ].join('\n');
 }
 
 async function poll() {
@@ -190,39 +178,40 @@ async function poll() {
     if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
   }
 
-  // Evaluate only the just-finished 5-minute aggregate. BTC and ETH are already
-  // combined in this window; one period can produce at most one alert.
+  // Evaluate BTC and ETH independently for the just-finished 5-minute window.
   const completed = Object.values(state.windows)
     .filter(window =>
       Number(window.periodStart) === currentPeriodStart - PERIOD_SECONDS &&
-      Number.isFinite(Number(window.openUsd)) &&
-      Number.isFinite(Number(window.closedUsd))
+      window.byInstrument && typeof window.byInstrument === 'object'
     )
     .sort((a, b) => Number(a.periodStart) - Number(b.periodStart));
 
   for (const window of completed) {
-    const key = String(window.periodStart);
-    if (alertedWindows.has(key)) continue;
-    // The sole alert condition: combined OPEN notionalUsd is greater than CLOSED notionalUsd.
-    if (Number(window.openUsd) <= Number(window.closedUsd)) {
+    for (const instrument of ['BTC', 'ETH']) {
+      const bucket = window.byInstrument[instrument];
+      if (!bucket) continue;
+      const key = `${window.periodStart}:${instrument}`;
+      if (alertedWindows.has(key)) continue;
+      // Only alert when this instrument's OPEN notionalUsd exceeds its CLOSED notionalUsd.
+      if (Number(bucket.openUsd) <= Number(bucket.closedUsd)) {
+        alertedWindows.add(key);
+        console.log(JSON.stringify({
+          level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
+          instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
+          openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
+          reason: 'OPEN_NOT_GREATER_THAN_CLOSED',
+        }));
+        continue;
+      }
+      await send(alertText(window, instrument, bucket));
       alertedWindows.add(key);
       console.log(JSON.stringify({
-        level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
-        periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
-        openUsd: Number(window.openUsd.toFixed(2)), closedUsd: Number(window.closedUsd.toFixed(2)),
-        reason: 'OPEN_NOT_GREATER_THAN_CLOSED',
+        level: 'info', event: 'papertrade_open_closed_alert_sent', version: VERSION,
+        instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
+        openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
       }));
-      continue;
+      saveState();
     }
-    await send(alertText(window));
-    alertedWindows.add(key);
-    console.log(JSON.stringify({
-      level: 'info', event: 'papertrade_open_closed_alert_sent', version: VERSION,
-      periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
-      openUsd: Number(window.openUsd.toFixed(2)), closedUsd: Number(window.closedUsd.toFixed(2)),
-      differenceUsd: Number((window.openUsd - window.closedUsd).toFixed(2)),
-    }));
-    saveState();
   }
 
   const cutoff = now - 48 * 60 * 60;
@@ -236,7 +225,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'Combined BTC/ETH/other OPEN notionalUsd compared with CLOSED notionalUsd per completed 5-minute window; one alert per qualifying window; no streaks',
+  scope: 'BTC and ETH OPEN notionalUsd compared with CLOSED notionalUsd independently per completed 5-minute window; one alert per instrument per window; no streaks',
 }));
 
 let stopping = false;
