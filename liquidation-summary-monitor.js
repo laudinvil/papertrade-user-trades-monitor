@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const MAX_SEEN = 20_000;
 const MAX_WINDOWS = 288;
-const VERSION = 'papertrade-liquidation-summary-5m-v1';
+const VERSION = 'papertrade-liquidation-summary-5m-v2-no-html-429-logs';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -103,7 +103,11 @@ async function fetchRecentTrades() {
   try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
   const events = body?.data?.events;
   if (!response.ok || body?.ok !== true || !Array.isArray(events)) {
-    const error = new Error(`papertrade-ai get_recent_trades HTTP ${response.status}: ${body?.error?.message || body?.message || rawBody.slice(0, 250) || 'empty or invalid response'}`);
+    // Never include the response body for rate limits: Cloudflare often returns a full HTML page.
+    const safeMessage = response.status === 429
+      ? 'papertrade-ai get_recent_trades HTTP 429 (rate limited; response body suppressed)'
+      : `papertrade-ai get_recent_trades HTTP ${response.status}: ${body?.error?.message || body?.message || (rawBody && body && Object.keys(body).length ? 'invalid response' : 'empty or invalid response')}`;
+    const error = new Error(safeMessage);
     error.status = response.status;
     error.retryAfter = response.headers.get('retry-after');
     throw error;
