@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'papertrade-btc-eth-closed-pnl-two-consecutive-same-direction-v5';
+const VERSION = 'papertrade-open-vs-closed-notional-usd-5m-v6';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -34,9 +34,11 @@ const instrumentOf = event => {
   const value = String(event?.instrument || event?.symbol || event?.market || '').toUpperCase();
   if (value.includes('BTC') || value.includes('BITCOIN')) return 'BTC';
   if (value.includes('ETH') || value.includes('ETHEREUM')) return 'ETH';
-  return null;
+  return 'OTHER';
 };
-const isClosed = event => ['close', 'closed', 'position_closed', 'close_position'].includes(String(event?.kind || event?.type || event?.action || '').toLowerCase());
+const eventKind = event => String(event?.kind || event?.type || event?.action || '').toLowerCase();
+const isOpen = event => ['open', 'opened', 'position_opened', 'open_position'].includes(eventKind(event));
+const isClosed = event => ['close', 'closed', 'position_closed', 'close_position'].includes(eventKind(event));
 
 function loadState() {
   try {
@@ -47,15 +49,10 @@ function loadState() {
       seenEvents: Array.isArray(saved.seenEvents) ? saved.seenEvents.map(String).slice(-MAX_SEEN) : [],
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
-      lastAlertType: ['positive', 'closed_drop', 'period_win_loss_difference_comparison'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
-      lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
-      lastAlertPeriodStart: Number.isFinite(Number(saved.lastAlertPeriodStart)) ? Number(saved.lastAlertPeriodStart) : null,
-      lastAlertClosed: saved.lastAlertClosed == null ? null : Number(saved.lastAlertClosed),
-      streaks: saved.streaks && typeof saved.streaks === 'object' ? saved.streaks : {},
     };
   } catch (error) {
-    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [], lastAlertType: null, lastAlertInstrument: null, lastAlertPeriodStart: null, lastAlertClosed: null, streaks: {} };
-    throw new Error(`Cannot load closed-PnL state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
+    if (error?.code === 'ENOENT') return { initialized: false, seenEvents: [], windows: {}, alertedWindows: [] };
+    throw new Error(`Cannot load OPEN/CLOSED state at ${STATE_PATH}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -70,11 +67,6 @@ function saveState() {
     seenEvents: [...seenEvents].slice(-MAX_SEEN),
     windows: state.windows,
     alertedWindows: [...alertedWindows].slice(-5000),
-    lastAlertType: state.lastAlertType || null,
-    lastAlertInstrument: state.lastAlertInstrument || null,
-    lastAlertPeriodStart: state.lastAlertPeriodStart ?? null,
-    lastAlertClosed: state.lastAlertClosed ?? null,
-    streaks: state.streaks || {},
     savedAt: new Date().toISOString(),
   };
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -119,182 +111,124 @@ function eventKey(event) {
     String(event?.wallet || '').toLowerCase(),
     String(event?.positionId ?? ''),
     String(event?.intentId ?? ''),
-    String(event?.kind ?? event?.type ?? ''),
-    String(event?.ts ?? event?.closedAt ?? ''),
-    String(event?.pnlUsd ?? ''),
+    eventKind(event),
+    String(event?.ts ?? event?.time ?? event?.timestamp ?? ''),
+    String(event?.notionalUsd ?? ''),
   ].join(':');
 }
 
-function addClose(event, periodStart, instrument) {
-  const key = `${periodStart}:${instrument}`;
-  const pnl = Number(event?.pnlUsd);
-  const fee = Number(event?.feeUsd ?? 0);
-  if (!Number.isFinite(pnl) || !Number.isFinite(fee)) return false;
+function addEvent(event, periodStart, instrument, kind) {
+  const notional = Number(event?.notionalUsd);
+  if (!Number.isFinite(notional) || notional < 0) return false;
+  const key = String(periodStart);
   const window = state.windows[key] || {
-    periodStart, instrument, closedTrades: 0, wins: 0, losses: 0, breakeven: 0,
-    grossPnl: 0, fees: 0, netPnl: 0, eventKeys: [],
+    periodStart,
+    openUsd: 0,
+    closedUsd: 0,
+    openCount: 0,
+    closedCount: 0,
+    byInstrument: {},
   };
-  window.closedTrades += 1;
-  window.grossPnl += pnl;
-  window.fees += fee;
-  window.netPnl += pnl - fee;
-  if (pnl - fee > 0) window.wins += 1;
-  else if (pnl - fee < 0) window.losses += 1;
-  else window.breakeven += 1;
-  window.eventKeys.push(eventKey(event));
+  const bucket = window.byInstrument[instrument] || { openUsd: 0, closedUsd: 0, openCount: 0, closedCount: 0 };
+  if (kind === 'open') {
+    window.openUsd += notional;
+    window.openCount += 1;
+    bucket.openUsd += notional;
+    bucket.openCount += 1;
+  } else {
+    window.closedUsd += notional;
+    window.closedCount += 1;
+    bucket.closedUsd += notional;
+    bucket.closedCount += 1;
+  }
+  window.byInstrument[instrument] = bucket;
   state.windows[key] = window;
   return true;
 }
 
-function formatPeriod(start) {
-  return new Date(start * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
-}
-
 function alertText(window) {
   const start = Number(window.periodStart);
-  const slug = window.instrument.toLowerCase() + '-updown-5m-';
-  // Link directly to the market opening at this alert boundary.
-  const firstUrl = `https://polymarket.com/event/${slug}${start + PERIOD_SECONDS}`;
-  const pnl = Number(window.grossPnl ?? 0);
-  const pnlDirection = pnl > 0 ? 'ПЛЮСОВОЙ PNL ↓' : pnl < 0 ? 'МИНУСОВОЙ PNL ↑' : 'PNL = 0';
-  return [
-    `<b>${esc(window.instrument)} — ${pnlDirection}</b>`,
-    `CLOSED: ${window.closedTrades}`,
-    `Плюсовых сделок: ${window.wins} (+${window.closedTrades > 0 ? (window.wins / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
-    `Минусовых сделок: ${window.losses} (-${window.closedTrades > 0 ? (window.losses / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
-    `В ноль: ${window.breakeven} (${window.closedTrades > 0 ? (window.breakeven / window.closedTrades * 100).toFixed(1) : '0.0'}%)`,
-    `PnL: ${esc(money(window.grossPnl))}`,
-
+  const difference = Number(window.openUsd) - Number(window.closedUsd);
+  const lines = [
+    '<b>Papertrade — OPEN больше CLOSED</b>',
+    `Период: ${new Date(start * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`,
+    `OPEN объём: ${esc(money(window.openUsd))} (${window.openCount} сделок)`,
+    `CLOSED объём: ${esc(money(window.closedUsd))} (${window.closedCount} сделок)`,
+    `Разница OPEN − CLOSED: ${esc(money(difference))}`,
     '',
-    `<a href="${firstUrl}">Начинающийся маркет</a>`,
-  ].join('\n');
+    '<b>По инструментам:</b>',
+  ];
+  for (const instrument of ['BTC', 'ETH', 'OTHER']) {
+    const bucket = window.byInstrument?.[instrument];
+    if (!bucket) continue;
+    lines.push(`${esc(instrument)}: OPEN ${esc(money(bucket.openUsd))} / CLOSED ${esc(money(bucket.closedUsd))}`);
+  }
+  return lines.join('\n');
 }
 
-
 async function poll() {
-  let now = Math.floor(Date.now() / 1000);
-  let currentPeriodStart = periodStartFor(now);
   const firstRun = !state.initialized;
   const result = await callTool('get_recent_trades');
-  // Anchor the alert deadline to the time the API response is received.
-  now = Math.floor(Date.now() / 1000);
-  currentPeriodStart = periodStartFor(now);
+  const now = Math.floor(Date.now() / 1000);
+  const currentPeriodStart = periodStartFor(now);
   const events = Array.isArray(result.events) ? result.events : [];
-  let newClosed = 0;
-  let ignored = 0;
 
   for (const event of events) {
-    if (!isClosed(event)) continue;
-    const instrument = instrumentOf(event);
-    const closedAt = unixSeconds(event.closedAt ?? event.ts ?? event.timestamp);
-    if (!instrument || !closedAt) { ignored++; continue; }
-    const periodStart = periodStartFor(closedAt);
-    // On first startup, establish a baseline from the currently active 5-minute window only.
-    // Do not send historical alerts for periods that finished before this process started.
+    const kind = isOpen(event) ? 'open' : isClosed(event) ? 'closed' : null;
+    if (!kind) continue;
+    const timestamp = unixSeconds(event?.ts ?? event?.time ?? event?.timestamp ?? event?.closedAt);
+    if (!timestamp) continue;
+    const periodStart = periodStartFor(timestamp);
+    // On first start, establish a baseline only from the currently active window.
     if (firstRun && periodStart < currentPeriodStart) continue;
     const key = eventKey(event);
     if (seenEvents.has(key)) continue;
-    if (addClose(event, periodStart, instrument)) {
-      seenEvents.add(key);
-      newClosed++;
-    } else {
-      ignored++;
-    }
-  }
-
-  // If a coin had closes in the previous 5-minute window but none in the just-finished
-  // window, add a zero-CLOSED window so the drop to zero can trigger an alert.
-  const justCompletedStart = currentPeriodStart - PERIOD_SECONDS;
-  for (const instrument of ['BTC', 'ETH']) {
-    const currentKey = `${justCompletedStart}:${instrument}`;
-    const previousKey = `${justCompletedStart - PERIOD_SECONDS}:${instrument}`;
-    if (!state.windows[currentKey] && state.windows[previousKey]) {
-      state.windows[currentKey] = {
-        periodStart: justCompletedStart, instrument, closedTrades: 0, wins: 0, losses: 0, breakeven: 0,
-        grossPnl: 0, fees: 0, netPnl: 0, eventKeys: [],
-      };
-    }
+    if (addEvent(event, periodStart, instrumentOf(event), kind)) seenEvents.add(key);
   }
 
   const completed = Object.values(state.windows)
     .filter(window => Number(window.periodStart) + PERIOD_SECONDS <= now)
-    .sort((a, b) => Number(a.periodStart) - Number(b.periodStart) || a.instrument.localeCompare(b.instrument));
+    .sort((a, b) => Number(a.periodStart) - Number(b.periodStart));
 
-  let alertsSent = 0;
   for (const window of completed) {
-    const key = `${window.periodStart}:${window.instrument}`;
-    const grossPnl = Number(window.grossPnl);
-    const diagnostic = {
-      level: 'info', event: 'papertrade_closed_win_loss_difference_window_diagnostic',
-      version: VERSION, windowKey: key, instrument: window.instrument,
-      periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
-      closedTrades: Number(window.closedTrades), grossPnl: Number.isFinite(grossPnl) ? Number(grossPnl.toFixed(2)) : null,
-      fees: Number(Number(window.fees || 0).toFixed(2)),
-      netPnl: Number(Number(window.netPnl || 0).toFixed(2)),
-      wins: Number(window.wins), losses: Number(window.losses), breakeven: Number(window.breakeven),
-      alreadyAlerted: alertedWindows.has(key),
-    };
-    const periodStart = Number(window.periodStart);
-
+    const key = String(window.periodStart);
     if (alertedWindows.has(key)) continue;
-
-    // Only count consecutive completed 5-minute windows with PnL of the same sign.
-    // One alert is sent when a streak first reaches 2; further same-sign windows
-    // do not repeat it. An opposite-sign window starts a new streak at 1; zero resets it.
-    if (periodStart !== currentPeriodStart - PERIOD_SECONDS) {
+    // The sole alert condition: combined OPEN notionalUsd is greater than CLOSED notionalUsd.
+    if (Number(window.openUsd) <= Number(window.closedUsd)) {
       alertedWindows.add(key);
+      console.log(JSON.stringify({
+        level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
+        periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
+        openUsd: Number(window.openUsd.toFixed(2)), closedUsd: Number(window.closedUsd.toFixed(2)),
+        reason: 'OPEN_NOT_GREATER_THAN_CLOSED',
+      }));
       continue;
     }
-    const pnl = Number(window.grossPnl ?? 0);
-    const direction = pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : null;
-    const streak = state.streaks[window.instrument] || { direction: null, count: 0, alerted: false };
-    if (direction === null) {
-      state.streaks[window.instrument] = { direction: null, count: 0, alerted: false };
-      alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: 'ZERO_PNL_RESETS_STREAK', streakDirection: null, streakCount: 0 }));
-      continue;
-    }
-    if (streak.direction === direction) {
-      streak.count = Number(streak.count || 0) + 1;
-    } else {
-      streak.direction = direction;
-      streak.count = 1;
-      streak.alerted = false;
-    }
-    state.streaks[window.instrument] = streak;
-    if (streak.count < 2 || streak.alerted) {
-      alertedWindows.add(key);
-      console.log(JSON.stringify({ ...diagnostic, decision: 'skip', reason: streak.alerted ? 'ALREADY_ALERTED_IN_THIS_DIRECTION_STREAK' : 'ONLY_ONE_CONSECUTIVE_PNL_WINDOW', streakDirection: direction, streakCount: streak.count }));
-      continue;
-    }
-    console.log(JSON.stringify({ ...diagnostic, decision: 'send_attempt', reason: 'TWO_CONSECUTIVE_SAME_DIRECTION_PNL_WINDOWS', streakDirection: direction, streakCount: streak.count }));
     await send(alertText(window));
     alertedWindows.add(key);
-    streak.alerted = true;
-    state.streaks[window.instrument] = streak;
-    alertsSent++;
-    state.lastAlertType = direction;
-    state.lastAlertInstrument = window.instrument;
-    state.lastAlertPeriodStart = periodStart;
+    console.log(JSON.stringify({
+      level: 'info', event: 'papertrade_open_closed_alert_sent', version: VERSION,
+      periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
+      openUsd: Number(window.openUsd.toFixed(2)), closedUsd: Number(window.closedUsd.toFixed(2)),
+      differenceUsd: Number((window.openUsd - window.closedUsd).toFixed(2)),
+    }));
     saveState();
-    console.log(JSON.stringify({ ...diagnostic, decision: 'sent', reason: 'telegram_accepted_two_consecutive_same_direction_pnl_windows', streakDirection: direction, streakCount: streak.count }));
   }
 
-  // Retain only the last 48 hours of window data; keep alert keys for deduplication.
   const cutoff = now - 48 * 60 * 60;
   for (const [key, window] of Object.entries(state.windows)) {
     if (Number(window.periodStart) < cutoff) delete state.windows[key];
   }
   state.initialized = true;
   saveState();
-  // Routine poll summaries are intentionally suppressed to keep runtime logs minimal.
 }
 
 console.log(JSON.stringify({
-  level: 'info', event: 'papertrade_closed_pnl_monitor_started', version: VERSION,
+  level: 'info', event: 'papertrade_open_closed_monitor_started', version: VERSION,
   apiBase: API_BASE, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, statePath: STATE_PATH,
-  scope: 'Papertrade BTC and ETH closed trades grouped by 5-minute close-time window; alert after 2 consecutive same-sign gross-PnL windows, once per streak',
+  scope: 'Combined BTC/ETH/other OPEN notionalUsd compared with CLOSED notionalUsd per completed 5-minute window; one alert per qualifying window; no streaks',
 }));
+
 let stopping = false;
 async function loop() {
   while (!stopping) {
@@ -303,8 +237,7 @@ async function loop() {
     catch (error) {
       const cause = error && typeof error === 'object' ? error.cause : null;
       console.error(JSON.stringify({
-        level: 'error',
-        event: 'papertrade_closed_pnl_poll_failed',
+        level: 'error', event: 'papertrade_open_closed_poll_failed',
         message: error instanceof Error ? error.message : String(error),
         errorName: error instanceof Error ? error.name : typeof error,
         errorCode: error && typeof error === 'object' ? (error.code ?? error.errno ?? null) : null,
