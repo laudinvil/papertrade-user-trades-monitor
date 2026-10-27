@@ -2,13 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const API_BASE = (process.env.PAPERTRADE_API_BASE_URL || 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools').replace(/\/+$/, '');
-const POLL_MS = 1_000;
+const POLL_MS = 10_000;
+const RATE_LIMIT_BACKOFF_MS = 60_000;
 const STATE_PATH = process.env.PAPERTRADE_CLOSED_PNL_STATE_PATH || '/data/papertrade-closed-pnl-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'closed-greater-than-open-arrow-82-percent-v16';
+const VERSION = 'closed-greater-than-open-arrow-82-percent-rate-limit-backoff-v17';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -238,8 +239,10 @@ let stopping = false;
 async function loop() {
   while (!stopping) {
     const started = Date.now();
+    let rateLimited = false;
     try { await poll(); }
     catch (error) {
+      rateLimited = /HTTP 429\b/.test(error instanceof Error ? error.message : String(error));
       const cause = error && typeof error === 'object' ? error.cause : null;
       console.error(JSON.stringify({
         level: 'error', event: 'papertrade_open_closed_poll_failed',
@@ -252,7 +255,7 @@ async function loop() {
         stack: error instanceof Error ? error.stack : null,
       }));
     }
-    await sleep(Math.max(0, POLL_MS - (Date.now() - started)));
+    await sleep(rateLimited ? RATE_LIMIT_BACKOFF_MS : Math.max(0, POLL_MS - (Date.now() - started)));
   }
 }
 process.on('SIGTERM', () => { stopping = true; });
