@@ -9,5 +9,7 @@
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {}
+  "dependencies": {
+    "papertrade-sdk": "github:nirholas/papertrade-sdk"
+  }
 }
