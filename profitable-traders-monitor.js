@@ -247,11 +247,12 @@ async function loop() {
   while (!stopping) {
     const started = Date.now();
     let rateLimited = false;
+    let retryDelayMs = RATE_LIMIT_BACKOFF_MS;
     try { await poll(); }
     catch (error) {
       rateLimited = Number(error?.status) === 429 || /HTTP 429\\b/.test(error instanceof Error ? error.message : String(error));
       const retryAfterSeconds = Number(error?.retryAfter);
-      const retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      retryDelayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
         ? retryAfterSeconds * 1000
         : RATE_LIMIT_BACKOFF_MS;
       const cause = error && typeof error === 'object' ? error.cause : null;
