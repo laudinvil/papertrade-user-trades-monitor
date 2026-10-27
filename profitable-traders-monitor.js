@@ -47,7 +47,7 @@ function loadState() {
       seenEvents: Array.isArray(saved.seenEvents) ? saved.seenEvents.map(String).slice(-MAX_SEEN) : [],
       windows: saved.windows && typeof saved.windows === 'object' ? saved.windows : {},
       alertedWindows: Array.isArray(saved.alertedWindows) ? saved.alertedWindows.map(String) : [],
-      lastAlertType: ['positive', 'closed_drop'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
+      lastAlertType: ['positive', 'closed_drop', 'period_win_loss_difference_comparison'].includes(saved.lastAlertType) ? saved.lastAlertType : null,
       lastAlertInstrument: ['BTC', 'ETH'].includes(saved.lastAlertInstrument) ? saved.lastAlertInstrument : null,
       lastAlertPeriodStart: Number.isFinite(Number(saved.lastAlertPeriodStart)) ? Number(saved.lastAlertPeriodStart) : null,
       lastAlertClosed: saved.lastAlertClosed == null ? null : Number(saved.lastAlertClosed),
