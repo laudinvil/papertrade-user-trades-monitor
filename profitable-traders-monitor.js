@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const PERIOD_SECONDS = 300;
 const MAX_SEEN = 10_000;
-const VERSION = 'open-vs-closed-notional-single-qualifier-percent-5m-link-v10';
+const VERSION = 'open-vs-closed-notional-min-0.15-percent-5m-link-v11';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -190,9 +190,13 @@ async function poll() {
     const evaluated = ['BTC', 'ETH']
       .map(instrument => ({ instrument, bucket: window.byInstrument[instrument] }))
       .filter(item => item.bucket && !alertedWindows.has(`${window.periodStart}:${item.instrument}`));
-    const eligible = evaluated.filter(({ bucket }) =>
-      Number(bucket.openUsd) > Number(bucket.closedUsd)
-    );
+    const eligible = evaluated.filter(({ bucket }) => {
+      const openUsd = Number(bucket.openUsd);
+      const closedUsd = Number(bucket.closedUsd);
+      if (!(openUsd > closedUsd)) return false;
+      const excessPercent = closedUsd > 0 ? ((openUsd - closedUsd) / closedUsd) * 100 : Infinity;
+      return excessPercent >= 0.15;
+    });
 
     for (const { instrument, bucket } of evaluated) {
       if (Number(bucket.openUsd) <= Number(bucket.closedUsd)) {
@@ -200,7 +204,7 @@ async function poll() {
           level: 'info', event: 'papertrade_open_closed_window_skipped', version: VERSION,
           instrument, periodStart: new Date(Number(window.periodStart) * 1000).toISOString(),
           openUsd: Number(bucket.openUsd.toFixed(2)), closedUsd: Number(bucket.closedUsd.toFixed(2)),
-          reason: 'OPEN_NOT_GREATER_THAN_CLOSED',
+          reason: 'OPEN_NOT_GREATER_THAN_CLOSED_OR_BELOW_0_15_PERCENT',
         }));
         alertedWindows.add(`${window.periodStart}:${instrument}`);
       }
