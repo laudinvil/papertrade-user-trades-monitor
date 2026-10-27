@@ -150,7 +150,7 @@ function alertText(window, previousWindow) {
     '<b>' + window.instrument + ' OPEN · 5M' + countArrow + '</b>',
     'LONG: ' + window.longCount + ' — ' + money(window.longUsd) + ' (' + percent(window.longUsd, totalUsd) + ')',
     'SHORT: ' + window.shortCount + ' — ' + money(window.shortUsd) + ' (' + percent(window.shortUsd, totalUsd) + ')',
-    'Всего сделок: ' + totalCount + ' (предыдущий период: ' + previousCount + ')',
+    'Всего сделок: ' + totalCount + ' (' + previousCount + ')',
     '',
     '<a href="' + marketUrl + '">Начинающийся маркет</a>',
   ].join('\n');
