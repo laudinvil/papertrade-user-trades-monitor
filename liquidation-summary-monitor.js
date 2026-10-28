@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-liquidation-direction-5m-v4-nearest-cluster-no-threshold';
+const VERSION = 'papertrade-price-movement-5m-v1';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -16,7 +16,6 @@ const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const priceText = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percentText = value => `${value > 0 ? '+' : ''}${value.toFixed(3)}%`;
-const usdText = value => `${Number(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
 function loadState() {
   try {
@@ -73,21 +72,7 @@ async function fetchHeatmap(market) {
   }
   const asOfCandidates = [body?.asOfMs, body?.data?.asOfMs, body?.heatmap?.asOfMs, body?.result?.asOfMs];
   const asOfMs = asOfCandidates.map(Number).find(value => Number.isFinite(value) && value > 0) || Date.now();
-  // The top-level buckets cover tracked wallets only and can be sparse. The API's
-  // protocol map covers the full published liquidation map, so use it as fallback.
-  const bucketCandidates = [
-    body?.protocol?.buckets, body?.buckets,
-    body?.data?.protocol?.buckets, body?.data?.buckets,
-    body?.heatmap?.protocol?.buckets, body?.heatmap?.buckets,
-    body?.result?.protocol?.buckets, body?.result?.buckets,
-  ];
-  const rawBuckets = bucketCandidates.find(value => Array.isArray(value) && value.length > 0) || [];
-  const buckets = rawBuckets.map(bucket => ({
-    lo: Number(bucket?.lo), hi: Number(bucket?.hi), mid: Number(bucket?.mid),
-    longNotional: Number(bucket?.longNotional || 0), shortNotional: Number(bucket?.shortNotional || 0),
-    longCount: Number(bucket?.longCount || 0), shortCount: Number(bucket?.shortCount || 0),
-  })).filter(bucket => Number.isFinite(bucket.mid) && bucket.mid > 0);
-  return { market, price: markPrice, asOfMs, buckets };
+  return { market, price: markPrice, asOfMs };
 }
 
 async function send(message) {
@@ -105,16 +90,8 @@ function marketLink(market, periodStart) {
   return `https://polymarket.com/event/${market.toLowerCase()}-updown-5m-${periodStart}`;
 }
 
-function nearestCluster(buckets, side, price) {
-  return (Array.isArray(buckets) ? buckets : [])
-    .map(bucket => ({
-      ...bucket,
-      level: Number(bucket.mid),
-      notional: Number(side === 'LONG' ? bucket.longNotional : bucket.shortNotional) || 0,
-    }))
-    .filter(bucket => Number.isFinite(bucket.level) && bucket.level > 0 && bucket.notional > 0)
-    .map(bucket => ({ ...bucket, distancePercent: Math.abs(bucket.level - price) / price * 100 }))
-    .sort((a, b) => a.distancePercent - b.distancePercent)[0] || null;
+function utcTime(seconds) {
+  return new Date(seconds * 1000).toISOString().slice(11, 16);
 }
 
 function formatMarketLine(market, window, periodStart) {
@@ -122,29 +99,13 @@ function formatMarketLine(market, window, periodStart) {
   const last = Number(window?.lastPrice);
   if (!window || !Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) return null;
 
-  const buckets = Array.isArray(window.buckets) ? window.buckets : [];
-  const firstBuckets = Array.isArray(window.firstBuckets) ? window.firstBuckets : buckets;
-  const longAtStart = nearestCluster(firstBuckets, 'LONG', first);
-  const shortAtStart = nearestCluster(firstBuckets, 'SHORT', first);
-  const longAtEnd = nearestCluster(buckets, 'LONG', last);
-  const shortAtEnd = nearestCluster(buckets, 'SHORT', last);
-
-  const improvements = [
-    longAtEnd && longAtStart ? { side: 'LONG', cluster: longAtEnd, startDistance: longAtStart.distancePercent, endDistance: longAtEnd.distancePercent, improvement: longAtStart.distancePercent - longAtEnd.distancePercent } : null,
-    shortAtEnd && shortAtStart ? { side: 'SHORT', cluster: shortAtEnd, startDistance: shortAtStart.distancePercent, endDistance: shortAtEnd.distancePercent, improvement: shortAtStart.distancePercent - shortAtEnd.distancePercent } : null,
-  ].filter(item => item && item.improvement > 0).sort((a, b) => b.improvement - a.improvement);
-
-  const closest = improvements[0];
-  if (!closest) return null;
-
   const pct = (last - first) / first * 100;
-  const arrow = closest.side === 'LONG' ? '⬇️' : '⬆️';
+  const direction = pct < 0 ? '⬇️ ВНИЗ' : pct > 0 ? '⬆️ ВВЕРХ' : 'БЕЗ ИЗМЕНЕНИЙ';
   return [
-    `<b>${market} ${arrow} СТАЛА БЛИЖЕ К ${closest.side}-КЛАСТЕРУ</b>`,
-    `Цена 5m: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
-    `Кластер ${closest.side}: ${priceText(closest.cluster.level)}; дистанция ${closest.startDistance.toFixed(3)}% → ${closest.endDistance.toFixed(3)}%; объём ${usdText(closest.cluster.notional)}`,
+    `<b>${market} ${direction}</b>`,
+    `Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
     `<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`,
-  ].join('\n');
+  ].join('\\n');
 }
 
 async function finishPeriod(periodStart, window) {
@@ -157,22 +118,33 @@ async function finishPeriod(periodStart, window) {
   if (!hasAnyPrice) {
     window.alerted = true;
     console.warn(JSON.stringify({
-      level: 'warn', event: 'liquidation_direction_alert_skipped_no_prices', version: VERSION,
+      level: 'warn', event: 'price_movement_alert_skipped_no_prices', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       periodEnd: new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString(),
       reason: 'No valid BTC or ETH markPrice snapshots were recorded for this period',
     }));
     return;
   }
-  const confirmedMarkets = [
+  const periodHeader = `Период UTC: ${utcTime(periodStart)}–${utcTime(periodStart + PERIOD_SECONDS)}`;
+  const marketLines = [
     formatMarketLine('BTC', window.BTC, periodStart),
     formatMarketLine('ETH', window.ETH, periodStart),
   ].filter(Boolean);
 
-  if (confirmedMarkets.length === 0) {
+  if (marketLines.length === 0) {
     window.alerted = true;
     console.log(JSON.stringify({
-      level: 'info', event: 'liquidation_direction_alert_skipped_unconfirmed', version: VERSION,
+      level: 'info', event: 'price_movement_alert_skipped_no_prices', version: VERSION,
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      reason: 'No valid BTC or ETH markPrice snapshots were recorded for this period',
+    }));
+    return;
+  }
+
+  await send([periodHeader, ...marketLines].join('\\n'));
+  window.alerted = true;
+    console.log(JSON.stringify({
+      level: 'info', event: 'price_movement_alert_skipped_unconfirmed', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       reason: 'Neither BTC nor ETH had a confirmed LONG or SHORT signal',
     }));
@@ -182,7 +154,7 @@ async function finishPeriod(periodStart, window) {
   await send(confirmedMarkets.join('\n'));
   window.alerted = true;
   console.log(JSON.stringify({
-    level: 'info', event: 'liquidation_direction_alert_sent', version: VERSION,
+    level: 'info', event: 'price_movement_alert_sent', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     periodEnd: new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString(),
     prices: Object.fromEntries(['BTC', 'ETH'].map(m => [m, {
@@ -240,7 +212,7 @@ async function poll() {
       }
     }
     saveState();
-    console.log(JSON.stringify({ level: 'info', event: 'liquidation_direction_baseline_set', version: VERSION, periodStart: new Date(currentStart * 1000).toISOString(), prices: Object.fromEntries(Object.entries(snapshots).map(([m, s]) => [m, s.price])) }));
+    console.log(JSON.stringify({ level: 'info', event: 'price_movement_baseline_set', version: VERSION, periodStart: new Date(currentStart * 1000).toISOString(), prices: Object.fromEntries(Object.entries(snapshots).map(([m, s]) => [m, s.price])) }));
     if (Object.keys(errors).length) throw new Error(Object.values(errors).join('; '));
     return;
   }
@@ -273,7 +245,7 @@ async function poll() {
   }
   saveState();
   console.log(JSON.stringify({
-    level: 'info', event: 'liquidation_direction_snapshot', version: VERSION,
+    level: 'info', event: 'price_movement_snapshot', version: VERSION,
     source: 'papertrade liquidation heatmap markPrice', pollMs: POLL_MS,
     periodStart: new Date(currentStart * 1000).toISOString(),
     prices: Object.fromEntries(['BTC', 'ETH'].map(m => [m, snapshots[m]?.price ?? null])),
@@ -283,9 +255,9 @@ async function poll() {
 }
 
 console.log(JSON.stringify({
-  level: 'info', event: 'liquidation_direction_monitor_started', version: VERSION,
+  level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'send only if BTC or ETH moved closer to a LONG or SHORT liquidation cluster during the 5-minute period; no distance threshold',
+  statePath: STATE_PATH, alert: 'report BTC and ETH price changes across each completed 5-minute period',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
@@ -300,7 +272,7 @@ async function loop() {
     } catch (error) {
       consecutiveFailures++;
       console.error(JSON.stringify({
-        level: 'error', event: 'liquidation_direction_poll_failed',
+        level: 'error', event: 'price_movement_poll_failed',
         consecutiveFailures, message: (error instanceof Error ? error.message : String(error)).slice(0, 300),
       }));
     }
