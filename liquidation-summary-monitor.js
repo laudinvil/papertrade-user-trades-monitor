@@ -16,7 +16,6 @@ const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const priceText = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percentText = value => `${value > 0 ? '+' : ''}${value.toFixed(3)}%`;
-const CLUSTER_MAX_DISTANCE_PERCENT = 0.5;
 const usdText = value => `${Number(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
 function loadState() {
@@ -106,38 +105,46 @@ function marketLink(market, periodStart) {
   return `https://polymarket.com/event/${market.toLowerCase()}-updown-5m-${periodStart}`;
 }
 
+function nearestCluster(buckets, side, price) {
+  return (Array.isArray(buckets) ? buckets : [])
+    .map(bucket => ({
+      ...bucket,
+      level: Number(bucket.mid),
+      notional: Number(side === 'LONG' ? bucket.longNotional : bucket.shortNotional) || 0,
+    }))
+    .filter(bucket => Number.isFinite(bucket.level) && bucket.level > 0 && bucket.notional > 0)
+    .map(bucket => ({ ...bucket, distancePercent: Math.abs(bucket.level - price) / price * 100 }))
+    .sort((a, b) => a.distancePercent - b.distancePercent)[0] || null;
+}
+
 function formatMarketLine(market, window, periodStart) {
   const first = Number(window?.firstPrice);
   const last = Number(window?.lastPrice);
-  if (!window || !Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) {
-    return `<b>${market}</b> — недостаточно данных за 5m\n<a href="${marketLink(market, periodStart)}">Polymarket ${market} 5m</a>`;
-  }
-  const delta = last - first;
-  const pct = delta / first * 100;
-  const trend = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+  if (!window || !Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) return null;
+
   const buckets = Array.isArray(window.buckets) ? window.buckets : [];
-  const candidateClusters = buckets.map(bucket => {
-    const level = bucket.mid;
-    const distancePercent = Math.abs(level - last) / last * 100;
-    const above = level > last;
-    const notional = trend === 'up' ? bucket.shortNotional : bucket.longNotional;
-    const correctSide = trend === 'up' ? above : level < last;
-    return { ...bucket, level, distancePercent, notional, correctSide };
-  }).filter(cluster => trend !== 'flat' && cluster.correctSide && cluster.distancePercent <= CLUSTER_MAX_DISTANCE_PERCENT && cluster.notional > 0)
-    .sort((a, b) => a.distancePercent - b.distancePercent);
-  const cluster = candidateClusters[0];
-  const confirmed = Boolean(cluster);
-  const arrow = confirmed ? (trend === 'up' ? '⬆️' : '⬇️') : '↔️';
-  const direction = confirmed ? (trend === 'up' ? 'LONG ПОДТВЕРЖДЁН' : 'SHORT ПОДТВЕРЖДЁН') : 'НЕТ ПОДТВЕРЖДЕНИЯ';
-  const clusterLine = cluster
-    ? `Кластер ${trend === 'up' ? 'SHORT выше' : 'LONG ниже'}: ${priceText(cluster.level)} (дистанция ${cluster.distancePercent.toFixed(3)}%, объём ${usdText(cluster.notional)})`
-    : `Нет подходящего кластера в пределах ${CLUSTER_MAX_DISTANCE_PERCENT}% для подтверждения движения`;
+  const firstBuckets = Array.isArray(window.firstBuckets) ? window.firstBuckets : buckets;
+  const longAtStart = nearestCluster(firstBuckets, 'LONG', first);
+  const shortAtStart = nearestCluster(firstBuckets, 'SHORT', first);
+  const longAtEnd = nearestCluster(buckets, 'LONG', last);
+  const shortAtEnd = nearestCluster(buckets, 'SHORT', last);
+
+  const improvements = [
+    longAtEnd && longAtStart ? { side: 'LONG', cluster: longAtEnd, startDistance: longAtStart.distancePercent, endDistance: longAtEnd.distancePercent, improvement: longAtStart.distancePercent - longAtEnd.distancePercent } : null,
+    shortAtEnd && shortAtStart ? { side: 'SHORT', cluster: shortAtEnd, startDistance: shortAtStart.distancePercent, endDistance: shortAtEnd.distancePercent, improvement: shortAtStart.distancePercent - shortAtEnd.distancePercent } : null,
+  ].filter(item => item && item.improvement > 0).sort((a, b) => b.improvement - a.improvement);
+
+  const closest = improvements[0];
+  if (!closest) return null;
+
+  const pct = (last - first) / first * 100;
+  const arrow = closest.side === 'LONG' ? '⬆️' : '⬇️';
   return [
-    `<b>${market} ${arrow} ${direction}</b>`,
+    `<b>${market} ${arrow} СТАЛА БЛИЖЕ К ${closest.side}-КЛАСТЕРУ</b>`,
     `Цена 5m: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
-    clusterLine,
+    `Кластер ${closest.side}: ${priceText(closest.cluster.level)}; дистанция ${closest.startDistance.toFixed(3)}% → ${closest.endDistance.toFixed(3)}%; объём ${usdText(closest.cluster.notional)}`,
     `<a href="${marketLink(market, periodStart)}">Polymarket ${market} 5m</a>`,
-  ].join('\n');
+  ].join('\\n');
 }
 
 async function finishPeriod(periodStart, window) {
@@ -157,12 +164,9 @@ async function finishPeriod(periodStart, window) {
     }));
     return;
   }
-  const btcLine = formatMarketLine('BTC', window.BTC, periodStart);
-  const ethLine = formatMarketLine('ETH', window.ETH, periodStart);
-  const confirmedLine = line => /<b>[^<]+ (?:⬆️ LONG ПОДТВЕРЖДЁН|⬇️ SHORT ПОДТВЕРЖДЁН)<\/b>/.test(line);
   const confirmedMarkets = [
-    confirmedLine(btcLine) ? btcLine : null,
-    confirmedLine(ethLine) ? ethLine : null,
+    formatMarketLine('BTC', window.BTC, periodStart),
+    formatMarketLine('ETH', window.ETH, periodStart),
   ].filter(Boolean);
 
   if (confirmedMarkets.length === 0) {
@@ -215,6 +219,7 @@ async function poll() {
           lastAtMs: snapshots[market].asOfMs,
           samples: 1,
           buckets: snapshots[market].buckets,
+          firstBuckets: snapshots[market].buckets,
         };
       }
     }
@@ -245,6 +250,7 @@ async function poll() {
         lastAtMs: snapshot.asOfMs,
         samples: 1,
         buckets: snapshot.buckets,
+        firstBuckets: snapshot.buckets,
       };
     } else {
       item.lastPrice = snapshot.price;
@@ -271,7 +277,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'liquidation_direction_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'one Telegram message after each completed 5-minute period; arrow only when 5m price direction is confirmed by a nearby matching liquidation cluster (within 0.5%)',
+  statePath: STATE_PATH, alert: 'send only if BTC or ETH moved closer to a LONG or SHORT liquidation cluster during the 5-minute period; no distance threshold',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
