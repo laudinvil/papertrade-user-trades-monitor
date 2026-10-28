@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
 const PERIOD_SECONDS = 300;
-const POLL_MS = Math.max(30_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 60_000));
+const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 10_000));
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
@@ -195,6 +195,22 @@ async function finishPeriod(periodStart, window) {
 async function poll() {
   const now = Math.floor(Date.now() / 1000);
   const currentStart = periodStartFor(now);
+
+  // Finalize the previous 5-minute window immediately when the boundary is
+  // detected, before making fresh HTTP requests for the new period.
+  if (state.initialized && currentStart !== Number(state.currentPeriod)) {
+    const previousStart = Number(state.currentPeriod);
+    const previous = state.windows[String(previousStart)];
+    if (previousStart === currentStart - PERIOD_SECONDS && previous && !previous.alerted) {
+      await finishPeriod(previousStart, previous);
+    }
+    state.currentPeriod = currentStart;
+    state.windows[String(currentStart)] = {
+      periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false,
+    };
+    saveState();
+  }
+
   const snapshots = {};
   const errors = {};
   for (const market of ['BTC', 'ETH']) {
@@ -227,14 +243,6 @@ async function poll() {
     console.log(JSON.stringify({ level: 'info', event: 'liquidation_direction_baseline_set', version: VERSION, periodStart: new Date(currentStart * 1000).toISOString(), prices: Object.fromEntries(Object.entries(snapshots).map(([m, s]) => [m, s.price])) }));
     if (Object.keys(errors).length) throw new Error(Object.values(errors).join('; '));
     return;
-  }
-
-  const previousStart = Number(state.currentPeriod);
-  if (currentStart !== previousStart) {
-    const previous = state.windows[String(previousStart)];
-    if (previousStart === currentStart - PERIOD_SECONDS && previous && !previous.alerted) await finishPeriod(previousStart, previous);
-    state.currentPeriod = currentStart;
-    state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false };
   }
 
   const active = state.windows[String(currentStart)] || (state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false });
