@@ -127,13 +127,10 @@ async function finishPeriod(periodStart, window) {
   const start = new Date(periodStart * 1000).toISOString().slice(11, 16);
   const end = new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString().slice(11, 16);
   await send([
-    '<b>ДВИЖЕНИЕ ЦЕНЫ — 5M</b>',
-    `Период UTC: ${start}–${end}`,
-    '',
     formatMarketLine('BTC', window.BTC, periodStart),
     '',
     formatMarketLine('ETH', window.ETH, periodStart),
-  ].join('\n'));
+  ].join('\\n'));
   window.alerted = true;
   console.log(JSON.stringify({
     level: 'info', event: 'liquidation_direction_alert_sent', version: VERSION,
