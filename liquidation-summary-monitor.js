@@ -105,6 +105,7 @@ function getMarketMovement(market, window, periodStart) {
   const label = direction === 'down' ? '⬇️ ВНИЗ' : direction === 'up' ? '⬆️ ВВЕРХ' : 'БЕЗ ИЗМЕНЕНИЙ';
   const message = `<b>${market} ${label}</b>
 Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})
+
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`
   return { direction, pct, message, first, last };
 }
