@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-liquidation-direction-5m-v2-skip-empty-period';
+const VERSION = 'papertrade-liquidation-direction-5m-v3-heatmap-price-confirmation';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -16,6 +16,8 @@ const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const priceText = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percentText = value => `${value > 0 ? '+' : ''}${value.toFixed(3)}%`;
+const CLUSTER_MAX_DISTANCE_PERCENT = 0.5;
+const usdText = value => `${Number(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
 function loadState() {
   try {
@@ -72,7 +74,14 @@ async function fetchHeatmap(market) {
   }
   const asOfCandidates = [body?.asOfMs, body?.data?.asOfMs, body?.heatmap?.asOfMs, body?.result?.asOfMs];
   const asOfMs = asOfCandidates.map(Number).find(value => Number.isFinite(value) && value > 0) || Date.now();
-  return { market, price: markPrice, asOfMs };
+  const bucketCandidates = [body?.buckets, body?.data?.buckets, body?.heatmap?.buckets, body?.result?.buckets];
+  const rawBuckets = bucketCandidates.find(Array.isArray) || [];
+  const buckets = rawBuckets.map(bucket => ({
+    lo: Number(bucket?.lo), hi: Number(bucket?.hi), mid: Number(bucket?.mid),
+    longNotional: Number(bucket?.longNotional || 0), shortNotional: Number(bucket?.shortNotional || 0),
+    longCount: Number(bucket?.longCount || 0), shortCount: Number(bucket?.shortCount || 0),
+  })).filter(bucket => Number.isFinite(bucket.mid) && bucket.mid > 0);
+  return { market, price: markPrice, asOfMs, buckets };
 }
 
 async function send(message) {
@@ -98,13 +107,30 @@ function formatMarketLine(market, window, periodStart) {
   }
   const delta = last - first;
   const pct = delta / first * 100;
-  const arrow = delta > 0 ? '⬆️' : delta < 0 ? '⬇️' : '↔️';
-  const direction = delta > 0 ? 'ВВЕРХ' : delta < 0 ? 'ВНИЗ' : 'БЕЗ ИЗМЕНЕНИЯ';
+  const trend = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+  const buckets = Array.isArray(window.buckets) ? window.buckets : [];
+  const candidateClusters = buckets.map(bucket => {
+    const level = bucket.mid;
+    const distancePercent = Math.abs(level - last) / last * 100;
+    const above = level > last;
+    const notional = trend === 'up' ? bucket.shortNotional : bucket.longNotional;
+    const correctSide = trend === 'up' ? above : level < last;
+    return { ...bucket, level, distancePercent, notional, correctSide };
+  }).filter(cluster => trend !== 'flat' && cluster.correctSide && cluster.distancePercent <= CLUSTER_MAX_DISTANCE_PERCENT && cluster.notional > 0)
+    .sort((a, b) => a.distancePercent - b.distancePercent);
+  const cluster = candidateClusters[0];
+  const confirmed = Boolean(cluster);
+  const arrow = confirmed ? (trend === 'up' ? '⬆️' : '⬇️') : '↔️';
+  const direction = confirmed ? (trend === 'up' ? 'LONG ПОДТВЕРЖДЁН' : 'SHORT ПОДТВЕРЖДЁН') : 'НЕТ ПОДТВЕРЖДЕНИЯ';
+  const clusterLine = cluster
+    ? `Кластер ${trend === 'up' ? 'SHORT выше' : 'LONG ниже'}: ${priceText(cluster.level)} (дистанция ${cluster.distancePercent.toFixed(3)}%, объём ${usdText(cluster.notional)})`
+    : `Нет подходящего кластера в пределах ${CLUSTER_MAX_DISTANCE_PERCENT}% для подтверждения движения`;
   return [
     `<b>${market} ${arrow} ${direction}</b>`,
-    `Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
-    `<a href="${marketLink(market, window.periodStart)}">Polymarket ${market} 5m</a>`,
-  ].join('\n');
+    `Цена 5m: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
+    clusterLine,
+    `<a href="${marketLink(market, periodStart)}">Polymarket ${market} 5m</a>`,
+  ].join('\\n');
 }
 
 async function finishPeriod(periodStart, window) {
@@ -169,6 +195,7 @@ async function poll() {
           firstAtMs: snapshots[market].asOfMs,
           lastAtMs: snapshots[market].asOfMs,
           samples: 1,
+          buckets: snapshots[market].buckets,
         };
       }
     }
@@ -198,9 +225,11 @@ async function poll() {
         firstAtMs: snapshot.asOfMs,
         lastAtMs: snapshot.asOfMs,
         samples: 1,
+        buckets: snapshot.buckets,
       };
     } else {
       item.lastPrice = snapshot.price;
+      item.buckets = snapshot.buckets;
       item.lastAtMs = snapshot.asOfMs;
       item.samples = Number(item.samples || 0) + 1;
     }
@@ -223,7 +252,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'liquidation_direction_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'one Telegram message after each completed 5-minute period; arrow from first to last heatmap markPrice',
+  statePath: STATE_PATH, alert: 'one Telegram message after each completed 5-minute period; arrow only when 5m price direction is confirmed by a nearby matching liquidation cluster (within 0.5%)',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
