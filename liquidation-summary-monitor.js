@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-liquidation-direction-5m-v1-heatmap-mark-price';
+const VERSION = 'papertrade-liquidation-direction-5m-v2-skip-empty-period';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -109,6 +109,21 @@ function formatMarketLine(market, window, periodStart) {
 
 async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
+  const hasAnyPrice = ['BTC', 'ETH'].some(market => {
+    const first = Number(window[market]?.firstPrice);
+    const last = Number(window[market]?.lastPrice);
+    return Number.isFinite(first) && Number.isFinite(last) && first > 0 && last > 0;
+  });
+  if (!hasAnyPrice) {
+    window.alerted = true;
+    console.warn(JSON.stringify({
+      level: 'warn', event: 'liquidation_direction_alert_skipped_no_prices', version: VERSION,
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      periodEnd: new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString(),
+      reason: 'No valid BTC or ETH markPrice snapshots were recorded for this period',
+    }));
+    return;
+  }
   const start = new Date(periodStart * 1000).toISOString().slice(11, 16);
   const end = new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString().slice(11, 16);
   await send([
