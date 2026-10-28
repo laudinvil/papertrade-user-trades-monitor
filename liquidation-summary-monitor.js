@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-eth-018-btc-012-both-directions-v12';
+const VERSION = 'papertrade-price-movement-eth-021-btc-012-both-directions-v13';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -120,7 +120,7 @@ async function finishPeriod(periodStart, window) {
   const qualifiesForAlert = (market, movement) => {
     if (!movement) return false;
     return market === 'ETH'
-      ? (movement.pct >= 0.18 || movement.pct <= -0.18)
+      ? (movement.pct >= 0.21 || movement.pct <= -0.21)
       : (movement.pct >= 0.12 || movement.pct <= -0.12);
   };
   const candidates = {};
@@ -177,10 +177,10 @@ async function finishPeriod(periodStart, window) {
     }
 
     const qualifies = market === 'ETH'
-      ? (movement.pct >= 0.18 || movement.pct <= -0.18)
+      ? (movement.pct >= 0.21 || movement.pct <= -0.21)
       : (movement.pct >= 0.12 || movement.pct <= -0.12);
-    const thresholdPctUp = market === 'ETH' ? 0.18 : 0.12;
-    const thresholdPctDown = market === 'ETH' ? -0.18 : -0.12;
+    const thresholdPctUp = market === 'ETH' ? 0.21 : 0.12;
+    const thresholdPctDown = market === 'ETH' ? -0.21 : -0.12;
 
     if (!qualifies) {
       window.marketAlerted[market] = true;
@@ -319,7 +319,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'thresholds: ETH >= +0.18% upward or <= -0.18% downward; BTC >= +0.12% upward or <= -0.12% downward; no downside cap; if both BTC and ETH qualify in one period, suppress both; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'thresholds: ETH >= +0.21% upward or <= -0.21% downward; BTC >= +0.12% upward or <= -0.12% downward; no downside cap; if both BTC and ETH qualify in one period, suppress both; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
