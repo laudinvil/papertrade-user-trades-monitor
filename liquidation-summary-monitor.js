@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-5m-independent-threshold-0.1pct-boundary-v2';
+const VERSION = 'papertrade-price-movement-5m-independent-threshold-0.099pct-boundary-v3';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -143,13 +143,13 @@ async function finishPeriod(periodStart, window) {
       continue;
     }
 
-    if (Math.abs(movement.pct) < 0.1) {
+    if (Math.abs(movement.pct) < 0.099) {
       window.marketAlerted[market] = true;
       saveState();
       console.log(JSON.stringify({
         level: 'info', event: 'price_movement_alert_skipped', version: VERSION,
         market, reason: 'below_threshold', changePct: movement.pct,
-        thresholdPct: 0.1, periodStart: new Date(periodStart * 1000).toISOString(),
+        thresholdPct: 0.099, periodStart: new Date(periodStart * 1000).toISOString(),
       }));
       continue;
     }
@@ -163,7 +163,7 @@ async function finishPeriod(periodStart, window) {
     console.log(JSON.stringify({
       level: 'info', event: 'price_movement_alert_sent', version: VERSION,
       market, direction: movement.direction, changePct: movement.pct,
-      thresholdPct: 0.1, periodStart: new Date(periodStart * 1000).toISOString(),
+      thresholdPct: 0.099, periodStart: new Date(periodStart * 1000).toISOString(),
     }));
   }
 
@@ -280,7 +280,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'send independent BTC/ETH alerts when absolute first-to-last markPrice movement is >= 0.1% in either direction; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'send independent BTC/ETH alerts when absolute first-to-last markPrice movement is >= 0.099% in either direction; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
