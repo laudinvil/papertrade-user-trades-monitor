@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-5m-second-reversal-v6';
+const VERSION = 'papertrade-price-movement-5m-reversal-v5-spaced-link';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -116,12 +116,12 @@ async function finishPeriod(periodStart, window) {
   state.streaks ||= {};
   for (const market of ['BTC', 'ETH']) {
     const movement = getMarketMovement(market, window[market], periodStart);
-    const previous = state.streaks[market] || { direction: null, lastPeriodStart: null, reversals: 0 };
+    const previous = state.streaks[market] || { direction: null, lastPeriodStart: null };
     if (Number(previous.lastPeriodStart) === periodStart) continue;
 
     const isConsecutive = Number(previous.lastPeriodStart) === periodStart - PERIOD_SECONDS;
     if (!movement || movement.direction === 'flat') {
-      state.streaks[market] = { direction: null, lastPeriodStart: periodStart, reversals: 0 };
+      state.streaks[market] = { direction: null, lastPeriodStart: periodStart };
       saveState();
       continue;
     }
@@ -129,26 +129,20 @@ async function finishPeriod(periodStart, window) {
     const reversed = isConsecutive
       && (previous.direction === 'up' || previous.direction === 'down')
       && previous.direction !== movement.direction;
-    const reversals = reversed ? Number(previous.reversals || 0) + 1 : 0;
-    state.streaks[market] = { direction: movement.direction, lastPeriodStart: periodStart, reversals };
+    state.streaks[market] = { direction: movement.direction, lastPeriodStart: periodStart };
 
-    if (reversed && reversals >= 2) {
+    if (reversed) {
       await send(movement.message);
       console.log(JSON.stringify({
-        level: 'info', event: 'price_movement_second_reversal_alert_sent', version: VERSION,
-        market, previousDirection: previous.direction, direction: movement.direction, reversalCount: reversals,
+        level: 'info', event: 'price_movement_reversal_alert_sent', version: VERSION,
+        market, previousDirection: previous.direction, direction: movement.direction,
         periodStart: new Date(periodStart * 1000).toISOString(),
         firstPrice: movement.first, lastPrice: movement.last, changePct: movement.pct,
       }));
-      // After alerting, restart the reversal count so each later alert requires
-      // two new direction changes, rather than alerting on every subsequent flip.
-      state.streaks[market].reversals = 0;
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: reversed ? 'price_movement_first_reversal_suppressed' : 'price_movement_direction_recorded',
-        version: VERSION, market, direction: movement.direction,
-        previousDirection: previous.direction, reversalCount: reversals,
-        consecutivePeriod: isConsecutive,
+        level: 'info', event: 'price_movement_direction_recorded', version: VERSION,
+        market, direction: movement.direction, consecutivePeriod: isConsecutive,
         periodStart: new Date(periodStart * 1000).toISOString(),
       }));
     }
@@ -250,7 +244,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'send separate BTC/ETH alerts only on the second direction reversal across consecutive complete 5-minute periods; first reversal is suppressed; flat movement resets direction tracking',
+  statePath: STATE_PATH, alert: 'send separate BTC/ETH alerts when direction reverses between consecutive complete 5-minute periods; flat movement resets direction tracking',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
