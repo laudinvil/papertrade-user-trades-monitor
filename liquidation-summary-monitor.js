@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-5m-asymmetric-threshold-up-0.099-down-0.33-boundary-v4';
+const VERSION = 'papertrade-price-movement-5m-up-0.099-down-range-0.099-to-0.33-boundary-v5';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -143,7 +143,7 @@ async function finishPeriod(periodStart, window) {
       continue;
     }
 
-    if ((movement.pct >= 0 && movement.pct < 0.099) || (movement.pct < 0 && movement.pct > -0.33)) {
+    if (!(movement.pct >= 0.099 || (movement.pct <= -0.099 && movement.pct > -0.33))) {
       window.marketAlerted[market] = true;
       saveState();
       console.log(JSON.stringify({
@@ -280,7 +280,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'send independent BTC/ETH alerts when first-to-last markPrice movement is >= +0.099% upward or <= -0.33% downward; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'send independent BTC/ETH alerts when first-to-last markPrice movement is >= +0.099% upward, or downward from -0.099% inclusive to -0.33% exclusive; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
