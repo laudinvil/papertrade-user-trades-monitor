@@ -74,8 +74,15 @@ async function fetchHeatmap(market) {
   }
   const asOfCandidates = [body?.asOfMs, body?.data?.asOfMs, body?.heatmap?.asOfMs, body?.result?.asOfMs];
   const asOfMs = asOfCandidates.map(Number).find(value => Number.isFinite(value) && value > 0) || Date.now();
-  const bucketCandidates = [body?.buckets, body?.data?.buckets, body?.heatmap?.buckets, body?.result?.buckets];
-  const rawBuckets = bucketCandidates.find(Array.isArray) || [];
+  // The top-level buckets cover tracked wallets only and can be sparse. The API's
+  // protocol map covers the full published liquidation map, so use it as fallback.
+  const bucketCandidates = [
+    body?.buckets, body?.protocol?.buckets,
+    body?.data?.buckets, body?.data?.protocol?.buckets,
+    body?.heatmap?.buckets, body?.heatmap?.protocol?.buckets,
+    body?.result?.buckets, body?.result?.protocol?.buckets,
+  ];
+  const rawBuckets = bucketCandidates.find(value => Array.isArray(value) && value.length > 0) || [];
   const buckets = rawBuckets.map(bucket => ({
     lo: Number(bucket?.lo), hi: Number(bucket?.hi), mid: Number(bucket?.mid),
     longNotional: Number(bucket?.longNotional || 0), shortNotional: Number(bucket?.shortNotional || 0),
