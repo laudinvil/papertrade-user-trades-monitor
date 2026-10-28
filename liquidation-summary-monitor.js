@@ -7,7 +7,7 @@ const POLL_MS = Math.max(30_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-liquidation-direction-5m-v3-cascade-risk';
+const VERSION = 'papertrade-liquidation-direction-5m-v2-skip-empty-period';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -16,8 +16,6 @@ const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const priceText = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percentText = value => `${value > 0 ? '+' : ''}${value.toFixed(3)}%`;
-const CASCADE_MOVE_PERCENT = 0.5;
-const usdText = value => `${Number(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
 function loadState() {
   try {
@@ -42,7 +40,6 @@ function saveState() {
 async function fetchHeatmap(market) {
   const url = new URL(HEATMAP_URL);
   url.searchParams.set('market', market);
-  url.searchParams.set('cascade', String(CASCADE_MOVE_PERCENT));
   const response = await fetch(url, {
     headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
     signal: AbortSignal.timeout(20_000),
@@ -75,14 +72,7 @@ async function fetchHeatmap(market) {
   }
   const asOfCandidates = [body?.asOfMs, body?.data?.asOfMs, body?.heatmap?.asOfMs, body?.result?.asOfMs];
   const asOfMs = asOfCandidates.map(Number).find(value => Number.isFinite(value) && value > 0) || Date.now();
-  const cascadeCandidates = [body?.cascade, body?.data?.cascade, body?.heatmap?.cascade, body?.result?.cascade];
-  const rawCascade = cascadeCandidates.find(value => value && typeof value === 'object');
-  const cascade = rawCascade && ['down', 'up'].every(side => Number.isFinite(Number(rawCascade[side]?.notional)) && Number.isFinite(Number(rawCascade[side]?.count))) ? {
-    fraction: Number(rawCascade.fraction),
-    down: { notional: Number(rawCascade.down.notional), count: Number(rawCascade.down.count), margin: Number(rawCascade.down.margin || 0) },
-    up: { notional: Number(rawCascade.up.notional), count: Number(rawCascade.up.count), margin: Number(rawCascade.up.margin || 0) },
-  } : null;
-  return { market, price: markPrice, asOfMs, cascade };
+  return { market, price: markPrice, asOfMs };
 }
 
 async function send(message) {
@@ -113,9 +103,6 @@ function formatMarketLine(market, window, periodStart) {
   return [
     `<b>${market} ${arrow} ${direction}</b>`,
     `Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
-    window.cascade
-      ? `Каскад при ±${CASCADE_MOVE_PERCENT}%: вниз (LONG) ${usdText(window.cascade.down.notional)} / ${window.cascade.down.count} поз.; вверх (SHORT) ${usdText(window.cascade.up.notional)} / ${window.cascade.up.count} поз.`
-      : `Каскад при ±${CASCADE_MOVE_PERCENT}%: нет данных`,
     `<a href="${marketLink(market, window.periodStart)}">Polymarket ${market} 5m</a>`,
   ].join('\n');
 }
@@ -182,7 +169,6 @@ async function poll() {
           firstAtMs: snapshots[market].asOfMs,
           lastAtMs: snapshots[market].asOfMs,
           samples: 1,
-          cascade: snapshots[market].cascade,
         };
       }
     }
@@ -212,11 +198,9 @@ async function poll() {
         firstAtMs: snapshot.asOfMs,
         lastAtMs: snapshot.asOfMs,
         samples: 1,
-        cascade: snapshot.cascade,
       };
     } else {
       item.lastPrice = snapshot.price;
-      if (snapshot.cascade) item.cascade = snapshot.cascade;
       item.lastAtMs = snapshot.asOfMs;
       item.samples = Number(item.samples || 0) + 1;
     }
@@ -239,7 +223,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'liquidation_direction_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'one Telegram message after each completed 5-minute period; markPrice direction plus liquidation cascade notional for both directions at 0.5%',
+  statePath: STATE_PATH, alert: 'one Telegram message after each completed 5-minute period; arrow from first to last heatmap markPrice',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
