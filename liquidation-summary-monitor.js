@@ -110,21 +110,7 @@ function formatMarketLine(market, window, periodStart) {
 
 async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
-  const hasAnyPrice = ['BTC', 'ETH'].some(market => {
-    const first = Number(window[market]?.firstPrice);
-    const last = Number(window[market]?.lastPrice);
-    return Number.isFinite(first) && Number.isFinite(last) && first > 0 && last > 0;
-  });
-  if (!hasAnyPrice) {
-    window.alerted = true;
-    console.warn(JSON.stringify({
-      level: 'warn', event: 'price_movement_alert_skipped_no_prices', version: VERSION,
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      periodEnd: new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString(),
-      reason: 'No valid BTC or ETH markPrice snapshots were recorded for this period',
-    }));
-    return;
-  }
+
   const periodHeader = `Период UTC: ${utcTime(periodStart)}–${utcTime(periodStart + PERIOD_SECONDS)}`;
   const marketLines = [
     formatMarketLine('BTC', window.BTC, periodStart),
@@ -133,25 +119,15 @@ async function finishPeriod(periodStart, window) {
 
   if (marketLines.length === 0) {
     window.alerted = true;
-    console.log(JSON.stringify({
-      level: 'info', event: 'price_movement_alert_skipped_no_prices', version: VERSION,
+    console.warn(JSON.stringify({
+      level: 'warn', event: 'price_movement_alert_skipped_no_prices', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       reason: 'No valid BTC or ETH markPrice snapshots were recorded for this period',
     }));
     return;
   }
 
-  await send([periodHeader, ...marketLines].join('\\n'));
-  window.alerted = true;
-    console.log(JSON.stringify({
-      level: 'info', event: 'price_movement_alert_skipped_unconfirmed', version: VERSION,
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      reason: 'Neither BTC nor ETH had a confirmed LONG or SHORT signal',
-    }));
-    return;
-  }
-
-  await send(confirmedMarkets.join('\n'));
+  await send([periodHeader, ...marketLines].join('\n'));
   window.alerted = true;
   console.log(JSON.stringify({
     level: 'info', event: 'price_movement_alert_sent', version: VERSION,
@@ -206,8 +182,6 @@ async function poll() {
           firstAtMs: snapshots[market].asOfMs,
           lastAtMs: snapshots[market].asOfMs,
           samples: 1,
-          buckets: snapshots[market].buckets,
-          firstBuckets: snapshots[market].buckets,
         };
       }
     }
