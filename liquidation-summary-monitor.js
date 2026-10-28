@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-5m-reversal-v5-spaced-link';
+const VERSION = 'papertrade-price-movement-5m-paired-btc-eth-reversal-v6';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -113,7 +113,23 @@ function getMarketMovement(market, window, periodStart) {
 async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
+  // If delivery failed after evaluating both markets, retry the same paired
+  // alert rather than losing the pair because direction state was already saved.
+  if (window.pendingPairedAlert) {
+    await send(window.pendingPairedAlert);
+    console.log(JSON.stringify({
+      level: 'info', event: 'paired_price_movement_reversal_alert_sent', version: VERSION,
+      markets: ['BTC', 'ETH'], periodStart: new Date(periodStart * 1000).toISOString(),
+      retry: true,
+    }));
+    delete window.pendingPairedAlert;
+    window.alerted = true;
+    saveState();
+    return;
+  }
+
   state.streaks ||= {};
+  const qualifying = [];
   for (const market of ['BTC', 'ETH']) {
     const movement = getMarketMovement(market, window[market], periodStart);
     const previous = state.streaks[market] || { direction: null, lastPeriodStart: null };
@@ -132,13 +148,7 @@ async function finishPeriod(periodStart, window) {
     state.streaks[market] = { direction: movement.direction, lastPeriodStart: periodStart };
 
     if (reversed) {
-      await send(movement.message);
-      console.log(JSON.stringify({
-        level: 'info', event: 'price_movement_reversal_alert_sent', version: VERSION,
-        market, previousDirection: previous.direction, direction: movement.direction,
-        periodStart: new Date(periodStart * 1000).toISOString(),
-        firstPrice: movement.first, lastPrice: movement.last, changePct: movement.pct,
-      }));
+      qualifying.push({ market, movement, previousDirection: previous.direction });
     } else {
       console.log(JSON.stringify({
         level: 'info', event: 'price_movement_direction_recorded', version: VERSION,
@@ -147,6 +157,28 @@ async function finishPeriod(periodStart, window) {
       }));
     }
     saveState();
+  }
+
+  // Send only when BOTH BTC and ETH reverse during this exact 5-minute period.
+  if (qualifying.length === 2 && qualifying.some(item => item.market === 'BTC') && qualifying.some(item => item.market === 'ETH')) {
+    window.pendingPairedAlert = qualifying.map(item => item.movement.message).join('\n\n');
+    saveState();
+    await send(window.pendingPairedAlert);
+    console.log(JSON.stringify({
+      level: 'info', event: 'paired_price_movement_reversal_alert_sent', version: VERSION,
+      markets: ['BTC', 'ETH'],
+      directions: Object.fromEntries(qualifying.map(item => [item.market, item.movement.direction])),
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      changes: Object.fromEntries(qualifying.map(item => [item.market, item.movement.pct])),
+    }));
+    delete window.pendingPairedAlert;
+  } else {
+    console.log(JSON.stringify({
+      level: 'info', event: 'paired_price_movement_alert_suppressed', version: VERSION,
+      qualifyingMarkets: qualifying.map(item => item.market),
+      requiredMarkets: ['BTC', 'ETH'],
+      periodStart: new Date(periodStart * 1000).toISOString(),
+    }));
   }
 
   window.alerted = true;
@@ -244,7 +276,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'send separate BTC/ETH alerts when direction reverses between consecutive complete 5-minute periods; flat movement resets direction tracking',
+  statePath: STATE_PATH, alert: 'send one paired BTC+ETH Telegram alert only when both reverse direction between consecutive complete 5-minute periods in the same period; suppress single-market reversals; flat movement resets that market direction tracking',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
