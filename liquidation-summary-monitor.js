@@ -144,7 +144,7 @@ function formatMarketLine(market, window, periodStart) {
     `Цена 5m: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
     `Кластер ${closest.side}: ${priceText(closest.cluster.level)}; дистанция ${closest.startDistance.toFixed(3)}% → ${closest.endDistance.toFixed(3)}%; объём ${usdText(closest.cluster.notional)}`,
     `<a href="${marketLink(market, periodStart)}">Polymarket ${market} 5m</a>`,
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function finishPeriod(periodStart, window) {
