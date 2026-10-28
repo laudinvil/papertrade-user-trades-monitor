@@ -143,7 +143,7 @@ function formatMarketLine(market, window, periodStart) {
     `<b>${market} ${arrow} СТАЛА БЛИЖЕ К ${closest.side}-КЛАСТЕРУ</b>`,
     `Цена 5m: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
     `Кластер ${closest.side}: ${priceText(closest.cluster.level)}; дистанция ${closest.startDistance.toFixed(3)}% → ${closest.endDistance.toFixed(3)}%; объём ${usdText(closest.cluster.notional)}`,
-    `<a href="${marketLink(market, periodStart)}">Polymarket ${market} 5m</a>`,
+    `<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`,
   ].join('\n');
 }
 
