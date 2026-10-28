@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-5m-independent-threshold-0.1pct-v1';
+const VERSION = 'papertrade-price-movement-5m-independent-threshold-0.1pct-boundary-v2';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -42,7 +42,7 @@ async function fetchHeatmap(market) {
   url.searchParams.set('market', market);
   const response = await fetch(url, {
     headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(1_800),
   });
   const contentType = response.headers.get('content-type') || '';
   const raw = await response.text();
@@ -192,14 +192,14 @@ async function poll() {
 
   const snapshots = {};
   const errors = {};
-  for (const market of ['BTC', 'ETH']) {
+  await Promise.all(['BTC', 'ETH'].map(async market => {
     try {
       snapshots[market] = await fetchHeatmap(market);
     } catch (error) {
       errors[market] = error instanceof Error ? error.message : String(error);
       console.warn(JSON.stringify({ level: 'warn', event: 'heatmap_fetch_failed', market, message: errors[market].slice(0, 240) }));
     }
-  }
+  }));
 
   if (!state.initialized) {
     state.initialized = true;
@@ -262,7 +262,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'send separate BTC and/or ETH Telegram alerts for each completed 5-minute period when absolute first-to-last markPrice movement is at least 0.1%, in either direction; no reversal, streak, alternation, or paired-market requirement',
+  statePath: STATE_PATH, alert: 'send independent BTC/ETH alerts when absolute first-to-last markPrice movement is >= 0.1% in either direction; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
@@ -281,7 +281,16 @@ async function loop() {
         consecutiveFailures, message: (error instanceof Error ? error.message : String(error)).slice(0, 300),
       }));
     }
-    await sleep(Math.max(0, POLL_MS - (Date.now() - started)));
+
+    // Take a final sample shortly before the boundary, then wake at the exact
+    // next 5-minute boundary so the previous window is finalized immediately.
+    const now = Date.now();
+    const nextBoundaryMs = (Math.floor(now / (PERIOD_SECONDS * 1000)) + 1) * PERIOD_SECONDS * 1000;
+    const preBoundaryMs = nextBoundaryMs - 1_000;
+    const targetMs = (preBoundaryMs > now && preBoundaryMs - now < POLL_MS)
+      ? preBoundaryMs
+      : Math.min(now + POLL_MS, nextBoundaryMs);
+    await sleep(Math.max(0, targetMs - Date.now()));
   }
 }
 process.on('SIGTERM', () => { stopping = true; });
