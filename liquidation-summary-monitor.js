@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-5m-v1';
+const VERSION = 'papertrade-price-movement-5m-streak-2-v2';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -21,9 +21,10 @@ function loadState() {
   try {
     const value = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
     if (value.version !== 1) throw new Error('unsupported state version');
+    value.streaks ||= {};
     return value;
   } catch (error) {
-    if (error?.code === 'ENOENT') return { version: 1, initialized: false, windows: {} };
+    if (error?.code === 'ENOENT') return { version: 1, initialized: false, windows: {}, streaks: {} };
     throw new Error(`Cannot load direction state: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -94,50 +95,60 @@ function utcTime(seconds) {
   return new Date(seconds * 1000).toISOString().slice(11, 16);
 }
 
-function formatMarketLine(market, window, periodStart) {
+function getMarketMovement(market, window, periodStart) {
   const first = Number(window?.firstPrice);
   const last = Number(window?.lastPrice);
   if (!window || !Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) return null;
 
   const pct = (last - first) / first * 100;
-  const direction = pct < 0 ? '⬇️ ВНИЗ' : pct > 0 ? '⬆️ ВВЕРХ' : 'БЕЗ ИЗМЕНЕНИЙ';
-  return [
-    `<b>${market} ${direction}</b>`,
+  const direction = pct < 0 ? 'down' : pct > 0 ? 'up' : 'flat';
+  const label = direction === 'down' ? '⬇️ ВНИЗ' : direction === 'up' ? '⬆️ ВВЕРХ' : 'БЕЗ ИЗМЕНЕНИЙ';
+  const message = [
+    `<b>${market} ${label}</b>`,
     `Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
     `<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`,
   ].join('\\n');
+  return { direction, pct, message, first, last };
 }
 
 async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
-  const periodHeader = `Период UTC: ${utcTime(periodStart)}–${utcTime(periodStart + PERIOD_SECONDS)}`;
-  const marketLines = [
-    formatMarketLine('BTC', window.BTC, periodStart),
-    formatMarketLine('ETH', window.ETH, periodStart),
-  ].filter(Boolean);
+  state.streaks ||= {};
+  for (const market of ['BTC', 'ETH']) {
+    const movement = getMarketMovement(market, window[market], periodStart);
+    const previous = state.streaks[market] || { direction: null, count: 0, lastPeriodStart: null };
 
-  if (marketLines.length === 0) {
-    window.alerted = true;
-    console.warn(JSON.stringify({
-      level: 'warn', event: 'price_movement_alert_skipped_no_prices', version: VERSION,
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      reason: 'No valid BTC or ETH markPrice snapshots were recorded for this period',
-    }));
-    return;
+    if (!movement || movement.direction === 'flat') {
+      state.streaks[market] = { direction: null, count: 0, lastPeriodStart: periodStart };
+      continue;
+    }
+
+    const isConsecutive = Number(previous.lastPeriodStart) === periodStart - PERIOD_SECONDS;
+    const count = isConsecutive && previous.direction === movement.direction
+      ? Number(previous.count || 0) + 1
+      : 1;
+    state.streaks[market] = { direction: movement.direction, count, lastPeriodStart: periodStart };
+
+    if (count >= 2) {
+      await send(movement.message);
+      console.log(JSON.stringify({
+        level: 'info', event: 'price_movement_streak_alert_sent', version: VERSION,
+        market, direction: movement.direction, consecutivePeriods: count,
+        periodStart: new Date(periodStart * 1000).toISOString(),
+        firstPrice: movement.first, lastPrice: movement.last, changePct: movement.pct,
+      }));
+    } else {
+      console.log(JSON.stringify({
+        level: 'info', event: 'price_movement_streak_started', version: VERSION,
+        market, direction: movement.direction, consecutivePeriods: count,
+        periodStart: new Date(periodStart * 1000).toISOString(),
+      }));
+    }
   }
 
-  await send([periodHeader, ...marketLines].join('\n'));
   window.alerted = true;
-  console.log(JSON.stringify({
-    level: 'info', event: 'price_movement_alert_sent', version: VERSION,
-    periodStart: new Date(periodStart * 1000).toISOString(),
-    periodEnd: new Date((periodStart + PERIOD_SECONDS) * 1000).toISOString(),
-    prices: Object.fromEntries(['BTC', 'ETH'].map(m => [m, {
-      first: window[m]?.firstPrice ?? null,
-      last: window[m]?.lastPrice ?? null,
-    }])),
-  }));
+  saveState();
 }
 
 async function poll() {
@@ -231,7 +242,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'report BTC and ETH price changes across each completed 5-minute period',
+  statePath: STATE_PATH, alert: 'send separate BTC/ETH alerts only after 2+ consecutive 5-minute moves in the same direction; opposite or flat movement resets the streak',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
