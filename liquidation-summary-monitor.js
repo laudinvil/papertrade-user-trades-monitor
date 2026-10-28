@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-eth-up-0.121-down-0.121-to-0.33-boundary-v7';
+const VERSION = 'papertrade-price-movement-both-coins-suppress-v8';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -114,6 +114,39 @@ async function finishPeriod(periodStart, window) {
 
   window.marketAlerted ||= {};
   window.pendingAlerts ||= {};
+
+  // Evaluate both coins before sending anything. If both qualify in the same
+  // completed 5-minute window, suppress both alerts for that window.
+  const qualifiesForAlert = (market, movement) => {
+    if (!movement) return false;
+    return market === 'ETH'
+      ? (movement.pct >= 0.121 || (movement.pct <= -0.121 && movement.pct > -0.33))
+      : (movement.pct >= 0.099 || (movement.pct <= -0.099 && movement.pct > -0.33));
+  };
+  const candidates = {};
+  for (const market of ['BTC', 'ETH']) {
+    if (window.marketAlerted[market]) {
+      candidates[market] = false;
+      continue;
+    }
+    candidates[market] = Boolean(window.pendingAlerts[market]) ||
+      qualifiesForAlert(market, getMarketMovement(market, window[market], periodStart));
+  }
+  if (candidates.BTC && candidates.ETH) {
+    for (const market of ['BTC', 'ETH']) {
+      window.marketAlerted[market] = true;
+      delete window.pendingAlerts[market];
+    }
+    window.alerted = true;
+    saveState();
+    console.log(JSON.stringify({
+      level: 'info', event: 'price_movement_alerts_suppressed_both_coins_qualify',
+      version: VERSION, markets: ['BTC', 'ETH'],
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      reason: 'both_coins_qualify_same_period',
+    }));
+    return;
+  }
 
   for (const market of ['BTC', 'ETH']) {
     if (window.marketAlerted[market]) continue;
@@ -286,7 +319,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'independent thresholds: ETH alerts at >= +0.121% upward or from -0.121% inclusive to -0.33% exclusive downward; BTC keeps >= +0.099% upward and downward from -0.099% inclusive to -0.33% exclusive; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'thresholds: ETH >= +0.121% upward or from -0.121% inclusive to -0.33% exclusive downward; BTC >= +0.099% upward or from -0.099% inclusive to -0.33% exclusive; if both BTC and ETH qualify in one period, suppress both; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
