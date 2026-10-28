@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-5m-streak-2-v3-newlines';
+const VERSION = 'papertrade-price-movement-5m-reversal-v4-newlines';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -115,33 +115,33 @@ async function finishPeriod(periodStart, window) {
   state.streaks ||= {};
   for (const market of ['BTC', 'ETH']) {
     const movement = getMarketMovement(market, window[market], periodStart);
-    const previous = state.streaks[market] || { direction: null, count: 0, lastPeriodStart: null };
+    const previous = state.streaks[market] || { direction: null, lastPeriodStart: null };
     if (Number(previous.lastPeriodStart) === periodStart) continue;
 
+    const isConsecutive = Number(previous.lastPeriodStart) === periodStart - PERIOD_SECONDS;
     if (!movement || movement.direction === 'flat') {
-      state.streaks[market] = { direction: null, count: 0, lastPeriodStart: periodStart };
+      state.streaks[market] = { direction: null, lastPeriodStart: periodStart };
       saveState();
       continue;
     }
 
-    const isConsecutive = Number(previous.lastPeriodStart) === periodStart - PERIOD_SECONDS;
-    const count = isConsecutive && previous.direction === movement.direction
-      ? Number(previous.count || 0) + 1
-      : 1;
-    state.streaks[market] = { direction: movement.direction, count, lastPeriodStart: periodStart };
+    const reversed = isConsecutive
+      && (previous.direction === 'up' || previous.direction === 'down')
+      && previous.direction !== movement.direction;
+    state.streaks[market] = { direction: movement.direction, lastPeriodStart: periodStart };
 
-    if (count >= 2) {
+    if (reversed) {
       await send(movement.message);
       console.log(JSON.stringify({
-        level: 'info', event: 'price_movement_streak_alert_sent', version: VERSION,
-        market, direction: movement.direction, consecutivePeriods: count,
+        level: 'info', event: 'price_movement_reversal_alert_sent', version: VERSION,
+        market, previousDirection: previous.direction, direction: movement.direction,
         periodStart: new Date(periodStart * 1000).toISOString(),
         firstPrice: movement.first, lastPrice: movement.last, changePct: movement.pct,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'price_movement_streak_started', version: VERSION,
-        market, direction: movement.direction, consecutivePeriods: count,
+        level: 'info', event: 'price_movement_direction_recorded', version: VERSION,
+        market, direction: movement.direction, consecutivePeriod: isConsecutive,
         periodStart: new Date(periodStart * 1000).toISOString(),
       }));
     }
@@ -243,7 +243,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'send separate BTC/ETH alerts only after 2+ consecutive 5-minute moves in the same direction; opposite or flat movement resets the streak',
+  statePath: STATE_PATH, alert: 'send separate BTC/ETH alerts only when direction reverses between consecutive complete 5-minute periods; flat movement resets direction tracking',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
