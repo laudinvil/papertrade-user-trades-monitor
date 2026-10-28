@@ -130,7 +130,7 @@ function formatMarketLine(market, window, periodStart) {
     `Цена 5m: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
     clusterLine,
     `<a href="${marketLink(market, periodStart)}">Polymarket ${market} 5m</a>`,
-  ].join('\\n');
+  ].join('\n');
 }
 
 async function finishPeriod(periodStart, window) {
@@ -156,7 +156,7 @@ async function finishPeriod(periodStart, window) {
     formatMarketLine('BTC', window.BTC, periodStart),
     '',
     formatMarketLine('ETH', window.ETH, periodStart),
-  ].join('\\n'));
+  ].join('\n'));
   window.alerted = true;
   console.log(JSON.stringify({
     level: 'info', event: 'liquidation_direction_alert_sent', version: VERSION,
