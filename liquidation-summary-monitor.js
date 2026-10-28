@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-no-downside-cap-both-coins-suppress-v9';
+const VERSION = 'papertrade-price-movement-no-downside-cap-both-coins-suppress-v10';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -177,8 +177,8 @@ async function finishPeriod(periodStart, window) {
     }
 
     const qualifies = market === 'ETH'
-      ? (movement.pct >= 0.121 || (movement.pct <= -0.121 && movement.pct > -0.33))
-      : (movement.pct >= 0.099 || (movement.pct <= -0.099 && movement.pct > -0.33));
+      ? (movement.pct >= 0.121 || movement.pct <= -0.121)
+      : (movement.pct >= 0.099 || movement.pct <= -0.099);
     const thresholdPctUp = market === 'ETH' ? 0.121 : 0.099;
     const thresholdPctDown = market === 'ETH' ? -0.121 : -0.099;
 
@@ -319,7 +319,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'thresholds: ETH >= +0.121% upward or from -0.121% inclusive to -0.33% exclusive downward; BTC >= +0.099% upward or from -0.099% inclusive to -0.33% exclusive; if both BTC and ETH qualify in one period, suppress both; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'thresholds: ETH >= +0.121% upward or <= -0.121% downward; BTC >= +0.099% upward or <= -0.099% downward; no downside cap; if both BTC and ETH qualify in one period, suppress both; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
