@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-eth-021-btc-012-both-directions-v13';
+const VERSION = 'papertrade-price-movement-eth-021-btc-012-next-period-cooldown-v14';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -115,6 +115,25 @@ async function finishPeriod(periodStart, window) {
   window.marketAlerted ||= {};
   window.pendingAlerts ||= {};
 
+  // After any alert was actually sent, suppress all alerts in the immediately
+  // following 5-minute period, regardless of whether BTC or ETH qualifies.
+  if (Number(state.lastAlertSentPeriod) === periodStart - PERIOD_SECONDS) {
+    for (const market of ['BTC', 'ETH']) {
+      window.marketAlerted[market] = true;
+      delete window.pendingAlerts[market];
+    }
+    window.alerted = true;
+    saveState();
+    console.log(JSON.stringify({
+      level: 'info', event: 'price_movement_alerts_suppressed_after_previous_period_alert',
+      version: VERSION, markets: ['BTC', 'ETH'],
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      previousAlertPeriodStart: new Date(Number(state.lastAlertSentPeriod) * 1000).toISOString(),
+      reason: 'suppress_next_period_after_any_sent_alert',
+    }));
+    return;
+  }
+
   // Evaluate both coins before sending anything. If both qualify in the same
   // completed 5-minute window, suppress both alerts for that window.
   const qualifiesForAlert = (market, movement) => {
@@ -156,6 +175,7 @@ async function finishPeriod(periodStart, window) {
       await send(window.pendingAlerts[market]);
       delete window.pendingAlerts[market];
       window.marketAlerted[market] = true;
+      state.lastAlertSentPeriod = periodStart;
       saveState();
       console.log(JSON.stringify({
         level: 'info', event: 'price_movement_alert_sent', version: VERSION,
@@ -198,6 +218,7 @@ async function finishPeriod(periodStart, window) {
     await send(window.pendingAlerts[market]);
     delete window.pendingAlerts[market];
     window.marketAlerted[market] = true;
+    state.lastAlertSentPeriod = periodStart;
     saveState();
     console.log(JSON.stringify({
       level: 'info', event: 'price_movement_alert_sent', version: VERSION,
@@ -319,7 +340,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'thresholds: ETH >= +0.21% upward or <= -0.21% downward; BTC >= +0.12% upward or <= -0.12% downward; no downside cap; if both BTC and ETH qualify in one period, suppress both; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'thresholds: ETH >= +0.21% upward or <= -0.21% downward; BTC >= +0.12% upward or <= -0.12% downward; no downside cap; if both BTC and ETH qualify in one period, suppress both; suppress all alerts in the 5-minute period immediately after any sent alert, regardless of coin; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
