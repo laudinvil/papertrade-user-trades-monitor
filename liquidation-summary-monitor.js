@@ -90,11 +90,11 @@ function marketLink(market, periodStart) {
   return `https://polymarket.com/event/${market.toLowerCase()}-updown-5m-${periodStart}`;
 }
 
-function formatMarketLine(market, window) {
-  const first = Number(window.firstPrice);
-  const last = Number(window.lastPrice);
-  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) {
-    return `<b>${market}</b> — недостаточно данных за 5m\n<a href="${marketLink(market, window.periodStart)}">Polymarket ${market} 5m</a>`;
+function formatMarketLine(market, window, periodStart) {
+  const first = Number(window?.firstPrice);
+  const last = Number(window?.lastPrice);
+  if (!window || !Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) {
+    return `<b>${market}</b> — недостаточно данных за 5m\n<a href="${marketLink(market, periodStart)}">Polymarket ${market} 5m</a>`;
   }
   const delta = last - first;
   const pct = delta / first * 100;
@@ -115,9 +115,9 @@ async function finishPeriod(periodStart, window) {
     '<b>ДВИЖЕНИЕ ЦЕНЫ — 5M</b>',
     `Период UTC: ${start}–${end}`,
     '',
-    formatMarketLine('BTC', window.BTC),
+    formatMarketLine('BTC', window.BTC, periodStart),
     '',
-    formatMarketLine('ETH', window.ETH),
+    formatMarketLine('ETH', window.ETH, periodStart),
   ].join('\n'));
   window.alerted = true;
   console.log(JSON.stringify({
