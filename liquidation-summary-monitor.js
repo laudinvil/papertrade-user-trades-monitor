@@ -173,7 +173,7 @@ async function finishPeriod(periodStart, window) {
 
 async function poll() {
   const now = Math.floor(Date.now() / 1000);
-  const currentStart = periodStartFor(now);
+  let currentStart = periodStartFor(now);
 
   // Finalize the previous 5-minute window immediately when the boundary is
   // detected, before making fresh HTTP requests for the new period.
@@ -200,6 +200,24 @@ async function poll() {
       console.warn(JSON.stringify({ level: 'warn', event: 'heatmap_fetch_failed', market, message: errors[market].slice(0, 240) }));
     }
   }));
+
+  // The HTTP requests may straddle a 5-minute boundary. Reconcile the
+  // period again after fetching so post-boundary prices are never written into
+  // the period that just ended.
+  const observedStart = periodStartFor(Math.floor(Date.now() / 1000));
+  if (observedStart !== currentStart) {
+    const previousStart = currentStart;
+    const previous = state.windows[String(previousStart)];
+    if (state.initialized && observedStart === previousStart + PERIOD_SECONDS && previous && !previous.alerted) {
+      await finishPeriod(previousStart, previous);
+    }
+    currentStart = observedStart;
+    state.currentPeriod = currentStart;
+    state.windows[String(currentStart)] ||= {
+      periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false,
+    };
+    saveState();
+  }
 
   if (!state.initialized) {
     state.initialized = true;
@@ -285,6 +303,9 @@ async function loop() {
     // Take a final sample shortly before the boundary, then wake at the exact
     // next 5-minute boundary so the previous window is finalized immediately.
     const now = Date.now();
+    if (state.initialized && periodStartFor(Math.floor(now / 1000)) !== Number(state.currentPeriod)) {
+      continue;
+    }
     const nextBoundaryMs = (Math.floor(now / (PERIOD_SECONDS * 1000)) + 1) * PERIOD_SECONDS * 1000;
     const preBoundaryMs = nextBoundaryMs - 1_000;
     const targetMs = (preBoundaryMs > now && preBoundaryMs - now < POLL_MS)
