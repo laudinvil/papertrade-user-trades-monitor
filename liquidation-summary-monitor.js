@@ -107,7 +107,7 @@ function getMarketMovement(market, window, periodStart) {
     `<b>${market} ${label}</b>`,
     `Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
     `<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`,
-  ].join('\\n');
+  ].join('\n');
   return { direction, pct, message, first, last };
 }
 
@@ -118,9 +118,11 @@ async function finishPeriod(periodStart, window) {
   for (const market of ['BTC', 'ETH']) {
     const movement = getMarketMovement(market, window[market], periodStart);
     const previous = state.streaks[market] || { direction: null, count: 0, lastPeriodStart: null };
+    if (Number(previous.lastPeriodStart) === periodStart) continue;
 
     if (!movement || movement.direction === 'flat') {
       state.streaks[market] = { direction: null, count: 0, lastPeriodStart: periodStart };
+      saveState();
       continue;
     }
 
@@ -145,6 +147,7 @@ async function finishPeriod(periodStart, window) {
         periodStart: new Date(periodStart * 1000).toISOString(),
       }));
     }
+    saveState();
   }
 
   window.alerted = true;
