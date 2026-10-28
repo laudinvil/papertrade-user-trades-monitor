@@ -138,7 +138,7 @@ function formatMarketLine(market, window, periodStart) {
   if (!closest) return null;
 
   const pct = (last - first) / first * 100;
-  const arrow = closest.side === 'LONG' ? '⬆️' : '⬇️';
+  const arrow = closest.side === 'LONG' ? '⬇️' : '⬆️';
   return [
     `<b>${market} ${arrow} СТАЛА БЛИЖЕ К ${closest.side}-КЛАСТЕРУ</b>`,
     `Цена 5m: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})`,
