@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-both-coins-suppress-v8';
+const VERSION = 'papertrade-price-movement-no-downside-cap-both-coins-suppress-v9';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -120,8 +120,8 @@ async function finishPeriod(periodStart, window) {
   const qualifiesForAlert = (market, movement) => {
     if (!movement) return false;
     return market === 'ETH'
-      ? (movement.pct >= 0.121 || (movement.pct <= -0.121 && movement.pct > -0.33))
-      : (movement.pct >= 0.099 || (movement.pct <= -0.099 && movement.pct > -0.33));
+      ? (movement.pct >= 0.121 || movement.pct <= -0.121)
+      : (movement.pct >= 0.099 || movement.pct <= -0.099);
   };
   const candidates = {};
   for (const market of ['BTC', 'ETH']) {
@@ -180,7 +180,7 @@ async function finishPeriod(periodStart, window) {
       ? (movement.pct >= 0.121 || (movement.pct <= -0.121 && movement.pct > -0.33))
       : (movement.pct >= 0.099 || (movement.pct <= -0.099 && movement.pct > -0.33));
     const thresholdPctUp = market === 'ETH' ? 0.121 : 0.099;
-    const thresholdPctDown = -0.33;
+    const thresholdPctDown = market === 'ETH' ? -0.121 : -0.099;
 
     if (!qualifies) {
       window.marketAlerted[market] = true;
