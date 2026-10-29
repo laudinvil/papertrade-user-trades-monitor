@@ -137,7 +137,7 @@ function getMarketMovement(market, window, periodStart) {
   const message = `<b>${market} ${label}</b>
 Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})
 \u200B
-<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`
+<a href="${marketLink(market, periodStart + 2 * PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`
   return { direction, pct, message, first, last };
 }
 
@@ -172,7 +172,7 @@ async function finishPeriod(periodStart, window) {
   const message = `<b>BTC и ETH закрылись разнонаправленно</b>
 BTC: ${directionText(btc)} ${priceText(btc.first)} → ${priceText(btc.last)} (${percentText(btc.pct)})
 ETH: ${directionText(eth)} ${priceText(eth.first)} → ${priceText(eth.last)} (${percentText(eth.pct)})
-<a href="${marketLink('BTC', periodStart + PERIOD_SECONDS)}">Polymarket BTC 5m</a> · <a href="${marketLink('ETH', periodStart + PERIOD_SECONDS)}">Polymarket ETH 5m</a>`;
+<a href="${marketLink('BTC', periodStart + 2 * PERIOD_SECONDS)}">Polymarket BTC 5m</a> · <a href="${marketLink('ETH', periodStart + 2 * PERIOD_SECONDS)}">Polymarket ETH 5m</a>`;
 
   await send(message);
   state.lastAlertSentPeriod = periodStart;
