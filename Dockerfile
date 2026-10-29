@@ -5,6 +5,6 @@ ENV NODE_ENV=production
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates && update-ca-certificates
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
-COPY supervisor.js check-nodeflare.mjs ./
+COPY liquidation-summary-monitor.js supervisor.js check-nodeflare.mjs ./
 RUN mkdir -p /data && chmod 777 /data
 CMD ["node", "supervisor.js"]
