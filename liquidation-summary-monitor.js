@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-opposite-coin-closes-2-consecutive-periods-v21';
+const VERSION = 'papertrade-opposite-coin-closes-single-period-v22';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -119,20 +119,8 @@ async function finishPeriod(periodStart, window) {
   const ethSign = sign(eth);
   const opposite = btcSign !== 0 && ethSign !== 0 && btcSign === -ethSign;
 
-  state.oppositeDirectionStreak ||= { count: 0, lastPeriodStart: null, alerted: false };
-  const streak = state.oppositeDirectionStreak;
-
-  if (opposite) {
-    streak.count = Number(streak.lastPeriodStart) === periodStart - PERIOD_SECONDS
-      ? Number(streak.count || 0) + 1
-      : 1;
-    streak.lastPeriodStart = periodStart;
-  } else {
-    streak.count = 0;
-    streak.lastPeriodStart = periodStart;
-    streak.alerted = false;
-  }
-
+  // Each completed 5-minute period is evaluated independently. No multi-period
+  // streak requirement and no percentage threshold.
   window.alerted = true;
   saveState();
 
@@ -144,22 +132,18 @@ async function finishPeriod(periodStart, window) {
     BTC: btc ? { direction: btc.direction, changePct: btc.pct } : null,
     ETH: eth ? { direction: eth.direction, changePct: eth.pct } : null,
     oppositeDirections: opposite,
-    consecutivePeriods: streak.count,
   }));
 
-  // Send once when a streak first reaches two consecutive opposite-direction
-  // closes. Further periods in the same streak do not generate duplicate alerts.
-  if (!opposite || streak.count < 2 || streak.alerted) return;
+  if (!opposite) return;
 
   const directionText = movement => movement.direction === 'up' ? 'ВВЕРХ' : 'ВНИЗ';
-  const message = `<b>BTC и ETH закрылись разнонаправленно ${streak.count} периода подряд</b>
+  const message = `<b>BTC и ETH закрылись разнонаправленно</b>
 BTC: ${directionText(btc)} ${priceText(btc.first)} → ${priceText(btc.last)} (${percentText(btc.pct)})
 ETH: ${directionText(eth)} ${priceText(eth.first)} → ${priceText(eth.last)} (${percentText(eth.pct)})
 Период: ${utcTime(periodStart)} UTC
 <a href="${marketLink('BTC', periodStart + PERIOD_SECONDS)}">Polymarket BTC 5m</a> · <a href="${marketLink('ETH', periodStart + PERIOD_SECONDS)}">Polymarket ETH 5m</a>`;
 
   await send(message);
-  streak.alerted = true;
   state.lastAlertSentPeriod = periodStart;
   saveState();
   console.log(JSON.stringify({
@@ -167,7 +151,6 @@ ETH: ${directionText(eth)} ${priceText(eth.first)} → ${priceText(eth.last)} ($
     event: 'opposite_coin_close_alert_sent',
     version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
-    consecutivePeriods: streak.count,
     BTC: { direction: btc.direction, changePct: btc.pct },
     ETH: { direction: eth.direction, changePct: eth.pct },
   }));
@@ -282,7 +265,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'no percentage thresholds; alert once when BTC and ETH close in opposite directions in at least 2 consecutive 5-minute periods; flat or missing movement breaks the streak',
+  statePath: STATE_PATH, alert: 'no percentage thresholds; alert once when BTC and ETH close in opposite directions in a single completed 5-minute period',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
