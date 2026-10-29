@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-opposite-coin-closes-single-period-v23-rate-limit-recovery';
+const VERSION = 'papertrade-opposite-coin-closes-single-period-v24-startup-state-recovery';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -20,11 +20,20 @@ const percentText = value => `${value > 0 ? '+' : ''}${value.toFixed(3)}%`;
 function loadState() {
   try {
     const value = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
-    if (value.version !== 1) throw new Error('unsupported state version');
-    return value;
+    if (value?.version === 1 && value.windows && typeof value.windows === 'object') return value;
+    console.warn(JSON.stringify({
+      level: 'warn', event: 'state_reset_invalid_shape',
+      statePath: STATE_PATH, foundVersion: value?.version ?? null,
+    }));
+    return { version: 1, initialized: false, windows: {} };
   } catch (error) {
     if (error?.code === 'ENOENT') return { version: 1, initialized: false, windows: {} };
-    throw new Error(`Cannot load price movement state: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(JSON.stringify({
+      level: 'warn', event: 'state_reset_unreadable',
+      statePath: STATE_PATH,
+      message: error instanceof Error ? error.message : String(error),
+    }));
+    return { version: 1, initialized: false, windows: {} };
   }
 }
 
