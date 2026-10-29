@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-absolute-max-0001-flat-up-next-period-cooldown-v20';
+const VERSION = 'papertrade-opposite-coin-closes-2-consecutive-periods-v21';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -112,119 +112,65 @@ function getMarketMovement(market, window, periodStart) {
 async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
-  window.marketAlerted ||= {};
-  window.pendingAlerts ||= {};
+  const btc = getMarketMovement('BTC', window.BTC, periodStart);
+  const eth = getMarketMovement('ETH', window.ETH, periodStart);
+  const sign = movement => !movement ? 0 : movement.pct > 0 ? 1 : movement.pct < 0 ? -1 : 0;
+  const btcSign = sign(btc);
+  const ethSign = sign(eth);
+  const opposite = btcSign !== 0 && ethSign !== 0 && btcSign === -ethSign;
 
-  // After any alert was actually sent, suppress all alerts in the immediately
-  // following 5-minute period, regardless of whether BTC or ETH qualifies.
-  if (Number(state.lastAlertSentPeriod) === periodStart - PERIOD_SECONDS) {
-    for (const market of ['BTC', 'ETH']) {
-      window.marketAlerted[market] = true;
-      delete window.pendingAlerts[market];
-    }
-    window.alerted = true;
-    saveState();
-    console.log(JSON.stringify({
-      level: 'info', event: 'price_movement_alerts_suppressed_after_previous_period_alert',
-      version: VERSION, markets: ['BTC', 'ETH'],
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      previousAlertPeriodStart: new Date(Number(state.lastAlertSentPeriod) * 1000).toISOString(),
-      reason: 'suppress_next_period_after_any_sent_alert',
-    }));
-    return;
-  }
+  state.oppositeDirectionStreak ||= { count: 0, lastPeriodStart: null, alerted: false };
+  const streak = state.oppositeDirectionStreak;
 
-  // Evaluate both coins before sending anything. If both qualify in the same
-  // completed 5-minute window, suppress both alerts for that window.
-  const qualifiesForAlert = (market, movement) => {
-    if (!movement) return false;
-    return movement.pct >= -0.001 && movement.pct <= 0.001;
-  };
-  const candidates = {};
-  for (const market of ['BTC', 'ETH']) {
-    if (window.marketAlerted[market]) {
-      candidates[market] = false;
-      continue;
-    }
-    candidates[market] = Boolean(window.pendingAlerts[market]) ||
-      qualifiesForAlert(market, getMarketMovement(market, window[market], periodStart));
-  }
-  if (candidates.BTC && candidates.ETH) {
-    for (const market of ['BTC', 'ETH']) {
-      window.marketAlerted[market] = true;
-      delete window.pendingAlerts[market];
-    }
-    window.alerted = true;
-    saveState();
-    console.log(JSON.stringify({
-      level: 'info', event: 'price_movement_alerts_suppressed_both_coins_qualify',
-      version: VERSION, markets: ['BTC', 'ETH'],
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      reason: 'both_coins_qualify_same_period',
-    }));
-    return;
-  }
-
-  for (const market of ['BTC', 'ETH']) {
-    if (window.marketAlerted[market]) continue;
-
-    // Retry an already prepared alert before evaluating the market again.
-    if (window.pendingAlerts[market]) {
-      await send(window.pendingAlerts[market]);
-      delete window.pendingAlerts[market];
-      window.marketAlerted[market] = true;
-      state.lastAlertSentPeriod = periodStart;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'price_movement_alert_sent', version: VERSION,
-        market, periodStart: new Date(periodStart * 1000).toISOString(), retry: true,
-      }));
-      continue;
-    }
-
-    const movement = getMarketMovement(market, window[market], periodStart);
-    if (!movement) {
-      window.marketAlerted[market] = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'price_movement_alert_skipped', version: VERSION,
-        market, reason: 'missing_or_invalid_prices',
-        periodStart: new Date(periodStart * 1000).toISOString(),
-      }));
-      continue;
-    }
-
-    const qualifies = movement.pct >= -0.001 && movement.pct <= 0.001;
-    const thresholdPctUp = 0.001;
-    const thresholdPctDown = -0.001;
-
-    if (!qualifies) {
-      window.marketAlerted[market] = true;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info', event: 'price_movement_alert_skipped', version: VERSION,
-        market, reason: 'below_threshold', changePct: movement.pct,
-        thresholdPctUp, thresholdPctDown, periodStart: new Date(periodStart * 1000).toISOString(),
-      }));
-      continue;
-    }
-
-    window.pendingAlerts[market] = movement.message;
-    saveState();
-    await send(window.pendingAlerts[market]);
-    delete window.pendingAlerts[market];
-    window.marketAlerted[market] = true;
-    state.lastAlertSentPeriod = periodStart;
-    saveState();
-    console.log(JSON.stringify({
-      level: 'info', event: 'price_movement_alert_sent', version: VERSION,
-      market, direction: movement.direction, changePct: movement.pct,
-      thresholdPctUp, thresholdPctDown, periodStart: new Date(periodStart * 1000).toISOString(),
-    }));
+  if (opposite) {
+    streak.count = Number(streak.lastPeriodStart) === periodStart - PERIOD_SECONDS
+      ? Number(streak.count || 0) + 1
+      : 1;
+    streak.lastPeriodStart = periodStart;
+  } else {
+    streak.count = 0;
+    streak.lastPeriodStart = periodStart;
+    streak.alerted = false;
   }
 
   window.alerted = true;
   saveState();
+
+  console.log(JSON.stringify({
+    level: 'info',
+    event: 'opposite_coin_close_evaluated',
+    version: VERSION,
+    periodStart: new Date(periodStart * 1000).toISOString(),
+    BTC: btc ? { direction: btc.direction, changePct: btc.pct } : null,
+    ETH: eth ? { direction: eth.direction, changePct: eth.pct } : null,
+    oppositeDirections: opposite,
+    consecutivePeriods: streak.count,
+  }));
+
+  // Send once when a streak first reaches two consecutive opposite-direction
+  // closes. Further periods in the same streak do not generate duplicate alerts.
+  if (!opposite || streak.count < 2 || streak.alerted) return;
+
+  const directionText = movement => movement.direction === 'up' ? 'ВВЕРХ' : 'ВНИЗ';
+  const message = `<b>BTC и ETH закрылись разнонаправленно ${streak.count} периода подряд</b>
+BTC: ${directionText(btc)} ${priceText(btc.first)} → ${priceText(btc.last)} (${percentText(btc.pct)})
+ETH: ${directionText(eth)} ${priceText(eth.first)} → ${priceText(eth.last)} (${percentText(eth.pct)})
+Период: ${utcTime(periodStart)} UTC
+<a href="${marketLink('BTC', periodStart + PERIOD_SECONDS)}">Polymarket BTC 5m</a> · <a href="${marketLink('ETH', periodStart + PERIOD_SECONDS)}">Polymarket ETH 5m</a>`;
+
+  await send(message);
+  streak.alerted = true;
+  state.lastAlertSentPeriod = periodStart;
+  saveState();
+  console.log(JSON.stringify({
+    level: 'info',
+    event: 'opposite_coin_close_alert_sent',
+    version: VERSION,
+    periodStart: new Date(periodStart * 1000).toISOString(),
+    consecutivePeriods: streak.count,
+    BTC: { direction: btc.direction, changePct: btc.pct },
+    ETH: { direction: eth.direction, changePct: eth.pct },
+  }));
 }
 
 async function poll() {
@@ -336,7 +282,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'all markets: alert only when movement is between -0.001% and +0.001% inclusive; if both BTC and ETH qualify in one period, suppress both; suppress all alerts in the 5-minute period immediately after any sent alert, regardless of coin; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'no percentage thresholds; alert once when BTC and ETH close in opposite directions in at least 2 consecutive 5-minute periods; flat or missing movement breaks the streak',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
