@@ -3,11 +3,11 @@ import path from 'node:path';
 
 const HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
 const PERIOD_SECONDS = 300;
-const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 10_000));
+const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 20_000));
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-opposite-coin-closes-single-period-v22';
+const VERSION = 'papertrade-opposite-coin-closes-single-period-v23-rate-limit-recovery';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -40,10 +40,25 @@ function saveState() {
 async function fetchHeatmap(market) {
   const url = new URL(HEATMAP_URL);
   url.searchParams.set('market', market);
-  const response = await fetch(url, {
-    headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
-    signal: AbortSignal.timeout(1_800),
-  });
+  let response;
+  // The heatmap API can return 502 when its upstream Hyperliquid allMids
+  // request is rate-limited (429). Retry transient failures once, with a pause.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    response = await fetch(url, {
+      headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (response.ok || ![429, 502, 503, 504].includes(response.status) || attempt === 1) break;
+    const retryAfter = Number(response.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(10_000, retryAfter * 1000)
+      : 3_000;
+    console.warn(JSON.stringify({
+      level: 'warn', event: 'heatmap_transient_retry', market,
+      status: response.status, attempt: attempt + 1, waitMs,
+    }));
+    await sleep(waitMs);
+  }
   const contentType = response.headers.get('content-type') || '';
   const raw = await response.text();
   let body;
@@ -264,7 +279,7 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
-  source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
+  source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
   statePath: STATE_PATH, alert: 'no percentage thresholds; alert once when BTC and ETH close in opposite directions in a single completed 5-minute period',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
