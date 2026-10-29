@@ -7,7 +7,9 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-opposite-coin-closes-single-period-v24-startup-state-recovery';
+const VERSION = 'papertrade-opposite-coin-closes-single-period-v25-reduced-logs';
+const LOG_THROTTLE_MS = 5 * 60_000;
+const lastTransientWarningAt = new Map();
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -62,10 +64,16 @@ async function fetchHeatmap(market) {
     const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
       ? Math.min(10_000, retryAfter * 1000)
       : 3_000;
-    console.warn(JSON.stringify({
-      level: 'warn', event: 'heatmap_transient_retry', market,
-      status: response.status, attempt: attempt + 1, waitMs,
-    }));
+    const warningKey = `${market}:${response.status}`;
+    const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+    if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+      console.warn(JSON.stringify({
+        level: 'warn', event: 'heatmap_transient_retry', market,
+        status: response.status, attempt: attempt + 1, waitMs,
+        throttled: true, throttleMs: LOG_THROTTLE_MS,
+      }));
+      lastTransientWarningAt.set(warningKey, Date.now());
+    }
     await sleep(waitMs);
   }
   const contentType = response.headers.get('content-type') || '';
@@ -205,7 +213,12 @@ async function poll() {
       snapshots[market] = await fetchHeatmap(market);
     } catch (error) {
       errors[market] = error instanceof Error ? error.message : String(error);
-      console.warn(JSON.stringify({ level: 'warn', event: 'heatmap_fetch_failed', market, message: errors[market].slice(0, 240) }));
+      const warningKey = `fetch_failed:${market}`;
+      const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+      if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+        console.warn(JSON.stringify({ level: 'warn', event: 'heatmap_fetch_failed', market, message: errors[market].slice(0, 240), throttled: true, throttleMs: LOG_THROTTLE_MS }));
+        lastTransientWarningAt.set(warningKey, Date.now());
+      }
     }
   }));
 
@@ -275,13 +288,7 @@ async function poll() {
     if (Number(key) < currentStart - 2 * PERIOD_SECONDS) delete state.windows[key];
   }
   saveState();
-  console.log(JSON.stringify({
-    level: 'info', event: 'price_movement_snapshot', version: VERSION,
-    source: 'papertrade liquidation heatmap markPrice', pollMs: POLL_MS,
-    periodStart: new Date(currentStart * 1000).toISOString(),
-    prices: Object.fromEntries(['BTC', 'ETH'].map(m => [m, snapshots[m]?.price ?? null])),
-    errors,
-  }));
+
   if (Object.keys(errors).length) throw new Error(Object.values(errors).join('; '));
 }
 
