@@ -164,7 +164,6 @@ async function finishPeriod(periodStart, window) {
   const message = `<b>BTC и ETH закрылись разнонаправленно</b>
 BTC: ${directionText(btc)} ${priceText(btc.first)} → ${priceText(btc.last)} (${percentText(btc.pct)})
 ETH: ${directionText(eth)} ${priceText(eth.first)} → ${priceText(eth.last)} (${percentText(eth.pct)})
-Период: ${utcTime(periodStart)} UTC
 <a href="${marketLink('BTC', periodStart + PERIOD_SECONDS)}">Polymarket BTC 5m</a> · <a href="${marketLink('ETH', periodStart + PERIOD_SECONDS)}">Polymarket ETH 5m</a>`;
 
   await send(message);
