@@ -7,7 +7,7 @@ const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS |
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-price-movement-absolute-max-005-next-period-cooldown-v16';
+const VERSION = 'papertrade-price-movement-absolute-max-006-next-period-cooldown-v17';
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
@@ -138,7 +138,7 @@ async function finishPeriod(periodStart, window) {
   // completed 5-minute window, suppress both alerts for that window.
   const qualifiesForAlert = (market, movement) => {
     if (!movement) return false;
-    return movement.pct >= -0.05 && movement.pct <= 0.05;
+    return movement.pct >= -0.06 && movement.pct <= 0.06;
   };
   const candidates = {};
   for (const market of ['BTC', 'ETH']) {
@@ -194,7 +194,7 @@ async function finishPeriod(periodStart, window) {
       continue;
     }
 
-    const qualifies = movement.pct >= -0.05 && movement.pct <= 0.05;
+    const qualifies = movement.pct >= -0.06 && movement.pct <= 0.06;
     const thresholdPctUp = 0.05;
     const thresholdPctDown = -0.05;
 
@@ -336,7 +336,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS,
-  statePath: STATE_PATH, alert: 'all markets: alert only when movement is between -0.05% and +0.05% inclusive; if both BTC and ETH qualify in one period, suppress both; suppress all alerts in the 5-minute period immediately after any sent alert, regardless of coin; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
+  statePath: STATE_PATH, alert: 'all markets: alert only when movement is between -0.06% and +0.06% inclusive; if both BTC and ETH qualify in one period, suppress both; suppress all alerts in the 5-minute period immediately after any sent alert, regardless of coin; finalize at each 5-minute boundary, sample about 1 second before boundary, target alert within 3 seconds after the linked period starts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
