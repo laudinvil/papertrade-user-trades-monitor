@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-any-coin-20m-alternating-alert-markets-v33';
+const VERSION = 'papertrade-any-coin-20m-alternating-alert-markets-v34';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -197,8 +197,8 @@ async function finishPeriod(periodStart, window) {
       const lines = extremeMarkets.map(market => {
         const item = result[market];
         const extremeTypes = [
-          ...(item.atMinimum ? ['МИНИМУМ'] : []),
-          ...(item.atMaximum ? ['МАКСИМУМ'] : []),
+          ...(item.atMinimum ? ['МИНИМУМ ⬆️'] : []),
+          ...(item.atMaximum ? ['МАКСИМУМ ⬇️'] : []),
         ].join(' и ');
         return `<b>${market}: 20-минутный ${extremeTypes}</b>
 Цена: ${priceText(item.close)}
