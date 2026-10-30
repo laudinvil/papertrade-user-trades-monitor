@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-one-coin-10m-rolling-extreme-close-v29';
+const VERSION = 'papertrade-one-coin-20m-rolling-extreme-close-v30';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -146,7 +146,7 @@ async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
   const closeAtMs = (periodStart + PERIOD_SECONDS) * 1000;
-  const rollingStartMs = closeAtMs - 10 * 60_000;
+  const rollingStartMs = closeAtMs - 20 * 60_000;
   const result = {};
 
   for (const market of ['BTC', 'ETH']) {
@@ -173,12 +173,12 @@ async function finishPeriod(periodStart, window) {
   const eth = result.ETH;
   const exactlyOneExtreme = Boolean(btc && eth && Number(btc.extreme) + Number(eth.extreme) === 1);
   window.alerted = true;
-  window.BTC10m = btc;
-  window.ETH10m = eth;
+  window.BTC20m = btc;
+  window.ETH20m = eth;
   window.exactlyOneExtreme = exactlyOneExtreme;
 
   console.log(JSON.stringify({
-    level: 'info', event: 'rolling_10m_extreme_close_evaluated', version: VERSION,
+    level: 'info', event: 'rolling_20m_extreme_close_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
@@ -190,15 +190,15 @@ async function finishPeriod(periodStart, window) {
     const chosen = market === 'BTC' ? btc : eth;
     const other = market === 'BTC' ? eth : btc;
     const extremeType = chosen.atMinimum ? 'МИНИМУМ' : 'МАКСИМУМ';
-    const message = `<b>${market}: закрытие на 10-минутном ${extremeType}</b>
+    const message = `<b>${market}: закрытие на 20-минутном ${extremeType}</b>
 Цена закрытия: ${priceText(chosen.close)}
-Диапазон за 10 минут: ${priceText(chosen.min)} — ${priceText(chosen.max)}
-${market === 'BTC' ? 'ETH' : 'BTC'} не закрылся на своём 10-минутном минимуме или максимуме
+Диапазон за 20 минут: ${priceText(chosen.min)} — ${priceText(chosen.max)}
+${market === 'BTC' ? 'ETH' : 'BTC'} не закрылся на своём 20-минутном минимуме или максимуме
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
     await send(message);
     state.lastAlertSentPeriod = periodStart;
     console.log(JSON.stringify({
-      level: 'info', event: 'rolling_10m_extreme_close_alert_sent', version: VERSION,
+      level: 'info', event: 'rolling_20m_extreme_close_alert_sent', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       market, extremeType, close: chosen.close, otherMarketExtreme: other.extreme,
     }));
@@ -306,7 +306,7 @@ async function poll() {
     }
   }
 
-  const historyCutoffMs = Date.now() - 11 * 60_000;
+  const historyCutoffMs = Date.now() - 21 * 60_000;
   for (const market of ['BTC', 'ETH']) {
     state.priceHistory[market] = (state.priceHistory[market] || []).filter(point => point.ts >= historyCutoffMs);
   }
@@ -322,7 +322,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert only when exactly one of BTC/ETH closes at its own rolling 10-minute sampled markPrice minimum or maximum; the other coin must not close at either extreme',
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert only when exactly one of BTC/ETH closes at its own rolling 20-minute sampled markPrice minimum or maximum; the other coin must not close at either extreme',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
