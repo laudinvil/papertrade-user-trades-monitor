@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-opposite-coin-closes-reversal-any-two-periods-v27';
+const VERSION = 'papertrade-one-coin-15m-rolling-extreme-close-v28';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -40,6 +40,7 @@ function loadState() {
 }
 
 let state = loadState();
+state.priceHistory ||= { BTC: [], ETH: [] };
 
 function saveState() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -144,79 +145,65 @@ function getMarketMovement(market, window, periodStart) {
 async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
-  const btc = getMarketMovement('BTC', window.BTC, periodStart);
-  const eth = getMarketMovement('ETH', window.ETH, periodStart);
-  const sign = movement => !movement ? 0 : movement.pct > 0 ? 1 : movement.pct < 0 ? -1 : 0;
-  const btcSign = sign(btc);
-  const ethSign = sign(eth);
-  const opposite = btcSign !== 0 && ethSign !== 0 && btcSign === -ethSign;
+  const closeAtMs = (periodStart + PERIOD_SECONDS) * 1000;
+  const rollingStartMs = closeAtMs - 15 * 60_000;
+  const result = {};
 
+  for (const market of ['BTC', 'ETH']) {
+    const close = Number(window[market]?.lastPrice);
+    const samples = (state.priceHistory?.[market] || [])
+      .filter(point => point.ts >= rollingStartMs && point.ts <= closeAtMs && Number.isFinite(point.price));
+    if (!Number.isFinite(close) || close <= 0 || samples.length === 0) {
+      result[market] = null;
+      continue;
+    }
+    const prices = samples.map(point => point.price);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    result[market] = {
+      close, min, max,
+      atMinimum: close === min,
+      atMaximum: close === max,
+      extreme: close === min || close === max,
+      samples: samples.length,
+    };
+  }
+
+  const btc = result.BTC;
+  const eth = result.ETH;
+  const exactlyOneExtreme = Boolean(btc && eth && Number(btc.extreme) + Number(eth.extreme) === 1);
   window.alerted = true;
-  window.oppositeDirections = opposite;
-  window.BTCDirection = btc?.direction || null;
-  window.ETHDirection = eth?.direction || null;
-
-  // Compare with the previous qualifying opposite-direction period,
-  // regardless of how many 5-minute periods occurred in between.
-  const previous = state.lastOppositePeriod;
-  const reversedAgainstPrevious = opposite
-    && previous
-    && previous.BTCDirection
-    && previous.ETHDirection
-    && btc.direction !== previous.BTCDirection
-    && eth.direction !== previous.ETHDirection;
+  window.BTC15m = btc;
+  window.ETH15m = eth;
+  window.exactlyOneExtreme = exactlyOneExtreme;
 
   console.log(JSON.stringify({
-    level: 'info',
-    event: 'opposite_coin_close_evaluated',
-    version: VERSION,
+    level: 'info', event: 'rolling_15m_extreme_close_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
-    BTC: btc ? { direction: btc.direction, changePct: btc.pct } : null,
-    ETH: eth ? { direction: eth.direction, changePct: eth.pct } : null,
-    oppositeDirections: opposite,
-    previousOppositePeriod: previous?.periodStart
-      ? new Date(previous.periodStart * 1000).toISOString()
-      : null,
-    reversedAgainstPrevious,
+    windowStart: new Date(rollingStartMs).toISOString(),
+    windowEnd: new Date(closeAtMs).toISOString(),
+    BTC: btc, ETH: eth, exactlyOneExtreme,
   }));
 
-  if (!opposite) {
-    saveState();
-    return;
-  }
-
-  const directionText = movement => movement.direction === 'up' ? 'ВВЕРХ' : 'ВНИЗ';
-  if (reversedAgainstPrevious) {
-    const previousDirections = `Предыдущий подходящий период: BTC ${previous.BTCDirection === 'up' ? 'ВВЕРХ' : 'ВНИЗ'}, ETH ${previous.ETHDirection === 'up' ? 'ВВЕРХ' : 'ВНИЗ'}`;
-    const message = `<b>BTC и ETH развернулись в противоположные стороны</b>
-${previousDirections}
-Текущий период: BTC ${directionText(btc)} ${priceText(btc.first)} → ${priceText(btc.last)} (${percentText(btc.pct)})
-ETH ${directionText(eth)} ${priceText(eth.first)} → ${priceText(eth.last)} (${percentText(eth.pct)})
-<a href="${marketLink('BTC', periodStart + PERIOD_SECONDS)}">Polymarket BTC 5m</a> · <a href="${marketLink('ETH', periodStart + PERIOD_SECONDS)}">Polymarket ETH 5m</a>`;
+  if (exactlyOneExtreme) {
+    const market = btc.extreme ? 'BTC' : 'ETH';
+    const chosen = market === 'BTC' ? btc : eth;
+    const other = market === 'BTC' ? eth : btc;
+    const extremeType = chosen.atMinimum ? 'МИНИМУМ' : 'МАКСИМУМ';
+    const message = `<b>${market}: закрытие на 15-минутном ${extremeType}</b>
+Цена закрытия: ${priceText(chosen.close)}
+Диапазон за 15 минут: ${priceText(chosen.min)} — ${priceText(chosen.max)}
+${market === 'BTC' ? 'ETH' : 'BTC'} не закрылся на своём 15-минутном минимуме или максимуме
+<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
     await send(message);
     state.lastAlertSentPeriod = periodStart;
-  }
-
-  // Every qualifying period becomes the reference for the next qualifying
-  // period. Non-qualifying periods do not erase this reference.
-  state.lastOppositePeriod = {
-    periodStart,
-    BTCDirection: btc.direction,
-    ETHDirection: eth.direction,
-  };
-  saveState();
-
-  if (reversedAgainstPrevious) {
     console.log(JSON.stringify({
-      level: 'info',
-      event: 'opposite_coin_close_alert_sent',
-      version: VERSION,
+      level: 'info', event: 'rolling_15m_extreme_close_alert_sent', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
-      previousOppositePeriodStart: new Date(previous.periodStart * 1000).toISOString(),
-      BTC: { direction: btc.direction, changePct: btc.pct },
-      ETH: { direction: eth.direction, changePct: eth.pct },
+      market, extremeType, close: chosen.close, otherMarketExtreme: other.extreme,
     }));
   }
+  saveState();
 }
 
 async function poll() {
@@ -285,6 +272,7 @@ async function poll() {
           lastAtMs: snapshots[market].asOfMs,
           samples: 1,
         };
+        state.priceHistory[market].push({ ts: snapshots[market].asOfMs, price: snapshots[market].price });
       }
     }
     saveState();
@@ -297,6 +285,8 @@ async function poll() {
   for (const market of ['BTC', 'ETH']) {
     const snapshot = snapshots[market];
     if (!snapshot) continue;
+    const history = state.priceHistory[market] ||= [];
+    history.push({ ts: snapshot.asOfMs, price: snapshot.price });
     const item = active[market];
     if (!item) {
       active[market] = {
@@ -316,6 +306,11 @@ async function poll() {
     }
   }
 
+  const historyCutoffMs = Date.now() - 16 * 60_000;
+  for (const market of ['BTC', 'ETH']) {
+    state.priceHistory[market] = (state.priceHistory[market] || []).filter(point => point.ts >= historyCutoffMs);
+  }
+
   for (const key of Object.keys(state.windows)) {
     if (Number(key) < currentStart - 2 * PERIOD_SECONDS) delete state.windows[key];
   }
@@ -327,7 +322,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
-  statePath: STATE_PATH, alert: 'any two qualifying completed 5-minute periods: BTC and ETH close in opposite directions in each, and both coins reverse direction versus the previous qualifying period; no percentage threshold',
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert only when exactly one of BTC/ETH closes at its own rolling 15-minute sampled markPrice minimum or maximum; the other coin must not close at either extreme',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
