@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-opposite-coin-closes-two-consecutive-periods-v26';
+const VERSION = 'papertrade-opposite-coin-closes-reversal-any-two-periods-v27';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -151,21 +151,20 @@ async function finishPeriod(periodStart, window) {
   const ethSign = sign(eth);
   const opposite = btcSign !== 0 && ethSign !== 0 && btcSign === -ethSign;
 
-  // Store the result for this completed period. An alert requires two
-  // consecutive completed periods, each with BTC and ETH moving oppositely.
   window.alerted = true;
   window.oppositeDirections = opposite;
   window.BTCDirection = btc?.direction || null;
   window.ETHDirection = eth?.direction || null;
-  saveState();
 
-  const previousStart = periodStart - PERIOD_SECONDS;
-  const previous = state.windows[String(previousStart)];
-  const twoConsecutiveOpposite = opposite
+  // Compare with the previous qualifying opposite-direction period,
+  // regardless of how many 5-minute periods occurred in between.
+  const previous = state.lastOppositePeriod;
+  const reversedAgainstPrevious = opposite
     && previous
-    && previous.alerted === true
-    && previous.partial !== true
-    && previous.oppositeDirections === true;
+    && previous.BTCDirection
+    && previous.ETHDirection
+    && btc.direction !== previous.BTCDirection
+    && eth.direction !== previous.ETHDirection;
 
   console.log(JSON.stringify({
     level: 'info',
@@ -175,34 +174,49 @@ async function finishPeriod(periodStart, window) {
     BTC: btc ? { direction: btc.direction, changePct: btc.pct } : null,
     ETH: eth ? { direction: eth.direction, changePct: eth.pct } : null,
     oppositeDirections: opposite,
-    previousPeriodOpposite: previous?.oppositeDirections === true,
-    twoConsecutiveOppositePeriods: twoConsecutiveOpposite,
+    previousOppositePeriod: previous?.periodStart
+      ? new Date(previous.periodStart * 1000).toISOString()
+      : null,
+    reversedAgainstPrevious,
   }));
 
-  if (!twoConsecutiveOpposite) return;
+  if (!opposite) {
+    saveState();
+    return;
+  }
 
   const directionText = movement => movement.direction === 'up' ? 'ВВЕРХ' : 'ВНИЗ';
-  const previousDirections = previous.BTCDirection && previous.ETHDirection
-    ? `Предыдущий период: BTC ${previous.BTCDirection === 'up' ? 'ВВЕРХ' : 'ВНИЗ'}, ETH ${previous.ETHDirection === 'up' ? 'ВВЕРХ' : 'ВНИЗ'}`
-    : 'Предыдущий период: BTC и ETH закрылись разнонаправленно';
-  const message = `<b>BTC и ETH закрылись разнонаправленно 2 периода подряд</b>
+  if (reversedAgainstPrevious) {
+    const previousDirections = `Предыдущий подходящий период: BTC ${previous.BTCDirection === 'up' ? 'ВВЕРХ' : 'ВНИЗ'}, ETH ${previous.ETHDirection === 'up' ? 'ВВЕРХ' : 'ВНИЗ'}`;
+    const message = `<b>BTC и ETH развернулись в противоположные стороны</b>
 ${previousDirections}
 Текущий период: BTC ${directionText(btc)} ${priceText(btc.first)} → ${priceText(btc.last)} (${percentText(btc.pct)})
 ETH ${directionText(eth)} ${priceText(eth.first)} → ${priceText(eth.last)} (${percentText(eth.pct)})
 <a href="${marketLink('BTC', periodStart + PERIOD_SECONDS)}">Polymarket BTC 5m</a> · <a href="${marketLink('ETH', periodStart + PERIOD_SECONDS)}">Polymarket ETH 5m</a>`;
+    await send(message);
+    state.lastAlertSentPeriod = periodStart;
+  }
 
-  await send(message);
-  state.lastAlertSentPeriod = periodStart;
+  // Every qualifying period becomes the reference for the next qualifying
+  // period. Non-qualifying periods do not erase this reference.
+  state.lastOppositePeriod = {
+    periodStart,
+    BTCDirection: btc.direction,
+    ETHDirection: eth.direction,
+  };
   saveState();
-  console.log(JSON.stringify({
-    level: 'info',
-    event: 'opposite_coin_close_alert_sent',
-    version: VERSION,
-    periodStart: new Date(periodStart * 1000).toISOString(),
-    previousPeriodStart: new Date(previousStart * 1000).toISOString(),
-    BTC: { direction: btc.direction, changePct: btc.pct },
-    ETH: { direction: eth.direction, changePct: eth.pct },
-  }));
+
+  if (reversedAgainstPrevious) {
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'opposite_coin_close_alert_sent',
+      version: VERSION,
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      previousOppositePeriodStart: new Date(previous.periodStart * 1000).toISOString(),
+      BTC: { direction: btc.direction, changePct: btc.pct },
+      ETH: { direction: eth.direction, changePct: eth.pct },
+    }));
+  }
 }
 
 async function poll() {
@@ -313,7 +327,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
-  statePath: STATE_PATH, alert: 'two consecutive completed 5-minute periods with BTC and ETH closing in opposite directions in each period; no percentage threshold',
+  statePath: STATE_PATH, alert: 'any two qualifying completed 5-minute periods: BTC and ETH close in opposite directions in each, and both coins reverse direction versus the previous qualifying period; no percentage threshold',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
