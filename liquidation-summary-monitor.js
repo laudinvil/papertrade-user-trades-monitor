@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-any-coin-20m-rolling-extreme-close-v31';
+const VERSION = 'papertrade-any-coin-20m-rolling-extreme-close-v32';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -192,9 +192,9 @@ async function finishPeriod(periodStart, window) {
         ...(item.atMinimum ? ['МИНИМУМ'] : []),
         ...(item.atMaximum ? ['МАКСИМУМ'] : []),
       ].join(' и ');
-      return `<b>${market}: закрытие на 20-минутном ${extremeTypes}</b>
-Цена закрытия: ${priceText(item.close)}
-Диапазон за 20 минут: ${priceText(item.min)} — ${priceText(item.max)}
+      return `<b>${market}: 20-минутный ${extremeTypes}</b>
+Цена: ${priceText(item.close)}
+Диапазон: ${priceText(item.min)} — ${priceText(item.max)}
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
     });
     await send(lines.join('\n\n'));
