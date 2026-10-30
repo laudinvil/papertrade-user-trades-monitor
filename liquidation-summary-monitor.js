@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-one-coin-20m-rolling-extreme-close-v30';
+const VERSION = 'papertrade-any-coin-20m-rolling-extreme-close-v31';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -171,36 +171,38 @@ async function finishPeriod(periodStart, window) {
 
   const btc = result.BTC;
   const eth = result.ETH;
-  const exactlyOneExtreme = Boolean(btc && eth && Number(btc.extreme) + Number(eth.extreme) === 1);
+  const extremeMarkets = ['BTC', 'ETH'].filter(market => result[market]?.extreme);
   window.alerted = true;
   window.BTC20m = btc;
   window.ETH20m = eth;
-  window.exactlyOneExtreme = exactlyOneExtreme;
+  window.extremeMarkets = extremeMarkets;
 
   console.log(JSON.stringify({
     level: 'info', event: 'rolling_20m_extreme_close_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
-    BTC: btc, ETH: eth, exactlyOneExtreme,
+    BTC: btc, ETH: eth, extremeMarkets,
   }));
 
-  if (exactlyOneExtreme) {
-    const market = btc.extreme ? 'BTC' : 'ETH';
-    const chosen = market === 'BTC' ? btc : eth;
-    const other = market === 'BTC' ? eth : btc;
-    const extremeType = chosen.atMinimum ? 'МИНИМУМ' : 'МАКСИМУМ';
-    const message = `<b>${market}: закрытие на 20-минутном ${extremeType}</b>
-Цена закрытия: ${priceText(chosen.close)}
-Диапазон за 20 минут: ${priceText(chosen.min)} — ${priceText(chosen.max)}
-${market === 'BTC' ? 'ETH' : 'BTC'} не закрылся на своём 20-минутном минимуме или максимуме
+  if (extremeMarkets.length > 0) {
+    const lines = extremeMarkets.map(market => {
+      const item = result[market];
+      const extremeTypes = [
+        ...(item.atMinimum ? ['МИНИМУМ'] : []),
+        ...(item.atMaximum ? ['МАКСИМУМ'] : []),
+      ].join(' и ');
+      return `<b>${market}: закрытие на 20-минутном ${extremeTypes}</b>
+Цена закрытия: ${priceText(item.close)}
+Диапазон за 20 минут: ${priceText(item.min)} — ${priceText(item.max)}
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
-    await send(message);
+    });
+    await send(lines.join('\n\n'));
     state.lastAlertSentPeriod = periodStart;
     console.log(JSON.stringify({
       level: 'info', event: 'rolling_20m_extreme_close_alert_sent', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
-      market, extremeType, close: chosen.close, otherMarketExtreme: other.extreme,
+      extremeMarkets,
     }));
   }
   saveState();
@@ -322,7 +324,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert only when exactly one of BTC/ETH closes at its own rolling 20-minute sampled markPrice minimum or maximum; the other coin must not close at either extreme',
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC and/or ETH closes at its own rolling 20-minute sampled markPrice minimum or maximum; either or both markets may qualify',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
