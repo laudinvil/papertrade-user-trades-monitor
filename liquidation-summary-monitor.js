@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-any-coin-30m-alternating-alert-markets-v36';
+const VERSION = 'papertrade-any-coin-30m-all-arrows-up-v37';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -134,7 +134,7 @@ function getMarketMovement(market, window, periodStart) {
 
   const pct = (last - first) / first * 100;
   const direction = pct < 0 ? 'down' : 'up';
-  const label = direction === 'down' ? '⬇️ ВНИЗ' : '⬆️ ВВЕРХ';
+  const label = direction === 'down' ? '⬆️ ВНИЗ' : '⬆️ ВВЕРХ';
   const message = `<b>${market} ${label}</b>
 Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})
 \u200B
@@ -198,7 +198,7 @@ async function finishPeriod(periodStart, window) {
         const item = result[market];
         const extremeTypes = [
           ...(item.atMinimum ? ['МИНИМУМ ⬆️'] : []),
-          ...(item.atMaximum ? ['МАКСИМУМ ⬇️'] : []),
+          ...(item.atMaximum ? ['МАКСИМУМ ⬆️'] : []),
         ].join(' и ');
         return `<b>${market}: 30-минутный ${extremeTypes}</b>
 Цена: ${priceText(item.close)}
