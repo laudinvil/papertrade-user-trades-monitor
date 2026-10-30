@@ -132,8 +132,6 @@ function getMarketMovement(market, window, periodStart) {
   if (!window || !Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) return null;
 
   const pct = (last - first) / first * 100;
-  // Only accept small closing moves within the previously specified range.
-  if (Math.abs(pct) > 0.05) return null;
   const direction = pct < 0 ? 'down' : 'up';
   const label = direction === 'down' ? '⬇️ ВНИЗ' : '⬆️ ВВЕРХ';
   const message = `<b>${market} ${label}</b>
@@ -315,7 +313,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
-  statePath: STATE_PATH, alert: 'two consecutive completed 5-minute periods with BTC and ETH closing in opposite directions in each period; each move must be within ±0.05%',
+  statePath: STATE_PATH, alert: 'two consecutive completed 5-minute periods with BTC and ETH closing in opposite directions in each period; no percentage threshold',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
