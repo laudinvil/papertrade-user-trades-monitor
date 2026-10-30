@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-any-coin-20m-rolling-extreme-close-v32';
+const VERSION = 'papertrade-any-coin-20m-alternating-alert-markets-v33';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -186,24 +186,40 @@ async function finishPeriod(periodStart, window) {
   }));
 
   if (extremeMarkets.length > 0) {
-    const lines = extremeMarkets.map(market => {
-      const item = result[market];
-      const extremeTypes = [
-        ...(item.atMinimum ? ['МИНИМУМ'] : []),
-        ...(item.atMaximum ? ['МАКСИМУМ'] : []),
-      ].join(' и ');
-      return `<b>${market}: 20-минутный ${extremeTypes}</b>
+    const currentAlertMarkets = [...extremeMarkets].sort();
+    const previousAlertMarkets = Array.isArray(state.lastAlertMarkets)
+      ? [...state.lastAlertMarkets].sort()
+      : [];
+    const sameAlertMarkets = currentAlertMarkets.length === previousAlertMarkets.length
+      && currentAlertMarkets.every((market, index) => market === previousAlertMarkets[index]);
+
+    if (!sameAlertMarkets) {
+      const lines = extremeMarkets.map(market => {
+        const item = result[market];
+        const extremeTypes = [
+          ...(item.atMinimum ? ['МИНИМУМ'] : []),
+          ...(item.atMaximum ? ['МАКСИМУМ'] : []),
+        ].join(' и ');
+        return `<b>${market}: 20-минутный ${extremeTypes}</b>
 Цена: ${priceText(item.close)}
 Диапазон: ${priceText(item.min)} — ${priceText(item.max)}
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
-    });
-    await send(lines.join('\n\n'));
-    state.lastAlertSentPeriod = periodStart;
-    console.log(JSON.stringify({
-      level: 'info', event: 'rolling_20m_extreme_close_alert_sent', version: VERSION,
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      extremeMarkets,
-    }));
+      });
+      await send(lines.join('\n\n'));
+      state.lastAlertSentPeriod = periodStart;
+      state.lastAlertMarkets = currentAlertMarkets;
+      console.log(JSON.stringify({
+        level: 'info', event: 'rolling_20m_extreme_close_alert_sent', version: VERSION,
+        periodStart: new Date(periodStart * 1000).toISOString(),
+        extremeMarkets,
+      }));
+    } else {
+      console.log(JSON.stringify({
+        level: 'info', event: 'rolling_20m_extreme_alert_suppressed_same_markets', version: VERSION,
+        periodStart: new Date(periodStart * 1000).toISOString(),
+        extremeMarkets,
+      }));
+    }
   }
   saveState();
 }
