@@ -164,7 +164,7 @@ async function finishPeriod(periodStart, window) {
       close, min, max,
       atMinimum: close === min,
       atMaximum: close === max,
-      extreme: close === min || close === max,
+      extreme: close === min,
       samples: samples.length,
     };
   }
@@ -200,7 +200,6 @@ async function finishPeriod(periodStart, window) {
         const item = result[market];
         const extremeTypes = [
           ...(item.atMinimum ? ['МИНИМУМ ⬆️'] : []),
-          ...(item.atMaximum ? ['МАКСИМУМ ⬆️'] : []),
         ].join(' и ');
         return `<b>${market}: 35-минутный ${extremeTypes}</b>
 Цена: ${priceText(item.close)}
