@@ -207,9 +207,11 @@ async function finishPeriod(periodStart, window) {
 Диапазон: ${priceText(item.min)} — ${priceText(item.max)}
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
       });
-      await send(lines.join('\n\n'));
+      // Reserve this period before sending so a restart cannot send it twice.
       state.lastAlertSentPeriod = periodStart;
       state.lastAlertMarkets = currentAlertMarkets;
+      saveState();
+      await send(lines.join('\\n\\n'));
       console.log(JSON.stringify({
         level: 'info', event: 'rolling_35m_extreme_close_alert_sent', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
