@@ -207,8 +207,7 @@ async function finishPeriod(periodStart, window) {
         const item = result[market];
         const extremeTypes = 'МАКСИМУМ ⬆️';
         return `<b>${market}: 5-минутный ${extremeTypes}</b>
-Цена: ${priceText(item.close)}
-Диапазон: ${priceText(item.min)} — ${priceText(item.max)}
+
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
       });
       // Reserve this period before sending so a restart cannot send it twice.
