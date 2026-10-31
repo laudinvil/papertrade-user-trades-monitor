@@ -185,7 +185,14 @@ async function finishPeriod(periodStart, window) {
     BTC: btc, ETH: eth, extremeMarkets,
   }));
 
-  if (extremeMarkets.length > 0) {
+  // If BTC and ETH both qualify in the same 5-minute period, ignore both.
+  if (extremeMarkets.length === 2) {
+    console.log(JSON.stringify({
+      level: 'info', event: 'period_5m_extreme_alert_suppressed_both_markets', version: VERSION,
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      extremeMarkets,
+    }));
+  } else if (extremeMarkets.length === 1) {
     const currentAlertMarkets = [...extremeMarkets].sort();
     const previousAlertMarkets = Array.isArray(state.lastAlertMarkets)
       ? [...state.lastAlertMarkets].sort()
