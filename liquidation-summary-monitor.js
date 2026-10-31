@@ -207,7 +207,7 @@ async function finishPeriod(periodStart, window) {
         const item = result[market];
         const extremeTypes = 'МАКСИМУМ ⬆️';
         return `<b>⬆️ ${market}: 5-минутный ${extremeTypes}</b>
-Диапазон: ${priceText(item.min)} — ${priceText(item.max)} (разница: ${priceText(item.max - item.min)})
+Диапазон: ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.max - item.min)})
 
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
       });
