@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-any-coin-30m-all-arrows-up-v37';
+const VERSION = 'papertrade-any-coin-35m-all-arrows-up-v38';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -146,7 +146,7 @@ async function finishPeriod(periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
   const closeAtMs = (periodStart + PERIOD_SECONDS) * 1000;
-  const rollingStartMs = closeAtMs - 30 * 60_000;
+  const rollingStartMs = closeAtMs - 35 * 60_000;
   const result = {};
 
   for (const market of ['BTC', 'ETH']) {
@@ -178,7 +178,7 @@ async function finishPeriod(periodStart, window) {
   window.extremeMarkets = extremeMarkets;
 
   console.log(JSON.stringify({
-    level: 'info', event: 'rolling_30m_extreme_close_evaluated', version: VERSION,
+    level: 'info', event: 'rolling_35m_extreme_close_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
@@ -200,7 +200,7 @@ async function finishPeriod(periodStart, window) {
           ...(item.atMinimum ? ['МИНИМУМ ⬆️'] : []),
           ...(item.atMaximum ? ['МАКСИМУМ ⬆️'] : []),
         ].join(' и ');
-        return `<b>${market}: 30-минутный ${extremeTypes}</b>
+        return `<b>${market}: 35-минутный ${extremeTypes}</b>
 Цена: ${priceText(item.close)}
 Диапазон: ${priceText(item.min)} — ${priceText(item.max)}
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
@@ -209,13 +209,13 @@ async function finishPeriod(periodStart, window) {
       state.lastAlertSentPeriod = periodStart;
       state.lastAlertMarkets = currentAlertMarkets;
       console.log(JSON.stringify({
-        level: 'info', event: 'rolling_30m_extreme_close_alert_sent', version: VERSION,
+        level: 'info', event: 'rolling_35m_extreme_close_alert_sent', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         extremeMarkets,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'rolling_30m_extreme_alert_suppressed_same_markets', version: VERSION,
+        level: 'info', event: 'rolling_35m_extreme_alert_suppressed_same_markets', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         extremeMarkets,
       }));
@@ -324,7 +324,7 @@ async function poll() {
     }
   }
 
-  const historyCutoffMs = Date.now() - 31 * 60_000;
+  const historyCutoffMs = Date.now() - 36 * 60_000;
   for (const market of ['BTC', 'ETH']) {
     state.priceHistory[market] = (state.priceHistory[market] || []).filter(point => point.ts >= historyCutoffMs);
   }
@@ -340,7 +340,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC and/or ETH closes at its own rolling 30-minute sampled markPrice minimum or maximum; either or both markets may qualify',
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC and/or ETH closes at its own rolling 35-minute sampled markPrice minimum or maximum; either or both markets may qualify',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
