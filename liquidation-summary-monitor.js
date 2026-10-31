@@ -171,7 +171,11 @@ async function finishPeriod(periodStart, window) {
 
   const btc = result.BTC;
   const eth = result.ETH;
-  const extremeMarkets = ['BTC', 'ETH'].filter(market => result[market]?.extreme);
+  const minRangeByMarket = { BTC: 29, ETH: 0.81 };
+  const extremeMarkets = ['BTC', 'ETH'].filter(market => {
+    const item = result[market];
+    return item?.extreme && item.max - item.min >= minRangeByMarket[market];
+  });
   window.alerted = true;
   window.BTC30m = btc;
   window.ETH30m = eth;
