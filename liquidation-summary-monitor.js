@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-min-max-v39';
+const VERSION = 'papertrade-5m-period-maximum-only-v40';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -164,7 +164,7 @@ async function finishPeriod(periodStart, window) {
       close, min, max,
       atMinimum: close === min,
       atMaximum: close === max,
-      extreme: close === min || close === max,
+      extreme: close === max,
       samples: samples.length,
     };
   }
@@ -205,10 +205,7 @@ async function finishPeriod(periodStart, window) {
     if (!sameAlertMarkets && !alreadySentForPeriod) {
       const lines = extremeMarkets.map(market => {
         const item = result[market];
-        const extremeTypes = [
-          ...(item.atMinimum ? ['МИНИМУМ ⬆️'] : []),
-          ...(item.atMaximum ? ['МАКСИМУМ ⬆️'] : []),
-        ].join(' и ');
+        const extremeTypes = 'МАКСИМУМ ⬆️';
         return `<b>${market}: 5-минутный ${extremeTypes}</b>
 Цена: ${priceText(item.close)}
 Диапазон: ${priceText(item.min)} — ${priceText(item.max)}
