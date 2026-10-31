@@ -193,7 +193,9 @@ async function finishPeriod(periodStart, window) {
     const sameAlertMarkets = currentAlertMarkets.length === previousAlertMarkets.length
       && currentAlertMarkets.every((market, index) => market === previousAlertMarkets[index]);
 
-    if (!sameAlertMarkets) {
+    const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
+
+    if (!sameAlertMarkets && !alreadySentForPeriod) {
       const lines = extremeMarkets.map(market => {
         const item = result[market];
         const extremeTypes = [
@@ -215,7 +217,9 @@ async function finishPeriod(periodStart, window) {
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'rolling_35m_extreme_alert_suppressed_same_markets', version: VERSION,
+        level: 'info', event: alreadySentForPeriod
+          ? 'rolling_35m_extreme_alert_suppressed_duplicate_period'
+          : 'rolling_35m_extreme_alert_suppressed_same_markets', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         extremeMarkets,
       }));
