@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v45-papertrade-live-mark-prices';
+const VERSION = 'papertrade-5m-period-minimum-only-v46-period-scoped-deduplication';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -274,15 +274,9 @@ async function finishPeriod(periodStart, window) {
     }));
   } else if (extremeMarkets.length === 1) {
     const currentAlertMarkets = [...extremeMarkets].sort();
-    const previousAlertMarkets = Array.isArray(state.lastAlertMarkets)
-      ? [...state.lastAlertMarkets].sort()
-      : [];
-    const sameAlertMarkets = currentAlertMarkets.length === previousAlertMarkets.length
-      && currentAlertMarkets.every((market, index) => market === previousAlertMarkets[index]);
-
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
 
-    if (!sameAlertMarkets && !alreadySentForPeriod) {
+    if (!alreadySentForPeriod) {
       const lines = await Promise.all(extremeMarkets.map(async market => {
         const item = result[market];
         const extremeTypes = 'МИНИМУМ ⬇️';
@@ -304,9 +298,7 @@ async function finishPeriod(periodStart, window) {
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: alreadySentForPeriod
-          ? 'period_5m_extreme_alert_suppressed_duplicate_period'
-          : 'period_5m_extreme_alert_suppressed_same_markets', version: VERSION,
+        level: 'info', event: 'period_5m_extreme_alert_suppressed_duplicate_period', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         extremeMarkets,
       }));
