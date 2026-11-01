@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const PAPERTRADE_MARKETS_URL = 'https://papertrade-ai.ninabrekkerese.workers.dev/api/v1/tools/get_markets';
+const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
 const PERIOD_SECONDS = 300;
 const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 20_000));
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v53';
+const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v54-direct-heatmap';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -66,88 +66,95 @@ function saveState() {
 }
 
 async function fetchPapertradePrices() {
-  let response;
-  let lastRequestError;
-  const maxAttempts = 3;
+  async function fetchMarket(market) {
+    const url = new URL(PAPERTRADE_HEATMAP_URL);
+    url.searchParams.set('market', market);
+    let response;
+    let lastRequestError;
+    const maxAttempts = 3;
 
-  // Papertrade's public get_markets tool returns the live BTC/ETH markPrice
-  // used by the exchange. One request supplies both markets from one snapshot.
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      response = await fetch(PAPERTRADE_MARKETS_URL, {
-        headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
-        signal: AbortSignal.timeout(12_000),
-      });
-      lastRequestError = null;
-      if (response.ok || ![429, 502, 503, 504].includes(response.status)) break;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        response = await fetch(url, {
+          headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
+          signal: AbortSignal.timeout(20_000),
+        });
+        lastRequestError = null;
+        if (response.ok || ![429, 502, 503, 504].includes(response.status)) break;
 
-      const retryAfter = Number(response.headers.get('retry-after'));
-      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(8_000, retryAfter * 1000)
-        : 1_500 * (2 ** attempt);
-      const warningKey = `papertrade_markets:${response.status}`;
-      const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
-      if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
-        console.warn(JSON.stringify({
-          level: 'warn', event: 'papertrade_price_request_retry',
-          status: response.status, attempt: attempt + 1, maxAttempts, waitMs,
-          throttled: true, throttleMs: LOG_THROTTLE_MS,
-        }));
-        lastTransientWarningAt.set(warningKey, Date.now());
+        const retryAfter = Number(response.headers.get('retry-after'));
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(8_000, retryAfter * 1000)
+          : 1_500 * (2 ** attempt);
+        const warningKey = `papertrade_heatmap:${market}:${response.status}`;
+        const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+        if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+          console.warn(JSON.stringify({
+            level: 'warn', event: 'papertrade_price_request_retry',
+            market, status: response.status, attempt: attempt + 1, maxAttempts, waitMs,
+            throttled: true, throttleMs: LOG_THROTTLE_MS,
+          }));
+          lastTransientWarningAt.set(warningKey, Date.now());
+        }
+        if (attempt < maxAttempts - 1) await sleep(waitMs);
+      } catch (error) {
+        lastRequestError = error;
+        if (attempt >= maxAttempts - 1) break;
+        const waitMs = 1_500 * (2 ** attempt);
+        const warningKey = `papertrade_heatmap:${market}:request_error`;
+        const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+        if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+          console.warn(JSON.stringify({
+            level: 'warn', event: 'papertrade_price_request_retry',
+            market, attempt: attempt + 1, maxAttempts, waitMs,
+            message: describeFetchError(error),
+            throttled: true, throttleMs: LOG_THROTTLE_MS,
+          }));
+          lastTransientWarningAt.set(warningKey, Date.now());
+        }
+        await sleep(waitMs);
       }
-      if (attempt < maxAttempts - 1) await sleep(waitMs);
-    } catch (error) {
-      lastRequestError = error;
-      if (attempt >= maxAttempts - 1) break;
-      const waitMs = 1_500 * (2 ** attempt);
-      const warningKey = 'papertrade_markets:request_error';
-      const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
-      if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
-        console.warn(JSON.stringify({
-          level: 'warn', event: 'papertrade_price_request_retry',
-          attempt: attempt + 1, maxAttempts, waitMs,
-          message: describeFetchError(error),
-          throttled: true, throttleMs: LOG_THROTTLE_MS,
-        }));
-        lastTransientWarningAt.set(warningKey, Date.now());
-      }
-      await sleep(waitMs);
     }
+
+    if (lastRequestError) {
+      throw new Error(`Papertrade heatmap ${market} failed after ${maxAttempts} attempts: ${describeFetchError(lastRequestError)}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const raw = await response.text();
+    let body;
+    try { body = JSON.parse(raw); } catch { body = null; }
+
+    const candidates = [
+      body?.markPrice,
+      body?.data?.markPrice,
+      body?.heatmap?.markPrice,
+      body?.result?.markPrice,
+    ];
+    const price = candidates.map(Number).find(value => Number.isFinite(value) && value > 0);
+    if (!response.ok || price === undefined) {
+      const apiError = body?.error?.message || body?.message || body?.error || '';
+      const detail = apiError
+        ? String(apiError)
+        : !body
+          ? `non-JSON response (${contentType || 'unknown content type'}): ${raw.slice(0, 160).replace(/\\s+/g, ' ')}`
+          : `markPrice not found; keys=${Object.keys(body).join(',') || '(none)'}; contentType=${contentType}`;
+      throw new Error(`Papertrade heatmap ${market} HTTP ${response.status}: ${detail}`);
+    }
+
+    const asOfCandidates = [body?.asOfMs, body?.data?.asOfMs, body?.heatmap?.asOfMs, body?.result?.asOfMs];
+    const asOfMs = asOfCandidates.map(Number).find(value => Number.isFinite(value) && value > 0) || Date.now();
+    return { market, price, asOfMs };
   }
 
-  if (lastRequestError) {
-    throw new Error(`Papertrade get_markets failed after ${maxAttempts} attempts: ${describeFetchError(lastRequestError)}`);
-  }
-
-  const contentType = response.headers.get('content-type') || '';
-  const raw = await response.text();
-  let body;
-  try { body = JSON.parse(raw); } catch { body = null; }
-  const markets = body?.data?.markets || body?.markets;
-  if (!response.ok || body?.ok === false || !Array.isArray(markets)) {
-    const apiError = body?.error?.message || body?.message || body?.error || '';
-    const detail = apiError
-      ? String(apiError)
-      : !body
-        ? `non-JSON response (${contentType || 'unknown content type'}): ${raw.slice(0, 160).replace(/\\s+/g, ' ')}`
-        : `markets array not found; keys=${Object.keys(body).join(',') || '(none)'}; contentType=${contentType}`;
-    throw new Error(`Papertrade get_markets HTTP ${response.status}: ${detail}`);
-  }
-
-  const asOfCandidates = [body?.data?.asOfMs, body?.asOfMs, body?.data?.timestamp, body?.timestamp];
-  const asOfMs = asOfCandidates.map(value => {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric) && numeric > 0) return numeric < 1e12 ? numeric * 1000 : numeric;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : NaN;
-  }).find(value => Number.isFinite(value) && value > 0) || Date.now();
-
-  return Object.fromEntries(['BTC', 'ETH'].map(market => {
-    const item = markets.find(entry => String(entry?.market || entry?.symbol || '').toUpperCase() === market);
-    const price = Number(item?.markPrice);
-    if (!Number.isFinite(price) || price <= 0) return [market, null];
-    return [market, { market, price, asOfMs }];
+  const results = await Promise.all(['BTC', 'ETH'].map(async market => {
+    try {
+      return [market, await fetchMarket(market)];
+    } catch (error) {
+      return [market, { error: error instanceof Error ? error.message : String(error) }];
+    }
   }));
+  return Object.fromEntries(results);
 }
 
 async function send(message) {
@@ -343,8 +350,8 @@ async function poll() {
   try {
     const prices = await fetchPapertradePrices();
     for (const market of ['BTC', 'ETH']) {
-      if (prices[market]) snapshots[market] = prices[market];
-      else errors[market] = `Papertrade get_markets did not return a valid ${market} markPrice`;
+      if (prices[market] && !prices[market].error) snapshots[market] = prices[market];
+      else errors[market] = prices[market]?.error || `Papertrade heatmap did not return a valid ${market} markPrice`;
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -440,8 +447,8 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
-  source: PAPERTRADE_MARKETS_URL, priceField: 'data.markets[].markPrice', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: 12_000, requestAttempts: 3, minimumSamplesPerMarket: 12,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC closes at its 5-minute sampled markPrice minimum with range between $2 and $31, or ETH closes at its minimum with range <= $1.49; if both markets qualify, suppress both alerts',
+  source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: 12_000, requestAttempts: 3, minimumSamplesPerMarket: 12,
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC closes at its sampled markPrice minimum with range >= $58, or ETH closes at its minimum with range >= $1.71; if both markets qualify, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
