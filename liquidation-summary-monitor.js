@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v49-market-range-rules';
+const VERSION = 'papertrade-5m-period-minimum-only-v50-double-range-guard';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -255,7 +255,15 @@ async function finishPeriod(periodStart, window) {
 
   const btc = result.BTC;
   const eth = result.ETH;
-  const extremeMarkets = ['BTC', 'ETH'].filter(market => result[market]?.extreme);
+  // Re-check the exact numeric limits at the alert-selection boundary as a fail-closed guard.
+  const extremeMarkets = ['BTC', 'ETH'].filter(market => {
+    const item = result[market];
+    if (!item?.atMinimum) return false;
+    const range = item.max - item.min;
+    return market === 'BTC'
+      ? Number.isFinite(range) && range >= 2 && range <= 31
+      : Number.isFinite(range) && range <= 1.49;
+  });
   window.alerted = true;
   window.BTC30m = btc;
   window.ETH30m = eth;
