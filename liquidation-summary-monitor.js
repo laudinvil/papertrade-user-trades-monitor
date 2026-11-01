@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { lookup } from 'node:dns/promises';
 
 const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
 const PERIOD_SECONDS = 300;
@@ -9,7 +10,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v56-accurate-request-diagnostics';
+const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v57-dns-diagnostic';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -119,6 +120,27 @@ async function fetchPapertradePrices() {
     }
 
     if (lastRequestError) {
+      const hostname = url.hostname;
+      const diagnosticKey = `papertrade_dns_diagnostic:${hostname}`;
+      const lastDiagnosticAt = lastTransientWarningAt.get(diagnosticKey) || 0;
+      if (Date.now() - lastDiagnosticAt >= LOG_THROTTLE_MS) {
+        const diagnosticStartedAt = Date.now();
+        try {
+          const addresses = await lookup(hostname, { all: true, verbatim: true });
+          console.warn(JSON.stringify({
+            level: 'warn', event: 'papertrade_dns_resolution_check',
+            hostname, ok: true, addresses,
+            durationMs: Date.now() - diagnosticStartedAt,
+          }));
+        } catch (dnsError) {
+          console.error(JSON.stringify({
+            level: 'error', event: 'papertrade_dns_resolution_check',
+            hostname, ok: false, message: describeFetchError(dnsError),
+            durationMs: Date.now() - diagnosticStartedAt,
+          }));
+        }
+        lastTransientWarningAt.set(diagnosticKey, Date.now());
+      }
       throw new Error(`Papertrade heatmap ${market} failed after ${maxAttempts} attempts: ${describeFetchError(lastRequestError)}`);
     }
 
