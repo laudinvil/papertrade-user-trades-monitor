@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v54-direct-heatmap';
+const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v55-dns-retry';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -71,7 +71,7 @@ async function fetchPapertradePrices() {
     url.searchParams.set('market', market);
     let response;
     let lastRequestError;
-    const maxAttempts = 3;
+    const maxAttempts = 4;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
@@ -85,7 +85,7 @@ async function fetchPapertradePrices() {
         const retryAfter = Number(response.headers.get('retry-after'));
         const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
           ? Math.min(8_000, retryAfter * 1000)
-          : 1_500 * (2 ** attempt);
+          : [2_000, 5_000, 10_000][attempt] || 10_000;
         const warningKey = `papertrade_heatmap:${market}:${response.status}`;
         const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
         if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
@@ -100,7 +100,7 @@ async function fetchPapertradePrices() {
       } catch (error) {
         lastRequestError = error;
         if (attempt >= maxAttempts - 1) break;
-        const waitMs = 1_500 * (2 ** attempt);
+        const waitMs = [2_000, 5_000, 10_000][attempt] || 10_000;
         const warningKey = `papertrade_heatmap:${market}:request_error`;
         const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
         if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
