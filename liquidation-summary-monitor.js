@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v42-gamma-event-slugs';
+const VERSION = 'papertrade-5m-period-minimum-only-v43-heatmap-retry-sample-guard';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -53,29 +53,56 @@ async function fetchHeatmap(market) {
   const url = new URL(HEATMAP_URL);
   url.searchParams.set('market', market);
   let response;
-  // The heatmap API can return 502 when its upstream Hyperliquid allMids
-  // request is rate-limited (429). Retry transient failures once, with a pause.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    response = await fetch(url, {
-      headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (response.ok || ![429, 502, 503, 504].includes(response.status) || attempt === 1) break;
-    const retryAfter = Number(response.headers.get('retry-after'));
-    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
-      ? Math.min(10_000, retryAfter * 1000)
-      : 3_000;
-    const warningKey = `${market}:${response.status}`;
-    const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
-    if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
-      console.warn(JSON.stringify({
-        level: 'warn', event: 'heatmap_transient_retry', market,
-        status: response.status, attempt: attempt + 1, waitMs,
-        throttled: true, throttleMs: LOG_THROTTLE_MS,
-      }));
-      lastTransientWarningAt.set(warningKey, Date.now());
+  let lastRequestError;
+  const maxAttempts = 3;
+
+  // Heatmap occasionally stalls or returns transient upstream errors.
+  // Retry timeouts/network failures and transient HTTP statuses with bounded backoff.
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      response = await fetch(url, {
+        headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
+        signal: AbortSignal.timeout(12_000),
+      });
+      lastRequestError = null;
+      if (response.ok || ![429, 502, 503, 504].includes(response.status)) break;
+
+      const retryAfter = Number(response.headers.get('retry-after'));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(8_000, retryAfter * 1000)
+        : 1_500 * (2 ** attempt);
+      const warningKey = `${market}:${response.status}`;
+      const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+      if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+        console.warn(JSON.stringify({
+          level: 'warn', event: 'heatmap_transient_retry', market,
+          status: response.status, attempt: attempt + 1, maxAttempts, waitMs,
+          throttled: true, throttleMs: LOG_THROTTLE_MS,
+        }));
+        lastTransientWarningAt.set(warningKey, Date.now());
+      }
+      if (attempt < maxAttempts - 1) await sleep(waitMs);
+    } catch (error) {
+      lastRequestError = error;
+      if (attempt >= maxAttempts - 1) break;
+      const waitMs = 1_500 * (2 ** attempt);
+      const warningKey = `${market}:request_error`;
+      const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+      if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+        console.warn(JSON.stringify({
+          level: 'warn', event: 'heatmap_request_retry', market,
+          attempt: attempt + 1, maxAttempts, waitMs,
+          message: error instanceof Error ? error.message : String(error),
+          throttled: true, throttleMs: LOG_THROTTLE_MS,
+        }));
+        lastTransientWarningAt.set(warningKey, Date.now());
+      }
+      await sleep(waitMs);
     }
-    await sleep(waitMs);
+  }
+
+  if (lastRequestError) {
+    throw new Error(`Heatmap ${market} request failed after ${maxAttempts} attempts: ${lastRequestError instanceof Error ? lastRequestError.message : String(lastRequestError)}`);
   }
   const contentType = response.headers.get('content-type') || '';
   const raw = await response.text();
@@ -182,8 +209,17 @@ async function finishPeriod(periodStart, window) {
     const close = Number(window[market]?.lastPrice);
     const samples = (state.priceHistory?.[market] || [])
       .filter(point => point.ts >= rollingStartMs && point.ts <= closeAtMs && Number.isFinite(point.price));
-    if (!Number.isFinite(close) || close <= 0 || samples.length === 0) {
+    // With a 20-second polling interval, a healthy 5-minute period normally
+    // contains about 15 samples. Require at least 12 (80%) so outages do not
+    // produce an extreme alert from an incomplete price range.
+    const minimumSamples = 12;
+    if (!Number.isFinite(close) || close <= 0 || samples.length < minimumSamples) {
       result[market] = null;
+      console.warn(JSON.stringify({
+        level: 'warn', event: 'period_5m_market_skipped_insufficient_samples',
+        version: VERSION, market, periodStart: new Date(periodStart * 1000).toISOString(),
+        samples: samples.length, minimumSamples,
+      }));
       continue;
     }
     const prices = samples.map(point => point.price);
@@ -379,7 +415,7 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
-  source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
+  source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: 12_000, requestAttempts: 3, minimumSamplesPerMarket: 12,
   statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC and/or ETH closes at its own 5-minute sampled markPrice minimum; if both markets qualify, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
