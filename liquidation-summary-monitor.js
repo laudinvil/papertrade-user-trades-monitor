@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { lookup } from 'node:dns/promises';
+import { lookup as lookupPromise } from 'node:dns/promises';
+import { lookup as dnsLookup } from 'node:dns';
+import { request as httpsRequest } from 'node:https';
 
 const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
 const PERIOD_SECONDS = 300;
@@ -10,13 +12,59 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v57-dns-diagnostic';
+const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v58-retry-eai-again-dns';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Retry transient EAI_AGAIN errors inside Node's HTTPS DNS lookup itself.
+function lookupWithDnsRetry(hostname, options, callback) {
+  const waits = [250, 500, 1_000];
+  let attempt = 0;
+  const run = () => {
+    dnsLookup(hostname, options || {}, (error, address, family) => {
+      if (error?.code === 'EAI_AGAIN' && attempt < waits.length) {
+        const waitMs = waits[attempt++];
+        setTimeout(run, waitMs);
+        return;
+      }
+      callback(error, address, family);
+    });
+  };
+  run();
+}
+
+function requestPapertrade(url) {
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest(url, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'papertrade-liquidation-direction-monitor',
+      },
+      lookup: lookupWithDnsRetry,
+      signal: AbortSignal.timeout(PAPERTRADE_REQUEST_TIMEOUT_MS),
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      response.on('error', reject);
+      response.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        resolve({
+          ok: response.statusCode >= 200 && response.statusCode < 300,
+          status: response.statusCode || 0,
+          headers: { get: name => response.headers[String(name).toLowerCase()] ?? null },
+          text: async () => raw,
+        });
+      });
+    });
+    request.on('error', reject);
+    request.end();
+  });
+}
 
 function describeFetchError(error) {
   const chain = [];
@@ -78,10 +126,7 @@ async function fetchPapertradePrices() {
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        response = await fetch(url, {
-          headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
-          signal: AbortSignal.timeout(PAPERTRADE_REQUEST_TIMEOUT_MS),
-        });
+        response = await requestPapertrade(url);
         lastRequestError = null;
         if (response.ok || ![429, 502, 503, 504].includes(response.status)) break;
 
@@ -126,7 +171,7 @@ async function fetchPapertradePrices() {
       if (Date.now() - lastDiagnosticAt >= LOG_THROTTLE_MS) {
         const diagnosticStartedAt = Date.now();
         try {
-          const addresses = await lookup(hostname, { all: true, verbatim: true });
+          const addresses = await lookupPromise(hostname, { all: true, verbatim: true });
           console.warn(JSON.stringify({
             level: 'warn', event: 'papertrade_dns_resolution_check',
             hostname, ok: true, addresses,
