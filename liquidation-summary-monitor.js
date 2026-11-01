@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v46-period-scoped-deduplication';
+const VERSION = 'papertrade-5m-period-minimum-only-v47-upward-alert-arrows';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -279,9 +279,9 @@ async function finishPeriod(periodStart, window) {
     if (!alreadySentForPeriod) {
       const lines = await Promise.all(extremeMarkets.map(async market => {
         const item = result[market];
-        const extremeTypes = 'МИНИМУМ ⬇️';
+        const extremeTypes = 'МИНИМУМ ⬆️';
         const url = await marketLink(market, periodStart);
-        return `<b>⬇️ ${market}: 5-минутный ${extremeTypes}</b>
+        return `<b>⬆️ ${market}: 5-минутный ${extremeTypes}</b>
 Диапазон: ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.max - item.min)})
 
 <a href="${url}">Polymarket ${market} 5m</a>`;
