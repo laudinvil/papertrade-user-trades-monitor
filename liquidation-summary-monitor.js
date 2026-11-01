@@ -242,7 +242,7 @@ async function finishPeriod(periodStart, window) {
     const max = Math.max(...prices);
     const range = max - min;
     const atMinimum = close === min;
-    const rangeQualifies = market === 'BTC' ? range >= 2 : range <= 1.49;
+    const rangeQualifies = market === 'BTC' ? range >= 2 && range <= 31 : range <= 1.49;
     result[market] = {
       close, min, max, range,
       atMinimum,
@@ -433,7 +433,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_MARKETS_URL, priceField: 'data.markets[].markPrice', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: 12_000, requestAttempts: 3, minimumSamplesPerMarket: 12,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC closes at its 5-minute sampled markPrice minimum with range >= $2, or ETH closes at its minimum with range <= $1.49; if both markets qualify, suppress both alerts',
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC closes at its 5-minute sampled markPrice minimum with range between $2 and $31, or ETH closes at its minimum with range <= $1.49; if both markets qualify, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
