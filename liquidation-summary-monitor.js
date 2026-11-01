@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v48-link-plus-300s';
+const VERSION = 'papertrade-5m-period-minimum-only-v49-market-range-rules';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -240,11 +240,15 @@ async function finishPeriod(periodStart, window) {
     const prices = samples.map(point => point.price);
     const min = Math.min(...prices);
     const max = Math.max(...prices);
+    const range = max - min;
+    const atMinimum = close === min;
+    const rangeQualifies = market === 'BTC' ? range >= 2 : range <= 1.49;
     result[market] = {
-      close, min, max,
-      atMinimum: close === min,
+      close, min, max, range,
+      atMinimum,
       atMaximum: close === max,
-      extreme: close === min,
+      rangeQualifies,
+      extreme: atMinimum && rangeQualifies,
       samples: samples.length,
     };
   }
@@ -429,7 +433,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_MARKETS_URL, priceField: 'data.markets[].markPrice', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: 12_000, requestAttempts: 3, minimumSamplesPerMarket: 12,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC and/or ETH closes at its own 5-minute sampled markPrice minimum; if both markets qualify, suppress both alerts',
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC closes at its 5-minute sampled markPrice minimum with range >= $2, or ETH closes at its minimum with range <= $1.49; if both markets qualify, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
