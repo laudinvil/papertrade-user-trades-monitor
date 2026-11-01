@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-maximum-only-v40';
+const VERSION = 'papertrade-5m-period-minimum-only-v41';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -164,18 +164,14 @@ async function finishPeriod(periodStart, window) {
       close, min, max,
       atMinimum: close === min,
       atMaximum: close === max,
-      extreme: close === max,
+      extreme: close === min,
       samples: samples.length,
     };
   }
 
   const btc = result.BTC;
   const eth = result.ETH;
-  const minRangeByMarket = { BTC: 34, ETH: 1.11 };
-  const extremeMarkets = ['BTC', 'ETH'].filter(market => {
-    const item = result[market];
-    return item?.extreme && item.max - item.min >= minRangeByMarket[market];
-  });
+  const extremeMarkets = ['BTC', 'ETH'].filter(market => result[market]?.extreme);
   window.alerted = true;
   window.BTC30m = btc;
   window.ETH30m = eth;
@@ -209,8 +205,8 @@ async function finishPeriod(periodStart, window) {
     if (!sameAlertMarkets && !alreadySentForPeriod) {
       const lines = extremeMarkets.map(market => {
         const item = result[market];
-        const extremeTypes = 'МАКСИМУМ ⬆️';
-        return `<b>⬆️ ${market}: 5-минутный ${extremeTypes}</b>
+        const extremeTypes = 'МИНИМУМ ⬇️';
+        return `<b>⬇️ ${market}: 5-минутный ${extremeTypes}</b>
 Диапазон: ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.max - item.min)})
 
 <a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
@@ -354,7 +350,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: HEATMAP_URL, pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, retryTransientHttpOnce: true,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC and/or ETH closes at its own 5-minute sampled markPrice minimum or maximum; either or both markets may qualify',
+  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC and/or ETH closes at its own 5-minute sampled markPrice minimum; if both markets qualify, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
