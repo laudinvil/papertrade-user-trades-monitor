@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v50-double-range-guard';
+const VERSION = 'papertrade-5m-period-minimum-eth-1-31-btc-41-no-maximum-v51';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -242,7 +242,7 @@ async function finishPeriod(periodStart, window) {
     const max = Math.max(...prices);
     const range = max - min;
     const atMinimum = close === min;
-    const rangeQualifies = market === 'BTC' ? range >= 2 && range <= 31 : range <= 1.49;
+    const rangeQualifies = market === 'BTC' ? range >= 41 : range >= 1.31;
     result[market] = {
       close, min, max, range,
       atMinimum,
@@ -261,8 +261,8 @@ async function finishPeriod(periodStart, window) {
     if (!item?.atMinimum) return false;
     const range = item.max - item.min;
     return market === 'BTC'
-      ? Number.isFinite(range) && range >= 2 && range <= 31
-      : Number.isFinite(range) && range <= 1.49;
+      ? Number.isFinite(range) && range >= 41
+      : Number.isFinite(range) && range >= 1.31;
   });
   window.alerted = true;
   window.BTC30m = btc;
