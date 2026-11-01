@@ -7,7 +7,7 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v41';
+const VERSION = 'papertrade-5m-period-minimum-only-v42-gamma-event-slugs';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -119,8 +119,37 @@ async function send(message) {
   if (!response.ok || body.ok !== true) throw new Error(`Telegram HTTP ${response.status}: ${body.description || 'send failed'}`);
 }
 
-function marketLink(market, periodStart) {
-  return `https://polymarket.com/event/${market.toLowerCase()}-updown-5m-${periodStart}`;
+const gammaEventsCache = new Map();
+
+async function marketLink(market, periodStart) {
+  const cached = gammaEventsCache.get(market);
+  let events;
+  if (cached && Date.now() - cached.fetchedAt < 60_000) {
+    events = cached.events;
+  } else {
+    const url = new URL('https://gamma-api.polymarket.com/events');
+    url.searchParams.set('series_slug', `${market.toLowerCase()}-up-or-down-5m`);
+    url.searchParams.set('closed', 'false');
+    url.searchParams.set('limit', '500');
+    url.searchParams.set('order', 'endDate');
+    url.searchParams.set('ascending', 'true');
+    const response = await fetch(url, {
+      headers: { accept: 'application/json', 'user-agent': 'papertrade-polymarket-event-link-resolver' },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) throw new Error(`Gamma events ${market} HTTP ${response.status}`);
+    const body = await response.json();
+    if (!Array.isArray(body)) throw new Error(`Gamma events ${market}: unexpected response shape`);
+    events = body;
+    gammaEventsCache.set(market, { fetchedAt: Date.now(), events });
+  }
+
+  const event = events.find(item => {
+    const start = item?.startTime || item?.eventStartTime || item?.markets?.[0]?.eventStartTime;
+    return start && Math.floor(Date.parse(start) / 1000) === periodStart;
+  });
+  if (!event?.slug) throw new Error(`Gamma event not found for ${market} period ${periodStart}`);
+  return `https://polymarket.com/event/${event.slug}`;
 }
 
 function utcTime(seconds) {
@@ -203,14 +232,15 @@ async function finishPeriod(periodStart, window) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
 
     if (!sameAlertMarkets && !alreadySentForPeriod) {
-      const lines = extremeMarkets.map(market => {
+      const lines = await Promise.all(extremeMarkets.map(async market => {
         const item = result[market];
         const extremeTypes = 'МИНИМУМ ⬇️';
+        const url = await marketLink(market, periodStart);
         return `<b>⬇️ ${market}: 5-минутный ${extremeTypes}</b>
 Диапазон: ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.max - item.min)})
 
-<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`;
-      });
+<a href="${url}">Polymarket ${market} 5m</a>`;
+      }));
       // Reserve this period before sending so a restart cannot send it twice.
       state.lastAlertSentPeriod = periodStart;
       state.lastAlertMarkets = currentAlertMarkets;
