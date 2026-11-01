@@ -4,10 +4,12 @@ import path from 'node:path';
 const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
 const PERIOD_SECONDS = 300;
 const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 20_000));
+const PAPERTRADE_REQUEST_TIMEOUT_MS = 20_000;
+const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v55-dns-retry';
+const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v56-accurate-request-diagnostics';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -71,13 +73,13 @@ async function fetchPapertradePrices() {
     url.searchParams.set('market', market);
     let response;
     let lastRequestError;
-    const maxAttempts = 4;
+    const maxAttempts = PAPERTRADE_REQUEST_ATTEMPTS;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         response = await fetch(url, {
           headers: { accept: 'application/json', 'user-agent': 'papertrade-liquidation-direction-monitor' },
-          signal: AbortSignal.timeout(20_000),
+          signal: AbortSignal.timeout(PAPERTRADE_REQUEST_TIMEOUT_MS),
         });
         lastRequestError = null;
         if (response.ok || ![429, 502, 503, 504].includes(response.status)) break;
@@ -447,7 +449,7 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
-  source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: 12_000, requestAttempts: 3, minimumSamplesPerMarket: 12,
+  source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS, minimumSamplesPerMarket: 12,
   statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC closes at its sampled markPrice minimum with range >= $58, or ETH closes at its minimum with range >= $1.71; if both markets qualify, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
