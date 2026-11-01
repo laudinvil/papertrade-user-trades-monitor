@@ -7,13 +7,29 @@ const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS 
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-only-v43-heatmap-retry-sample-guard';
+const VERSION = 'papertrade-5m-period-minimum-only-v44-heatmap-network-error-diagnostics';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
 if (!BOT_TOKEN || !CHAT_ID) throw new Error('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function describeFetchError(error) {
+  const chain = [];
+  let current = error;
+  for (let depth = 0; current && depth < 4; depth++, current = current.cause) {
+    const item = {
+      name: current.name || 'Error',
+      message: String(current.message || current).slice(0, 240),
+    };
+    for (const key of ['code', 'syscall', 'hostname', 'address', 'port', 'errno']) {
+      if (current[key] !== undefined && current[key] !== null) item[key] = current[key];
+    }
+    chain.push(item);
+  }
+  return JSON.stringify(chain);
+}
 const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_SECONDS;
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const priceText = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -33,7 +49,7 @@ function loadState() {
     console.warn(JSON.stringify({
       level: 'warn', event: 'state_reset_unreadable',
       statePath: STATE_PATH,
-      message: error instanceof Error ? error.message : String(error),
+      message: describeFetchError(error),
     }));
     return { version: 1, initialized: false, windows: {} };
   }
@@ -102,7 +118,7 @@ async function fetchHeatmap(market) {
   }
 
   if (lastRequestError) {
-    throw new Error(`Heatmap ${market} request failed after ${maxAttempts} attempts: ${lastRequestError instanceof Error ? lastRequestError.message : String(lastRequestError)}`);
+    throw new Error(`Heatmap ${market} request failed after ${maxAttempts} attempts: ${lastRequestError instanceof Error ? lastRequestError.message : String(lastRequestError)}; details=${describeFetchError(lastRequestError)}`);
   }
   const contentType = response.headers.get('content-type') || '';
   const raw = await response.text();
