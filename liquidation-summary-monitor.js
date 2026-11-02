@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-consecutive-period-minimum-btc-range-66-v66-alert-label-removed';
+const VERSION = 'papertrade-5m-consecutive-period-minimum-btc-range-61-v67';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -324,7 +324,7 @@ async function finishPeriod(periodStart, window) {
 
   const streakMarkets = ['BTC', 'ETH'].filter(market =>
     result[market]?.atMinimum && result[market].consecutiveMinimumPeriods >= 2 &&
-    (market !== 'BTC' || (Number.isFinite(result.BTC.range) && result.BTC.range <= 66))
+    (market !== 'BTC' || (Number.isFinite(result.BTC.range) && result.BTC.range <= 61))
   );
   window.alerted = true;
   window.BTC30m = result.BTC;
