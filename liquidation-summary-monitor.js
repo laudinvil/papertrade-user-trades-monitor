@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-consecutive-period-minimum-no-thresholds-v59';
+const VERSION = 'papertrade-5m-consecutive-period-minimum-alert-every-streak-v60';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -350,9 +350,9 @@ async function finishPeriod(periodStart, window) {
     const market = streakMarkets[0];
     const streak = result[market].consecutiveMinimumPeriods;
 
-    // Send once when a streak first reaches two periods; do not repeat on
-    // every later period in the same uninterrupted streak.
-    if (streak === 2) {
+    // Send an alert on every completed period from the second consecutive
+    // minimum onward, for as long as the streak continues.
+    if (streak >= 2) {
       const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
       if (!alreadySentForPeriod) {
         const item = result[market];
