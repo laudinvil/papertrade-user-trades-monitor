@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-period-minimum-eth-1-71-btc-58-no-maximum-v58-retry-eai-again-dns';
+const VERSION = 'papertrade-5m-consecutive-period-minimum-no-thresholds-v59';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -108,6 +108,7 @@ function loadState() {
 
 let state = loadState();
 state.priceHistory ||= { BTC: [], ETH: [] };
+state.minimumStreaks ||= { BTC: 0, ETH: 0 };
 
 function saveState() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -300,96 +301,83 @@ async function finishPeriod(periodStart, window) {
     const close = Number(window[market]?.lastPrice);
     const samples = (state.priceHistory?.[market] || [])
       .filter(point => point.ts >= rollingStartMs && point.ts <= closeAtMs && Number.isFinite(point.price));
-    // With a 20-second polling interval, a healthy 5-minute period normally
-    // contains about 15 samples. Require at least 12 (80%) so outages do not
-    // produce an extreme alert from an incomplete price range.
-    const minimumSamples = 12;
-    if (!Number.isFinite(close) || close <= 0 || samples.length < minimumSamples) {
-      result[market] = null;
-      console.warn(JSON.stringify({
-        level: 'warn', event: 'period_5m_market_skipped_insufficient_samples',
-        version: VERSION, market, periodStart: new Date(periodStart * 1000).toISOString(),
-        samples: samples.length, minimumSamples,
-      }));
-      continue;
-    }
     const prices = samples.map(point => point.price);
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    const range = max - min;
-    const atMinimum = close === min;
-    const rangeQualifies = market === 'BTC' ? range >= 58 : range >= 1.71;
+    const min = prices.length ? Math.min(...prices) : null;
+    const max = prices.length ? Math.max(...prices) : null;
+    const atMinimum = Number.isFinite(close) && close > 0 && prices.length > 0 && close === min;
+
+    // Count consecutive completed 5-minute periods whose close equals that
+    // market's sampled minimum. No range or sample-count threshold is applied.
+    state.minimumStreaks[market] = atMinimum
+      ? Number(state.minimumStreaks[market] || 0) + 1
+      : 0;
+
     result[market] = {
-      close, min, max, range,
+      close: Number.isFinite(close) && close > 0 ? close : null,
+      min, max,
+      range: prices.length ? max - min : null,
       atMinimum,
-      atMaximum: close === max,
-      rangeQualifies,
-      extreme: atMinimum && rangeQualifies,
+      consecutiveMinimumPeriods: state.minimumStreaks[market],
       samples: samples.length,
     };
   }
 
-  const btc = result.BTC;
-  const eth = result.ETH;
-  // Re-check the exact numeric limits at the alert-selection boundary as a fail-closed guard.
-  const extremeMarkets = ['BTC', 'ETH'].filter(market => {
-    const item = result[market];
-    if (!item?.atMinimum) return false;
-    const range = item.max - item.min;
-    return market === 'BTC'
-      ? Number.isFinite(range) && range >= 58
-      : Number.isFinite(range) && range >= 1.71;
-  });
+  const streakMarkets = ['BTC', 'ETH'].filter(market =>
+    result[market]?.atMinimum && result[market].consecutiveMinimumPeriods >= 2
+  );
   window.alerted = true;
-  window.BTC30m = btc;
-  window.ETH30m = eth;
-  window.extremeMarkets = extremeMarkets;
+  window.BTC30m = result.BTC;
+  window.ETH30m = result.ETH;
+  window.minimumStreakMarkets = streakMarkets;
 
   console.log(JSON.stringify({
-    level: 'info', event: 'period_5m_extreme_close_evaluated', version: VERSION,
+    level: 'info', event: 'period_5m_consecutive_minimum_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
-    BTC: btc, ETH: eth, extremeMarkets,
+    BTC: result.BTC, ETH: result.ETH, streakMarkets,
   }));
 
-  // If BTC and ETH both qualify in the same 5-minute period, ignore both.
-  if (extremeMarkets.length === 2) {
+  // If both BTC and ETH meet the consecutive-minimum condition in the same
+  // period, suppress both alerts. The streak counters still continue.
+  if (streakMarkets.length === 2) {
     console.log(JSON.stringify({
-      level: 'info', event: 'period_5m_extreme_alert_suppressed_both_markets', version: VERSION,
+      level: 'info', event: 'period_5m_consecutive_minimum_alert_suppressed_both_markets', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
-      extremeMarkets,
+      streakMarkets,
     }));
-  } else if (extremeMarkets.length === 1) {
-    const currentAlertMarkets = [...extremeMarkets].sort();
-    const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
+  } else if (streakMarkets.length === 1) {
+    const market = streakMarkets[0];
+    const streak = result[market].consecutiveMinimumPeriods;
 
-    if (!alreadySentForPeriod) {
-      const lines = await Promise.all(extremeMarkets.map(async market => {
+    // Send once when a streak first reaches two periods; do not repeat on
+    // every later period in the same uninterrupted streak.
+    if (streak === 2) {
+      const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
+      if (!alreadySentForPeriod) {
         const item = result[market];
-        const extremeTypes = 'МИНИМУМ ⬆️';
         const url = await marketLink(market, periodStart + PERIOD_SECONDS);
-        return `<b>⬆️ ${market}: 5-минутный ${extremeTypes}</b>
-Диапазон: ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.max - item.min)})
+        const message = `<b>⬆️ ${market}: минимум на закрытии 2 периодов подряд</b>
+Цена закрытия: ${priceText(item.close)}
+Диапазон периода: ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.range)})
 
 <a href="${url}">Polymarket ${market} 5m</a>`;
-      }));
-      // Reserve this period before sending so a restart cannot send it twice.
-      state.lastAlertSentPeriod = periodStart;
-      state.lastAlertMarkets = currentAlertMarkets;
-      saveState();
-      await send(lines.join('\\n\\n'));
-      console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_extreme_close_alert_sent', version: VERSION,
-        periodStart: new Date(periodStart * 1000).toISOString(),
-        extremeMarkets,
-      }));
-    } else {
-      console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_extreme_alert_suppressed_duplicate_period', version: VERSION,
-        periodStart: new Date(periodStart * 1000).toISOString(),
-        extremeMarkets,
-      }));
+        state.lastAlertSentPeriod = periodStart;
+        state.lastAlertMarkets = [market];
+        saveState();
+        await send(message);
+        console.log(JSON.stringify({
+          level: 'info', event: 'period_5m_consecutive_minimum_alert_sent', version: VERSION,
+          periodStart: new Date(periodStart * 1000).toISOString(),
+          market, consecutiveMinimumPeriods: streak,
+        }));
+      } else {
+        console.log(JSON.stringify({
+          level: 'info', event: 'period_5m_consecutive_minimum_alert_suppressed_duplicate_period', version: VERSION,
+          periodStart: new Date(periodStart * 1000).toISOString(),
+          market, consecutiveMinimumPeriods: streak,
+        }));
+      }
     }
   }
   saveState();
@@ -516,8 +504,8 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
-  source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS, minimumSamplesPerMarket: 12,
-  statePath: STATE_PATH, alert: 'at each completed 5-minute close, alert when BTC closes at its sampled markPrice minimum with range >= $58, or ETH closes at its minimum with range >= $1.71; if both markets qualify, suppress both alerts',
+  source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
+  statePath: STATE_PATH, alert: 'alert once when BTC or ETH closes at its sampled markPrice minimum in two consecutive 5-minute periods; no range or minimum-sample thresholds; if both markets qualify in the same period, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
