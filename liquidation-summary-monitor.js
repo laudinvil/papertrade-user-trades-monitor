@@ -356,7 +356,7 @@ async function finishPeriod(periodStart, window) {
       if (!alreadySentForPeriod) {
         const item = result[market];
         const url = await marketLink(market, periodStart + PERIOD_SECONDS);
-        const message = `<b>${market}: В ПРЕДЕЛАХ ДИАПАЗОНА</b>
+        const message = `<b>${market}</b>
 Цена закрытия: ${priceText(item.close)} (${priceText(item.previousMax - item.previousMin)})
 Last 5m: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}
 
