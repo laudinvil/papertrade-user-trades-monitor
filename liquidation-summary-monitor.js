@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-last-5m-inside-v80';
+const VERSION = 'papertrade-5m-last-5m-inside-v81';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -357,7 +357,7 @@ async function finishPeriod(periodStart, window) {
         const item = result[market];
         const url = await marketLink(market, periodStart + PERIOD_SECONDS);
         const message = `<b>${market}: В ПРЕДЕЛАХ ДИАПАЗОНА</b>
-Цена закрытия: ${priceText(item.close)}
+Цена закрытия: ${priceText(item.close)} (разница Last 5m: ${priceText(item.previousMax - item.previousMin)})
 Last 5m: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}
 
 <a href="${url}">Polymarket ${market} 5m</a>`;
