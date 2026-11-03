@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-previous-period-range-breakout-direction-points-v75';
+const VERSION = 'papertrade-5m-previous-period-range-breakout-direction-points-v76';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -367,7 +367,7 @@ async function finishPeriod(periodStart, window) {
         const breakoutPoints = item.direction === 'above'
           ? item.close - item.previousMax
           : item.previousMin - item.close;
-        const message = `<b>${market}: ${breakoutDirection}</b>
+        const message = `<b>${item.direction === 'above' ? '⬇️' : '⬆️'} ${market}: ${breakoutDirection}</b>
 Выход на ${priceText(breakoutPoints)} пунктов
 ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.range)})
 
