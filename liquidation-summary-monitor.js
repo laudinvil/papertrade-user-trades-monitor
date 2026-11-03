@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-previous-period-range-breakout-direction-points-v77';
+const VERSION = 'papertrade-5m-previous-period-range-breakout-direction-points-v78';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -328,10 +328,12 @@ async function finishPeriod(periodStart, window) {
   const alertMarkets = ['BTC', 'ETH'].filter(market => {
     const item = result[market];
     if (!item?.outsidePreviousRange) return false;
-    // ETH downside breakouts are allowed only when the close-to-range difference
-    // from the previous period's minimum is no greater than 3.69.
+    // ETH downside breakouts are ignored when the difference exceeds 3.69.
     if (market === 'ETH' && item.direction === 'below' &&
         item.previousMin - item.close > 3.69) return false;
+    // ETH upside breakouts are ignored when the difference is 2.90 or greater.
+    if (market === 'ETH' && item.direction === 'above' &&
+        item.close - item.previousMax >= 2.90) return false;
     return true;
   });
   window.alerted = true;
