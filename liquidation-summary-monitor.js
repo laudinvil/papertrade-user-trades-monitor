@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-previous-period-range-breakout-direction-points-v78';
+const VERSION = 'papertrade-5m-previous-period-range-inside-v79';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -310,75 +310,55 @@ async function finishPeriod(periodStart, window) {
     const previousPrices = previousSamples.map(point => point.price);
     const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
     const previousMax = previousPrices.length ? Math.max(...previousPrices) : null;
-    const outsidePreviousRange = Number.isFinite(close) && close > 0 &&
-      previousPrices.length > 0 && (close < previousMin || close > previousMax);
+    const insidePreviousRange = Number.isFinite(close) && close > 0 &&
+      previousPrices.length > 0 && close >= previousMin && close <= previousMax;
 
     result[market] = {
       close: Number.isFinite(close) && close > 0 ? close : null,
       min, max,
       range: prices.length ? max - min : null,
       previousMin, previousMax,
-      outsidePreviousRange,
-      direction: outsidePreviousRange ? (close > previousMax ? 'above' : 'below') : null,
+      insidePreviousRange,
       samples: samples.length,
       previousSamples: previousSamples.length,
     };
   }
 
-  const alertMarkets = ['BTC', 'ETH'].filter(market => {
-    const item = result[market];
-    if (!item?.outsidePreviousRange) return false;
-    // ETH downside breakouts are ignored when the difference exceeds 3.69.
-    if (market === 'ETH' && item.direction === 'below' &&
-        item.previousMin - item.close > 3.69) return false;
-    // ETH upside breakouts are ignored when the difference is 2.90 or greater.
-    if (market === 'ETH' && item.direction === 'above' &&
-        item.close - item.previousMax >= 2.90) return false;
-    return true;
-  });
+  const alertMarkets = ['BTC', 'ETH'].filter(market =>
+    result[market]?.insidePreviousRange
+  );
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
   window.alertMarkets = alertMarkets;
 
   console.log(JSON.stringify({
-    level: 'info', event: 'period_5m_previous_range_breakout_evaluated', version: VERSION,
+    level: 'info', event: 'period_5m_previous_range_inside_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
     BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
-  // If both BTC and ETH break the previous period's range in the same
+  // If both BTC and ETH remain inside the previous period's range in the same
   // period, suppress both alerts.
   if (alertMarkets.length === 2) {
     console.log(JSON.stringify({
-      level: 'info', event: 'period_5m_consecutive_minimum_alert_suppressed_both_markets', version: VERSION,
+      level: 'info', event: 'period_5m_previous_range_inside_suppressed_both_markets', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       alertMarkets,
     }));
   } else if (alertMarkets.length === 1) {
     const market = alertMarkets[0];
-    // Send an alert when the latest period closes outside the previous period's range.
+    // Send an alert when the latest period closes inside the previous period's range.
     {
       const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
       if (!alreadySentForPeriod) {
         const item = result[market];
         const url = await marketLink(market, periodStart + PERIOD_SECONDS);
-        const breakoutDirection = item.direction === 'above' ? 'ВВЕРХ BUY ⬇️' : 'ВНИЗ BUY ⬆️';
-        const invertArrows = !(market === 'BTC' && breakoutPoints > 120);
-        const titleArrow = item.direction === 'above'
-          ? (invertArrows ? '⬇️' : '⬆️')
-          : (invertArrows ? '⬆️' : '⬇️');
-        const directionText = item.direction === 'above'
-          ? (invertArrows ? 'ВВЕРХ BUY ⬇️' : 'ВВЕРХ BUY ⬆️')
-          : (invertArrows ? 'ВНИЗ BUY ⬆️' : 'ВНИЗ BUY ⬇️');
-        const breakoutPoints = item.direction === 'above'
-          ? item.close - item.previousMax
-          : item.previousMin - item.close;
-        const message = `<b>${titleArrow} ${market}: ${directionText}</b>
-Выход на ${priceText(breakoutPoints)} пунктов
-${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.range)})
+        const message = `<b>${market}: В ПРЕДЕЛАХ ДИАПАЗОНА</b>
+Цена закрытия: ${priceText(item.close)}
+Диапазон прошлого периода: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}
 
 <a href="${url}">Polymarket ${market} 5m</a>`;
         state.lastAlertSentPeriod = periodStart;
@@ -386,13 +366,13 @@ ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.range)})
         saveState();
         await send(message);
         console.log(JSON.stringify({
-          level: 'info', event: 'period_5m_consecutive_minimum_alert_sent', version: VERSION,
+          level: 'info', event: 'period_5m_previous_range_inside_alert_sent', version: VERSION,
           periodStart: new Date(periodStart * 1000).toISOString(),
           market, previousMin: item.previousMin, previousMax: item.previousMax, close: item.close,
         }));
       } else {
         console.log(JSON.stringify({
-          level: 'info', event: 'period_5m_consecutive_minimum_alert_suppressed_duplicate_period', version: VERSION,
+          level: 'info', event: 'period_5m_previous_range_inside_alert_suppressed_duplicate_period', version: VERSION,
           periodStart: new Date(periodStart * 1000).toISOString(),
           market, previousMin: result[market].previousMin, previousMax: result[market].previousMax, close: result[market].close,
         }));
@@ -524,7 +504,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'alert when a completed 5-minute period closes above or below the previous 5-minute period price range; if both markets qualify in the same period, suppress both alerts',
+  statePath: STATE_PATH, alert: 'alert when a completed 5-minute period closes within or on the previous 5-minute period price range; if both markets qualify in the same period, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
