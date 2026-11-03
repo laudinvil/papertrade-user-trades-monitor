@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-previous-period-range-breakout-direction-points-v76';
+const VERSION = 'papertrade-5m-previous-period-range-breakout-direction-points-v77';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -364,10 +364,17 @@ async function finishPeriod(periodStart, window) {
         const item = result[market];
         const url = await marketLink(market, periodStart + PERIOD_SECONDS);
         const breakoutDirection = item.direction === 'above' ? 'ВВЕРХ BUY ⬇️' : 'ВНИЗ BUY ⬆️';
+        const invertArrows = !(market === 'BTC' && breakoutPoints > 120);
+        const titleArrow = item.direction === 'above'
+          ? (invertArrows ? '⬇️' : '⬆️')
+          : (invertArrows ? '⬆️' : '⬇️');
+        const directionText = item.direction === 'above'
+          ? (invertArrows ? 'ВВЕРХ BUY ⬇️' : 'ВВЕРХ BUY ⬆️')
+          : (invertArrows ? 'ВНИЗ BUY ⬆️' : 'ВНИЗ BUY ⬇️');
         const breakoutPoints = item.direction === 'above'
           ? item.close - item.previousMax
           : item.previousMin - item.close;
-        const message = `<b>${item.direction === 'above' ? '⬇️' : '⬆️'} ${market}: ${breakoutDirection}</b>
+        const message = `<b>${titleArrow} ${market}: ${directionText}</b>
 Выход на ${priceText(breakoutPoints)} пунктов
 ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.range)})
 
