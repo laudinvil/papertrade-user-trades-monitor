@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-consecutive-period-minimum-or-maximum-3-periods-v69';
+const VERSION = 'papertrade-5m-previous-period-range-breakout-v70';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -304,74 +304,60 @@ async function finishPeriod(periodStart, window) {
     const prices = samples.map(point => point.price);
     const min = prices.length ? Math.min(...prices) : null;
     const max = prices.length ? Math.max(...prices) : null;
-    const atMinimum = Number.isFinite(close) && close > 0 && prices.length > 0 && close === min;
-    const atMaximum = Number.isFinite(close) && close > 0 && prices.length > 0 && close === max;
-
-    // Track consecutive completed 5-minute periods closing at the sampled
-    // minimum or maximum. Either direction qualifies from the third period.
-    state.minimumStreaks[market] = atMinimum
-      ? Number(state.minimumStreaks[market] || 0) + 1
-      : 0;
-    state.maximumStreaks ||= { BTC: 0, ETH: 0 };
-    state.maximumStreaks[market] = atMaximum
-      ? Number(state.maximumStreaks[market] || 0) + 1
-      : 0;
-
-    const minimumPeriods = state.minimumStreaks[market];
-    const maximumPeriods = state.maximumStreaks[market];
-    const extreme = maximumPeriods > minimumPeriods ? 'maximum' : 'minimum';
-    const consecutiveExtremePeriods = Math.max(minimumPeriods, maximumPeriods);
+    const previousSamples = (state.priceHistory?.[market] || [])
+      .filter(point => point.ts >= rollingStartMs - PERIOD_SECONDS * 1000 &&
+        point.ts < rollingStartMs && Number.isFinite(point.price));
+    const previousPrices = previousSamples.map(point => point.price);
+    const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
+    const previousMax = previousPrices.length ? Math.max(...previousPrices) : null;
+    const outsidePreviousRange = Number.isFinite(close) && close > 0 &&
+      previousPrices.length > 0 && (close < previousMin || close > previousMax);
 
     result[market] = {
       close: Number.isFinite(close) && close > 0 ? close : null,
       min, max,
       range: prices.length ? max - min : null,
-      atMinimum, atMaximum, extreme,
-      consecutiveMinimumPeriods: minimumPeriods,
-      consecutiveMaximumPeriods: maximumPeriods,
-      consecutiveExtremePeriods,
+      previousMin, previousMax,
+      outsidePreviousRange,
+      direction: outsidePreviousRange ? (close > previousMax ? 'above' : 'below') : null,
       samples: samples.length,
+      previousSamples: previousSamples.length,
     };
   }
 
-  const streakMarkets = ['BTC', 'ETH'].filter(market =>
-    result[market]?.consecutiveExtremePeriods >= 3
+  const alertMarkets = ['BTC', 'ETH'].filter(market =>
+    result[market]?.outsidePreviousRange
   );
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
-  window.extremeStreakMarkets = streakMarkets;
+  window.alertMarkets = alertMarkets;
 
   console.log(JSON.stringify({
-    level: 'info', event: 'period_5m_consecutive_minimum_evaluated', version: VERSION,
+    level: 'info', event: 'period_5m_previous_range_breakout_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
-    BTC: result.BTC, ETH: result.ETH, streakMarkets,
+    BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
-  // If both BTC and ETH meet the consecutive-minimum condition in the same
-  // period, suppress both alerts. The streak counters still continue.
-  if (streakMarkets.length === 2) {
+  // If both BTC and ETH break the previous period's range in the same
+  // period, suppress both alerts.
+  if (alertMarkets.length === 2) {
     console.log(JSON.stringify({
       level: 'info', event: 'period_5m_consecutive_minimum_alert_suppressed_both_markets', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
-      streakMarkets,
+      alertMarkets,
     }));
-  } else if (streakMarkets.length === 1) {
-    const market = streakMarkets[0];
-    const streak = result[market].consecutiveExtremePeriods;
-    const extremeLabel = result[market].extreme === 'maximum' ? 'максимум' : 'минимум';
-
-    // Send an alert on every completed period from the second consecutive
-    // minimum onward, for as long as the streak continues.
-    if (streak >= 2) {
+  } else if (alertMarkets.length === 1) {
+    const market = alertMarkets[0];
+    // Send an alert when the latest period closes outside the previous period's range.
+    {
       const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
       if (!alreadySentForPeriod) {
         const item = result[market];
         const url = await marketLink(market, periodStart + PERIOD_SECONDS);
-        const arrow = market === 'ETH' ? '⬇️' : '⬆️';
-        const message = `<b>${arrow} ${market}: ${extremeLabel} 3 периода ${arrow}</b>
+        const message = `<b>${market}: выход за диапазон прошлого периода</b>
 ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.range)})
 
 <a href="${url}">Polymarket ${market} 5m</a>`;
@@ -382,13 +368,13 @@ ${priceText(item.min)} — ${priceText(item.max)} (${priceText(item.range)})
         console.log(JSON.stringify({
           level: 'info', event: 'period_5m_consecutive_minimum_alert_sent', version: VERSION,
           periodStart: new Date(periodStart * 1000).toISOString(),
-          market, consecutiveMinimumPeriods: streak,
+          market, previousMin: item.previousMin, previousMax: item.previousMax, close: item.close,
         }));
       } else {
         console.log(JSON.stringify({
           level: 'info', event: 'period_5m_consecutive_minimum_alert_suppressed_duplicate_period', version: VERSION,
           periodStart: new Date(periodStart * 1000).toISOString(),
-          market, consecutiveMinimumPeriods: streak,
+          market, previousMin: result[market].previousMin, previousMax: result[market].previousMax, close: result[market].close,
         }));
       }
     }
@@ -518,7 +504,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'alert on every completed period from the third consecutive 5-minute close at the sampled minimum or maximum in the same direction; no range thresholds; if both markets qualify in the same period, suppress both alerts',
+  statePath: STATE_PATH, alert: 'alert when a completed 5-minute period closes above or below the previous 5-minute period price range; if both markets qualify in the same period, suppress both alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
