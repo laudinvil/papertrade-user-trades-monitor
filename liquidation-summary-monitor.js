@@ -360,6 +360,7 @@ Last 5m BTC: ${priceText(btc.previousMin)} — ${priceText(btc.previousMax)}
 Last 5m ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
 
 <a href="${btcUrl}">Polymarket BTC 5m</a>
+
 <a href="${ethUrl}">Polymarket ETH 5m</a>`;
       state.lastAlertSentPeriod = periodStart;
       state.lastAlertMarkets = ['BTC', 'ETH'];
