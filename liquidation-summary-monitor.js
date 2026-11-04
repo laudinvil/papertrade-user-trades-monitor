@@ -342,7 +342,7 @@ async function finishPeriod(periodStart, window) {
   }));
 
   // Alert only when BTC and ETH both close outside their respective previous 5-minute ranges.
-  if (bothMarketsInsidePreviousRange) {
+  if (bothMarketsOutsidePreviousRange) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
     if (!alreadySentForPeriod) {
       const btc = result.BTC;
