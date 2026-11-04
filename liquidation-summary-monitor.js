@@ -6,13 +6,13 @@ import { request as httpsRequest } from 'node:https';
 
 const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
 const PERIOD_SECONDS = 300;
-const POLL_MS = Math.max(10_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 20_000));
+const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 5_000));
 const PAPERTRADE_REQUEST_TIMEOUT_MS = 20_000;
 const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-close-equals-previous-last-boundary-v1';
+const VERSION = 'papertrade-5m-close-equals-previous-last-boundary-v2-poll-5s';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
