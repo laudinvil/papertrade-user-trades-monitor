@@ -353,10 +353,10 @@ async function finishPeriod(periodStart, window) {
         marketLink('ETH', periodStart + PERIOD_SECONDS),
       ]);
       const message = `<b>BTC + ETH</b>
-Цена закрытия BTC: ${priceText(btc.close)} (${priceText(btc.previousMax - btc.previousMin)})
+Закрытие BTC: ${priceText(btc.close)} (${priceText(btc.previousMax - btc.previousMin)})
 Last 5m BTC: ${priceText(btc.previousMin)} — ${priceText(btc.previousMax)}
 
-Цена закрытия ETH: ${priceText(eth.close)} (${priceText(eth.previousMax - eth.previousMin)})
+Закрытие ETH: ${priceText(eth.close)} (${priceText(eth.previousMax - eth.previousMin)})
 Last 5m ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
 
 <a href="${btcUrl}">Polymarket BTC 5m</a> ⬆️
