@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-one-market-inside-one-outside-previous-range-v88-ignore-range-pair';
+const VERSION = 'papertrade-5m-close-equals-previous-last-boundary-v1';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -310,33 +310,23 @@ async function finishPeriod(periodStart, window) {
     const previousPrices = previousSamples.map(point => point.price);
     const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
     const previousMax = previousPrices.length ? Math.max(...previousPrices) : null;
-    const outsidePreviousRange = Number.isFinite(close) && close > 0 &&
-      previousPrices.length > 0 && (close < previousMin || close > previousMax);
+    const matchesPreviousRangeBoundary = Number.isFinite(close) && close > 0 &&
+      previousPrices.length > 0 && (close === previousMin || close === previousMax);
 
     result[market] = {
       close: Number.isFinite(close) && close > 0 ? close : null,
       min, max,
       range: prices.length ? max - min : null,
       previousMin, previousMax,
-      outsidePreviousRange,
+      matchesPreviousRangeBoundary,
       samples: samples.length,
       previousSamples: previousSamples.length,
     };
   }
 
   const alertMarkets = ['BTC', 'ETH'].filter(market =>
-    result[market]?.outsidePreviousRange
+    result[market]?.matchesPreviousRangeBoundary
   );
-  const ethPreviousRangeWidth = result.ETH?.previousMax !== null &&
-    result.ETH?.previousMax !== undefined &&
-    result.ETH?.previousMin !== null &&
-    result.ETH?.previousMin !== undefined
-      ? result.ETH.previousMax - result.ETH.previousMin
-      : null;
-  const ethPreviousRangeWideEnough = Number.isFinite(ethPreviousRangeWidth) &&
-    ethPreviousRangeWidth >= 0.21;
-  const exactlyOneMarketOutsidePreviousRange =
-    alertMarkets.length === 1 && ethPreviousRangeWideEnough;
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
@@ -350,82 +340,49 @@ async function finishPeriod(periodStart, window) {
     BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
-  // Alert only when exactly one market closes outside its previous 5-minute range and the other remains inside.
-  if (exactlyOneMarketOutsidePreviousRange) {
-    const btc = result.BTC;
-    const eth = result.ETH;
-    const btcDifference = Number((btc.previousMax - btc.previousMin).toFixed(2));
-    const ethDifference = Number((eth.previousMax - eth.previousMin).toFixed(2));
-    const downArrowDifferencePairs = [
-      [34.00, 1.40],
-      [119.00, 5.80],
-      [18.00, 0.90],
-      [18.00, 1.30],
-      [34.00, 1.30],
-      [26.00, 1.00],
-      [26.00, 0.90],
-    ];
-    const useDownArrowsForDifferencePair = downArrowDifferencePairs.some(([btcRange, ethRange]) =>
-      btcDifference === btcRange && ethDifference === ethRange
-    );
+  // Alert each market whose close exactly equals the previous period's Last low or high.
+  if (alertMarkets.length > 0) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
-    const lastAlertPeriod = Number(state.lastAlertSentPeriod);
-    const idleMoreThan90Minutes = Number.isFinite(lastAlertPeriod) &&
-      lastAlertPeriod > 0 &&
-      periodStart - lastAlertPeriod > 90 * 60;
-    const shouldIgnoreFirstAlertAfterIdle = idleMoreThan90Minutes;
-    const previousPeriodHadAlert = lastAlertPeriod === periodStart - PERIOD_SECONDS;
 
-    if (shouldIgnoreFirstAlertAfterIdle) {
-      state.lastAlertSentPeriod = null;
-      saveState();
-      console.log(JSON.stringify({
-        level: 'info',
-        event: 'period_5m_combined_alert_suppressed_first_after_90m_idle',
-        version: VERSION,
-        periodStart: new Date(periodStart * 1000).toISOString(),
-        previousAlertPeriod: new Date(lastAlertPeriod * 1000).toISOString(),
-      }));
-    } else if (!alreadySentForPeriod && !previousPeriodHadAlert) {
-      const [btcUrl, ethUrl] = await Promise.all([
-        marketLink('BTC', periodStart + PERIOD_SECONDS),
-        marketLink('ETH', periodStart + PERIOD_SECONDS),
-      ]);
-      const directionArrow = useDownArrowsForDifferencePair ? '⬇️' : '⬆️';
-      const message = `<b>BTC + ETH</b>
-Закрытие BTC: ${priceText(btc.close)} (${priceText(btc.previousMax - btc.previousMin)})
-Last BTC: ${priceText(btc.previousMin)} — ${priceText(btc.previousMax)}
+    if (!alreadySentForPeriod) {
+      const links = await Promise.all(alertMarkets.map(async market => [
+        market,
+        await marketLink(market, periodStart + PERIOD_SECONDS),
+      ]));
+      const linkByMarket = Object.fromEntries(links);
+      const sections = alertMarkets.map(market => {
+        const item = result[market];
+        return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.previousMax - item.previousMin)})
+Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
+      });
+      const marketLinks = alertMarkets.map(market =>
+        `<a href="${linkByMarket[market]}">Polymarket ${market}</a> ⬆️`
+      );
+      const message = `<b>${alertMarkets.join(' + ')}</b>
+${sections.join('\n\n')}
 
-Закрытие ETH: ${priceText(eth.close)} (${priceText(eth.previousMax - eth.previousMin)})
-Last ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
-
-<a href="${btcUrl}">Polymarket BTC</a> ${directionArrow}
-
-<a href="${ethUrl}">Polymarket ETH</a> ${directionArrow}`;
+${marketLinks.join('\n\n')}`;
       state.lastAlertSentPeriod = periodStart;
-      state.lastAlertMarkets = ['BTC', 'ETH'];
+      state.lastAlertMarkets = alertMarkets;
       saveState();
       await send(message);
       console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_one_market_inside_one_outside_previous_range_alert_sent', version: VERSION,
+        level: 'info', event: 'period_5m_previous_last_boundary_match_alert_sent', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
-        BTC: btc, ETH: eth,
+        alertMarkets, BTC: result.BTC, ETH: result.ETH,
       }));
     } else {
       console.log(JSON.stringify({
         level: 'info',
-        event: previousPeriodHadAlert
-          ? 'period_5m_one_market_inside_one_outside_previous_range_alert_suppressed_previous_period_had_alert'
-          : 'period_5m_one_market_inside_one_outside_previous_range_alert_suppressed_duplicate_period',
+        event: 'period_5m_previous_last_boundary_match_alert_suppressed_duplicate_period',
         version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
-        previousAlertPeriod: previousPeriodHadAlert ? new Date((periodStart - PERIOD_SECONDS) * 1000).toISOString() : null,
         alertMarkets,
       }));
     }
   } else {
     console.log(JSON.stringify({
-      level: 'info', event: 'period_5m_one_market_inside_one_outside_previous_range_condition_not_met', version: VERSION,
+      level: 'info', event: 'period_5m_previous_last_boundary_match_not_met', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       alertMarkets,
     }));
@@ -555,7 +512,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'send one combined BTC+ETH alert only when exactly one completed 5-minute period closes outside its previous 5-minute price range and the other closes inside; ignore when BTC previous range is 34.00 and ETH previous range is 1.40',
+  statePath: STATE_PATH, alert: 'alert independently for BTC and/or ETH when the completed 5-minute close exactly equals the previous 5-minute Last low or high; no thresholds or market filters',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
