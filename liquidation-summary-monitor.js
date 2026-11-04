@@ -356,14 +356,14 @@ async function finishPeriod(periodStart, window) {
     const eth = result.ETH;
     const btcDifference = Number((btc.previousMax - btc.previousMin).toFixed(2));
     const ethDifference = Number((eth.previousMax - eth.previousMin).toFixed(2));
-    const ignoredDifferencePairs = [
+    const downArrowDifferencePairs = [
       [34.00, 1.40],
       [119.00, 5.80],
       [18.00, 0.90],
       [18.00, 1.30],
       [34.00, 1.30],
     ];
-    const ignoreSimultaneousDifferencePair = ignoredDifferencePairs.some(([btcRange, ethRange]) =>
+    const useDownArrowsForDifferencePair = downArrowDifferencePairs.some(([btcRange, ethRange]) =>
       btcDifference === btcRange && ethDifference === ethRange
     );
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
@@ -374,16 +374,7 @@ async function finishPeriod(periodStart, window) {
     const shouldIgnoreFirstAlertAfterIdle = idleMoreThan90Minutes;
     const previousPeriodHadAlert = lastAlertPeriod === periodStart - PERIOD_SECONDS;
 
-    if (ignoreSimultaneousDifferencePair) {
-      console.log(JSON.stringify({
-        level: 'info',
-        event: 'period_5m_combined_alert_suppressed_ignored_btc_eth_difference_pair',
-        version: VERSION,
-        periodStart: new Date(periodStart * 1000).toISOString(),
-        BTCPreviousRange: btcDifference,
-        ETHPreviousRange: ethDifference,
-      }));
-    } else if (shouldIgnoreFirstAlertAfterIdle) {
+    if (shouldIgnoreFirstAlertAfterIdle) {
       state.lastAlertSentPeriod = null;
       saveState();
       console.log(JSON.stringify({
@@ -398,6 +389,7 @@ async function finishPeriod(periodStart, window) {
         marketLink('BTC', periodStart + PERIOD_SECONDS),
         marketLink('ETH', periodStart + PERIOD_SECONDS),
       ]);
+      const directionArrow = useDownArrowsForDifferencePair ? '⬇️' : '⬆️';
       const message = `<b>BTC + ETH</b>
 Закрытие BTC: ${priceText(btc.close)} (${priceText(btc.previousMax - btc.previousMin)})
 Last BTC: ${priceText(btc.previousMin)} — ${priceText(btc.previousMax)}
@@ -405,9 +397,9 @@ Last BTC: ${priceText(btc.previousMin)} — ${priceText(btc.previousMax)}
 Закрытие ETH: ${priceText(eth.close)} (${priceText(eth.previousMax - eth.previousMin)})
 Last ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
 
-<a href="${btcUrl}">Polymarket BTC</a> ⬆️
+<a href="${btcUrl}">Polymarket BTC</a> ${directionArrow}
 
-<a href="${ethUrl}">Polymarket ETH</a> ⬆️`;
+<a href="${ethUrl}">Polymarket ETH</a> ${directionArrow}`;
       state.lastAlertSentPeriod = periodStart;
       state.lastAlertMarkets = ['BTC', 'ETH'];
       saveState();
