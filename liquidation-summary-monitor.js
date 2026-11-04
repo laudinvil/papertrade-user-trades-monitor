@@ -356,7 +356,7 @@ async function finishPeriod(periodStart, window) {
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
       const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market}</a> ⬆️`
+        `<a href="${linkByMarket[market]}">Polymarket ${market}</a>`
       );
       const message = `<b>${alertMarkets.join(' + ')}</b>
 ${sections.join('\n\n')}
