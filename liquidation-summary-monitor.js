@@ -360,6 +360,7 @@ async function finishPeriod(periodStart, window) {
       [34.00, 1.40],
       [119.00, 5.80],
       [18.00, 0.90],
+      [18.00, 1.30],
     ];
     const ignoreSimultaneousDifferencePair = ignoredDifferencePairs.some(([btcRange, ethRange]) =>
       btcDifference === btcRange && ethDifference === ethRange
