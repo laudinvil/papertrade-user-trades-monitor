@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-both-markets-inside-previous-range-v84';
+const VERSION = 'papertrade-5m-both-markets-outside-previous-range-v85';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -310,38 +310,38 @@ async function finishPeriod(periodStart, window) {
     const previousPrices = previousSamples.map(point => point.price);
     const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
     const previousMax = previousPrices.length ? Math.max(...previousPrices) : null;
-    const insidePreviousRange = Number.isFinite(close) && close > 0 &&
-      previousPrices.length > 0 && close >= previousMin && close <= previousMax;
+    const outsidePreviousRange = Number.isFinite(close) && close > 0 &&
+      previousPrices.length > 0 && (close < previousMin || close > previousMax);
 
     result[market] = {
       close: Number.isFinite(close) && close > 0 ? close : null,
       min, max,
       range: prices.length ? max - min : null,
       previousMin, previousMax,
-      insidePreviousRange,
+      outsidePreviousRange,
       samples: samples.length,
       previousSamples: previousSamples.length,
     };
   }
 
   const alertMarkets = ['BTC', 'ETH'].filter(market =>
-    result[market]?.insidePreviousRange
+    result[market]?.outsidePreviousRange
   );
-  const bothMarketsInsidePreviousRange = alertMarkets.length === 2;
+  const bothMarketsOutsidePreviousRange = alertMarkets.length === 2;
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
   window.alertMarkets = alertMarkets;
 
   console.log(JSON.stringify({
-    level: 'info', event: 'period_5m_both_markets_previous_range_evaluated', version: VERSION,
+    level: 'info', event: 'period_5m_both_markets_outside_previous_range_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
     BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
-  // Alert only when BTC and ETH both close inside their respective previous 5-minute ranges.
+  // Alert only when BTC and ETH both close outside their respective previous 5-minute ranges.
   if (bothMarketsInsidePreviousRange) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
     if (!alreadySentForPeriod) {
@@ -365,20 +365,20 @@ Last 5m ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
       saveState();
       await send(message);
       console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_both_markets_previous_range_alert_sent', version: VERSION,
+        level: 'info', event: 'period_5m_both_markets_outside_previous_range_alert_sent', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         BTC: btc, ETH: eth,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_both_markets_previous_range_alert_suppressed_duplicate_period', version: VERSION,
+        level: 'info', event: 'period_5m_both_markets_outside_previous_range_alert_suppressed_duplicate_period', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         alertMarkets,
       }));
     }
   } else {
     console.log(JSON.stringify({
-      level: 'info', event: 'period_5m_both_markets_previous_range_condition_not_met', version: VERSION,
+      level: 'info', event: 'period_5m_both_markets_outside_previous_range_condition_not_met', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       alertMarkets,
     }));
@@ -508,7 +508,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'send one combined BTC+ETH alert only when both completed 5-minute periods close within or on their respective previous 5-minute price ranges',
+  statePath: STATE_PATH, alert: 'send one combined BTC+ETH alert only when both completed 5-minute periods close outside their respective previous 5-minute price ranges',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
