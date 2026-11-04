@@ -327,7 +327,16 @@ async function finishPeriod(periodStart, window) {
   const alertMarkets = ['BTC', 'ETH'].filter(market =>
     result[market]?.outsidePreviousRange
   );
-  const exactlyOneMarketOutsidePreviousRange = alertMarkets.length === 1;
+  const ethPreviousRangeWidth = result.ETH?.previousMax !== null &&
+    result.ETH?.previousMax !== undefined &&
+    result.ETH?.previousMin !== null &&
+    result.ETH?.previousMin !== undefined
+      ? result.ETH.previousMax - result.ETH.previousMin
+      : null;
+  const ethPreviousRangeWideEnough = Number.isFinite(ethPreviousRangeWidth) &&
+    ethPreviousRangeWidth >= 0.21;
+  const exactlyOneMarketOutsidePreviousRange =
+    alertMarkets.length === 1 && ethPreviousRangeWideEnough;
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
