@@ -356,7 +356,14 @@ async function finishPeriod(periodStart, window) {
     const eth = result.ETH;
     const btcDifference = Number((btc.previousMax - btc.previousMin).toFixed(2));
     const ethDifference = Number((eth.previousMax - eth.previousMin).toFixed(2));
-    const ignoreSimultaneousDifferencePair = btcDifference === 34.00 && ethDifference === 1.40;
+    const ignoredDifferencePairs = [
+      [34.00, 1.40],
+      [119.00, 5.80],
+      [18.00, 0.90],
+    ];
+    const ignoreSimultaneousDifferencePair = ignoredDifferencePairs.some(([btcRange, ethRange]) =>
+      btcDifference === btcRange && ethDifference === ethRange
+    );
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
     const lastAlertPeriod = Number(state.lastAlertSentPeriod);
     const idleMoreThan90Minutes = Number.isFinite(lastAlertPeriod) &&
