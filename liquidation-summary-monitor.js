@@ -344,8 +344,27 @@ async function finishPeriod(periodStart, window) {
   // Alert only when exactly one market closes outside its previous 5-minute range and the other remains inside.
   if (exactlyOneMarketOutsidePreviousRange) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
-    const previousPeriodHadAlert = Number(state.lastAlertSentPeriod) === periodStart - PERIOD_SECONDS;
-    if (!alreadySentForPeriod && !previousPeriodHadAlert) {
+    const lastAlertPeriod = Number(state.lastAlertSentPeriod);
+    const idleMoreThan90Minutes = Number.isFinite(lastAlertPeriod) &&
+      lastAlertPeriod > 0 &&
+      periodStart - lastAlertPeriod > 90 * 60;
+    const idleFirstAlertAlreadyIgnored = Number(state.lastIdleFirstAlertIgnoredPeriod) > 0;
+    const shouldIgnoreFirstAlertAfterIdle = idleMoreThan90Minutes &&
+      !idleFirstAlertAlreadyIgnored;
+    const previousPeriodHadAlert = lastAlertPeriod === periodStart - PERIOD_SECONDS;
+
+    if (shouldIgnoreFirstAlertAfterIdle) {
+      state.lastAlertSentPeriod = null;
+      state.lastIdleFirstAlertIgnoredPeriod = periodStart;
+      saveState();
+      console.log(JSON.stringify({
+        level: 'info',
+        event: 'period_5m_combined_alert_suppressed_first_after_90m_idle',
+        version: VERSION,
+        periodStart: new Date(periodStart * 1000).toISOString(),
+        previousAlertPeriod: new Date(lastAlertPeriod * 1000).toISOString(),
+      }));
+    } else if (!alreadySentForPeriod && !previousPeriodHadAlert) {
       const btc = result.BTC;
       const eth = result.ETH;
       const [btcUrl, ethUrl] = await Promise.all([
