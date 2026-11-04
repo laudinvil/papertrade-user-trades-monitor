@@ -362,6 +362,7 @@ async function finishPeriod(periodStart, window) {
       [18.00, 0.90],
       [18.00, 1.30],
       [34.00, 1.30],
+      [26.00, 1.00],
     ];
     const useDownArrowsForDifferencePair = downArrowDifferencePairs.some(([btcRange, ethRange]) =>
       btcDifference === btcRange && ethDifference === ethRange
