@@ -391,10 +391,10 @@ async function finishPeriod(periodStart, window) {
       ]);
       const message = `<b>BTC + ETH</b>
 Закрытие BTC: ${priceText(btc.close)} (${priceText(btc.previousMax - btc.previousMin)})
-Last 5m BTC: ${priceText(btc.previousMin)} — ${priceText(btc.previousMax)}
+Last BTC: ${priceText(btc.previousMin)} — ${priceText(btc.previousMax)}
 
 Закрытие ETH: ${priceText(eth.close)} (${priceText(eth.previousMax - eth.previousMin)})
-Last 5m ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
+Last ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
 
 <a href="${btcUrl}">Polymarket BTC</a> ⬆️
 
