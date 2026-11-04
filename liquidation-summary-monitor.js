@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-both-markets-outside-previous-range-v85';
+const VERSION = 'papertrade-5m-both-markets-outside-previous-range-no-consecutive-alerts-v86';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -344,7 +344,8 @@ async function finishPeriod(periodStart, window) {
   // Alert only when BTC and ETH both close outside their respective previous 5-minute ranges.
   if (bothMarketsOutsidePreviousRange) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
-    if (!alreadySentForPeriod) {
+    const previousPeriodHadAlert = Number(state.lastAlertSentPeriod) === periodStart - PERIOD_SECONDS;
+    if (!alreadySentForPeriod && !previousPeriodHadAlert) {
       const btc = result.BTC;
       const eth = result.ETH;
       const [btcUrl, ethUrl] = await Promise.all([
@@ -371,8 +372,13 @@ Last 5m ETH: ${priceText(eth.previousMin)} — ${priceText(eth.previousMax)}
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_both_markets_outside_previous_range_alert_suppressed_duplicate_period', version: VERSION,
+        level: 'info',
+        event: previousPeriodHadAlert
+          ? 'period_5m_both_markets_outside_previous_range_alert_suppressed_previous_period_had_alert'
+          : 'period_5m_both_markets_outside_previous_range_alert_suppressed_duplicate_period',
+        version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
+        previousAlertPeriod: previousPeriodHadAlert ? new Date((periodStart - PERIOD_SECONDS) * 1000).toISOString() : null,
         alertMarkets,
       }));
     }
