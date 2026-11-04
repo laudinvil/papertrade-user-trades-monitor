@@ -348,14 +348,11 @@ async function finishPeriod(periodStart, window) {
     const idleMoreThan90Minutes = Number.isFinite(lastAlertPeriod) &&
       lastAlertPeriod > 0 &&
       periodStart - lastAlertPeriod > 90 * 60;
-    const idleFirstAlertAlreadyIgnored = Number(state.lastIdleFirstAlertIgnoredPeriod) > 0;
-    const shouldIgnoreFirstAlertAfterIdle = idleMoreThan90Minutes &&
-      !idleFirstAlertAlreadyIgnored;
+    const shouldIgnoreFirstAlertAfterIdle = idleMoreThan90Minutes;
     const previousPeriodHadAlert = lastAlertPeriod === periodStart - PERIOD_SECONDS;
 
     if (shouldIgnoreFirstAlertAfterIdle) {
       state.lastAlertSentPeriod = null;
-      state.lastIdleFirstAlertIgnoredPeriod = periodStart;
       saveState();
       console.log(JSON.stringify({
         level: 'info',
