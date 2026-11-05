@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-single-market-narrower-exact-periods-v10-no-arrows';
+const VERSION = 'papertrade-5m-single-market-range-change-arrows-v11';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -327,15 +327,20 @@ async function finishPeriod(periodStart, window) {
     };
   }
 
-  const narrowedMarkets = previousPeriodComplete ? ['BTC', 'ETH'].filter(market =>
-    Number.isFinite(result[market]?.range) &&
-    Number.isFinite(result[market]?.previousMin) &&
-    Number.isFinite(result[market]?.previousMax) &&
-    result[market].range < result[market].previousMax - result[market].previousMin
-  ) : [];
+  const changedMarkets = previousPeriodComplete ? ['BTC', 'ETH'].filter(market => {
+    const item = result[market];
+    if (!Number.isFinite(item?.range) ||
+        !Number.isFinite(item?.previousMin) ||
+        !Number.isFinite(item?.previousMax)) return false;
+    return item.range !== item.previousMax - item.previousMin;
+  }) : [];
 
-  // Ignore double alerts: send only when exactly one market's range narrows.
-  const alertMarkets = narrowedMarkets.length === 1 ? narrowedMarkets : [];
+  // Ignore periods where both markets change; alert only for one changed market.
+  const alertMarkets = changedMarkets.length === 1 ? changedMarkets : [];
+  const alertDirection = alertMarkets.length === 1 &&
+    result[alertMarkets[0]].range > result[alertMarkets[0]].previousMax - result[alertMarkets[0]].previousMin
+      ? 'up'
+      : alertMarkets.length === 1 ? 'down' : null;
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
@@ -367,8 +372,9 @@ async function finishPeriod(periodStart, window) {
         return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.previousMax - item.previousMin)})
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
+      const arrow = alertDirection === 'up' ? '⬆️' : '⬇️';
       const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market}</a>`
+        `<a href="${linkByMarket[market]}">Polymarket ${market}</a> ${arrow}`
       );
       const message = `<b>${alertMarkets.join(' + ')}</b>
 ${sections.join('\n\n')}
@@ -525,7 +531,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'send a single-market alert only when exactly one of BTC or ETH has a completed 5-minute range strictly narrower than its immediately preceding completed 5-minute range; ignore periods where both or neither narrow',
+  statePath: STATE_PATH, alert: 'send an alert only when exactly one of BTC or ETH changes range width versus the immediately preceding completed 5-minute period; arrow up for wider, down for narrower; ignore periods where both or neither change',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
