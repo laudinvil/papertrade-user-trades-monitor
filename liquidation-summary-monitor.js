@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-close-equals-previous-last-boundary-v2-poll-5s';
+const VERSION = 'papertrade-5m-btc-eth-both-ranges-narrower-exact-periods-v3';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -295,17 +295,20 @@ async function finishPeriod(periodStart, window) {
 
   const closeAtMs = (periodStart + PERIOD_SECONDS) * 1000;
   const rollingStartMs = periodStart * 1000;
+  const previousPeriodStartMs = (periodStart - PERIOD_SECONDS) * 1000;
+  const previousPeriodWindow = state.windows[String(periodStart - PERIOD_SECONDS)];
+  const previousPeriodComplete = Boolean(previousPeriodWindow && previousPeriodWindow.partial !== true);
   const result = {};
 
   for (const market of ['BTC', 'ETH']) {
     const close = Number(window[market]?.lastPrice);
     const samples = (state.priceHistory?.[market] || [])
-      .filter(point => point.ts >= rollingStartMs && point.ts <= closeAtMs && Number.isFinite(point.price));
+      .filter(point => point.ts >= rollingStartMs && point.ts < closeAtMs && Number.isFinite(point.price));
     const prices = samples.map(point => point.price);
     const min = prices.length ? Math.min(...prices) : null;
     const max = prices.length ? Math.max(...prices) : null;
     const previousSamples = (state.priceHistory?.[market] || [])
-      .filter(point => point.ts >= rollingStartMs - PERIOD_SECONDS * 1000 &&
+      .filter(point => point.ts >= previousPeriodStartMs &&
         point.ts < rollingStartMs && Number.isFinite(point.price));
     const previousPrices = previousSamples.map(point => point.price);
     const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
@@ -324,7 +327,7 @@ async function finishPeriod(periodStart, window) {
     };
   }
 
-  const bothRangesNarrower = ['BTC', 'ETH'].every(market =>
+  const bothRangesNarrower = previousPeriodComplete && ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market]?.range) &&
     Number.isFinite(result[market]?.previousMin) &&
     Number.isFinite(result[market]?.previousMax) &&
@@ -341,8 +344,11 @@ async function finishPeriod(periodStart, window) {
   console.log(JSON.stringify({
     level: 'info', event: 'period_5m_one_market_inside_one_outside_previous_range_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
+    previousPeriodStart: new Date(previousPeriodStartMs).toISOString(),
+    previousPeriodEnd: new Date(rollingStartMs).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
+    previousPeriodComplete,
     BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
@@ -502,7 +508,8 @@ async function poll() {
     }
   }
 
-  const historyCutoffMs = Date.now() - 6 * 60_000;
+  // Keep both exact adjacent 5-minute periods in memory for range comparison.
+  const historyCutoffMs = Date.now() - 11 * 60_000;
   for (const market of ['BTC', 'ETH']) {
     state.priceHistory[market] = (state.priceHistory[market] || []).filter(point => point.ts >= historyCutoffMs);
   }
@@ -518,7 +525,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'alert independently for BTC and/or ETH when the completed 5-minute close exactly equals the previous 5-minute Last low or high; no thresholds or market filters',
+  statePath: STATE_PATH, alert: 'send one combined BTC + ETH alert only when each completed 5-minute range is strictly narrower than its immediately preceding completed 5-minute range; compare exact adjacent UTC periods, no single-market alerts',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
