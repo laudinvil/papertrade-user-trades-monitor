@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-both-markets-range-narrower-v13';
+const VERSION = 'papertrade-5m-single-market-range-change-arrows-v12';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -325,18 +325,20 @@ async function finishPeriod(periodStart, window) {
     };
   }
 
-  const bothRangesNarrower = previousPeriodComplete && ['BTC', 'ETH'].every(market => {
+  const changedMarkets = previousPeriodComplete ? ['BTC', 'ETH'].filter(market => {
     const item = result[market];
     if (!Number.isFinite(item?.range) ||
         !Number.isFinite(item?.previousMin) ||
         !Number.isFinite(item?.previousMax)) return false;
-    const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
-    return item.range < previousRange;
-  });
+    return item.range !== Number((item.previousMax - item.previousMin).toFixed(8));
+  }) : [];
 
-  // Send alerts only when both BTC and ETH ranges are strictly narrower.
-  const alertMarkets = bothRangesNarrower ? ['BTC', 'ETH'] : [];
-  const alertDirection = null;
+  // Ignore periods where both markets change; alert only for one changed market.
+  const alertMarkets = changedMarkets.length === 1 ? changedMarkets : [];
+  const alertDirection = alertMarkets.length === 1 &&
+    result[alertMarkets[0]].range > result[alertMarkets[0]].previousMax - result[alertMarkets[0]].previousMin
+      ? 'up'
+      : alertMarkets.length === 1 ? 'down' : null;
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
