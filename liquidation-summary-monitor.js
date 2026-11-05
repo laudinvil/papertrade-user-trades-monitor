@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-btc-eth-both-ranges-narrower-exact-periods-v9-no-arrows';
+const VERSION = 'papertrade-5m-single-market-narrower-exact-periods-v10-no-arrows';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -327,15 +327,15 @@ async function finishPeriod(periodStart, window) {
     };
   }
 
-  const bothRangesNarrower = previousPeriodComplete && ['BTC', 'ETH'].every(market =>
+  const narrowedMarkets = previousPeriodComplete ? ['BTC', 'ETH'].filter(market =>
     Number.isFinite(result[market]?.range) &&
     Number.isFinite(result[market]?.previousMin) &&
     Number.isFinite(result[market]?.previousMax) &&
     result[market].range < result[market].previousMax - result[market].previousMin
-  );
+  ) : [];
 
-  // Only double alerts are allowed: both BTC and ETH ranges must narrow.
-  const alertMarkets = bothRangesNarrower ? ['BTC', 'ETH'] : [];
+  // Ignore double alerts: send only when exactly one market's range narrows.
+  const alertMarkets = narrowedMarkets.length === 1 ? narrowedMarkets : [];
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
@@ -525,7 +525,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'send one combined BTC + ETH alert only when each completed 5-minute range is strictly narrower than its immediately preceding completed 5-minute range; compare exact adjacent UTC periods, no single-market alerts',
+  statePath: STATE_PATH, alert: 'send a single-market alert only when exactly one of BTC or ETH has a completed 5-minute range strictly narrower than its immediately preceding completed 5-minute range; ignore periods where both or neither narrow',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
