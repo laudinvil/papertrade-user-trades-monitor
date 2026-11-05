@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-btc-eth-both-ranges-narrower-exact-periods-v3';
+const VERSION = 'papertrade-5m-btc-eth-both-ranges-narrower-exact-periods-v4-link-arrows';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -367,13 +367,16 @@ async function finishPeriod(periodStart, window) {
         return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.previousMax - item.previousMin)})
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
-      const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market}</a>`
-      );
+      const marketLinks = alertMarkets.map(market => {
+        const previousRange = result[market].previousMax - result[market].previousMin;
+        const arrowThreshold = market === 'BTC' ? 120 : 4;
+        const arrow = previousRange >= arrowThreshold ? ' ⬆️' : '';
+        return `<a href="${linkByMarket[market]}">Polymarket ${market}</a>${arrow}`;
+      });
       const message = `<b>${alertMarkets.join(' + ')}</b>
-${sections.join('\n\n')}
+${sections.join('\\n\\n')}
 
-${marketLinks.join('\n\n')}`;
+${marketLinks.join('\\n\\n')}`;
       state.lastAlertSentPeriod = periodStart;
       state.lastAlertMarkets = alertMarkets;
       saveState();
