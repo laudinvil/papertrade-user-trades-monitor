@@ -374,7 +374,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     if (!alreadySentForPeriod) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart, periodSeconds),
+        await marketLink(market, periodStart + periodSeconds, periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
