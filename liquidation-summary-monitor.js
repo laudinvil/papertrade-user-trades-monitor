@@ -5,14 +5,14 @@ import { lookup as dnsLookup } from 'node:dns';
 import { request as httpsRequest } from 'node:https';
 
 const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
-const PERIOD_SECONDS = 300;
+const PERIOD_SECONDS_LIST = [300, 900];
 const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 5_000));
 const PAPERTRADE_REQUEST_TIMEOUT_MS = 20_000;
 const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-single-market-range-change-arrows-v12';
+const VERSION = 'papertrade-5m-15m-single-market-range-change-arrows-v13';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -81,7 +81,7 @@ function describeFetchError(error) {
   }
   return JSON.stringify(chain);
 }
-const periodStartFor = seconds => Math.floor(seconds / PERIOD_SECONDS) * PERIOD_SECONDS;
+const periodStartFor = (seconds, periodSeconds) => Math.floor(seconds / periodSeconds) * periodSeconds;
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const priceText = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percentText = value => `${value > 0 ? '+' : ''}${value.toFixed(3)}%`;
@@ -108,7 +108,20 @@ function loadState() {
 
 let state = loadState();
 state.priceHistory ||= { BTC: [], ETH: [] };
-state.minimumStreaks ||= { BTC: 0, ETH: 0 };
+state.periodWindows ||= {};
+state.currentPeriods ||= {};
+state.lastAlertSentPeriods ||= {};
+// Migrate the existing 5-minute state without resetting its history or deduplication.
+state.periodWindows['300'] ||= state.windows || {};
+if (state.currentPeriods['300'] === undefined && state.currentPeriod !== undefined) {
+  state.currentPeriods['300'] = Number(state.currentPeriod);
+}
+if (state.lastAlertSentPeriods['300'] === undefined && state.lastAlertSentPeriod !== undefined) {
+  state.lastAlertSentPeriods['300'] = Number(state.lastAlertSentPeriod);
+}
+for (const seconds of PERIOD_SECONDS_LIST) {
+  state.periodWindows[String(seconds)] ||= {};
+}
 
 function saveState() {
   fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
@@ -240,14 +253,16 @@ async function send(message) {
 
 const gammaEventsCache = new Map();
 
-async function marketLink(market, periodStart) {
-  const cached = gammaEventsCache.get(market);
+async function marketLink(market, periodStart, periodSeconds) {
+  const cacheKey = `${market}:${periodSeconds}`;
+  const cached = gammaEventsCache.get(cacheKey);
   let events;
   if (cached && Date.now() - cached.fetchedAt < 60_000) {
     events = cached.events;
   } else {
+    const minutes = periodSeconds / 60;
     const url = new URL('https://gamma-api.polymarket.com/events');
-    url.searchParams.set('series_slug', `${market.toLowerCase()}-up-or-down-5m`);
+    url.searchParams.set('series_slug', `${market.toLowerCase()}-up-or-down-${minutes}m`);
     url.searchParams.set('closed', 'false');
     url.searchParams.set('limit', '500');
     url.searchParams.set('order', 'endDate');
@@ -256,18 +271,18 @@ async function marketLink(market, periodStart) {
       headers: { accept: 'application/json', 'user-agent': 'papertrade-polymarket-event-link-resolver' },
       signal: AbortSignal.timeout(8_000),
     });
-    if (!response.ok) throw new Error(`Gamma events ${market} HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`Gamma events ${market} ${minutes}m HTTP ${response.status}`);
     const body = await response.json();
-    if (!Array.isArray(body)) throw new Error(`Gamma events ${market}: unexpected response shape`);
+    if (!Array.isArray(body)) throw new Error(`Gamma events ${market} ${minutes}m: unexpected response shape`);
     events = body;
-    gammaEventsCache.set(market, { fetchedAt: Date.now(), events });
+    gammaEventsCache.set(cacheKey, { fetchedAt: Date.now(), events });
   }
 
   const event = events.find(item => {
     const start = item?.startTime || item?.eventStartTime || item?.markets?.[0]?.eventStartTime;
     return start && Math.floor(Date.parse(start) / 1000) === periodStart;
   });
-  if (!event?.slug) throw new Error(`Gamma event not found for ${market} period ${periodStart}`);
+  if (!event?.slug) throw new Error(`Gamma event not found for ${market} ${periodSeconds / 60}m period ${periodStart}`);
   return `https://polymarket.com/event/${event.slug}`;
 }
 
@@ -290,30 +305,29 @@ function getMarketMovement(market, window, periodStart) {
   return { direction, pct, message, first, last };
 }
 
-async function finishPeriod(periodStart, window) {
+async function finishPeriod(periodSeconds, periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
-  const closeAtMs = (periodStart + PERIOD_SECONDS) * 1000;
+  const periodWindows = state.periodWindows[String(periodSeconds)] || {};
+  const closeAtMs = (periodStart + periodSeconds) * 1000;
   const rollingStartMs = periodStart * 1000;
-  const previousPeriodStartMs = (periodStart - PERIOD_SECONDS) * 1000;
-  const previousPeriodWindow = state.windows[String(periodStart - PERIOD_SECONDS)];
+  const previousPeriodStartMs = (periodStart - periodSeconds) * 1000;
+  const previousPeriodWindow = periodWindows[String(periodStart - periodSeconds)];
   const previousPeriodComplete = Boolean(previousPeriodWindow && previousPeriodWindow.partial !== true);
   const result = {};
 
   for (const market of ['BTC', 'ETH']) {
     const close = Number(window[market]?.lastPrice);
-    const samples = (state.priceHistory?.[market] || [])
-      .filter(point => point.ts >= rollingStartMs && point.ts < closeAtMs && Number.isFinite(point.price));
+    const history = state.priceHistory?.[market] || [];
+    const samples = history.filter(point => point.ts >= rollingStartMs && point.ts < closeAtMs && Number.isFinite(point.price));
     const prices = samples.map(point => point.price);
     const min = prices.length ? Math.min(...prices) : null;
     const max = prices.length ? Math.max(...prices) : null;
-    const previousSamples = (state.priceHistory?.[market] || [])
-      .filter(point => point.ts >= previousPeriodStartMs &&
-        point.ts < rollingStartMs && Number.isFinite(point.price));
+    const previousSamples = history.filter(point => point.ts >= previousPeriodStartMs &&
+      point.ts < rollingStartMs && Number.isFinite(point.price));
     const previousPrices = previousSamples.map(point => point.price);
     const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
     const previousMax = previousPrices.length ? Math.max(...previousPrices) : null;
-
 
     result[market] = {
       close: Number.isFinite(close) && close > 0 ? close : null,
@@ -332,20 +346,20 @@ async function finishPeriod(periodStart, window) {
         !Number.isFinite(item?.previousMax)) return false;
     return item.range !== Number((item.previousMax - item.previousMin).toFixed(8));
   }) : [];
-
-  // Ignore periods where both markets change; alert only for one changed market.
   const alertMarkets = changedMarkets.length === 1 ? changedMarkets : [];
-  const alertDirection = alertMarkets.length === 1 &&
-    result[alertMarkets[0]].range > result[alertMarkets[0]].previousMax - result[alertMarkets[0]].previousMin
-      ? 'up'
-      : alertMarkets.length === 1 ? 'down' : null;
+  const selected = alertMarkets.length === 1 ? result[alertMarkets[0]] : null;
+  const alertDirection = selected
+    ? selected.range > Number((selected.previousMax - selected.previousMin).toFixed(8)) ? 'up' : 'down'
+    : null;
+
   window.alerted = true;
-  window.BTC30m = result.BTC;
-  window.ETH30m = result.ETH;
+  window.BTC = result.BTC;
+  window.ETH = result.ETH;
   window.alertMarkets = alertMarkets;
 
+  const minutes = periodSeconds / 60;
   console.log(JSON.stringify({
-    level: 'info', event: 'period_5m_single_market_range_change_evaluated', version: VERSION,
+    level: 'info', event: `period_${minutes}m_single_market_range_change_evaluated`, version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     previousPeriodStart: new Date(previousPeriodStartMs).toISOString(),
     previousPeriodEnd: new Date(rollingStartMs).toISOString(),
@@ -355,14 +369,12 @@ async function finishPeriod(periodStart, window) {
     BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
-  // Alert exactly one market when its range width changes versus the previous completed period.
   if (alertMarkets.length > 0) {
-    const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
-
+    const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart + PERIOD_SECONDS),
+        await marketLink(market, periodStart, periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
@@ -372,58 +384,63 @@ Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)
       });
       const arrow = alertDirection === 'up' ? '⬆️' : '⬇️';
       const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market}</a> ${arrow}`
+        `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`
       );
       const message = `<b>${alertMarkets.join(' + ')}</b>
 ${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
-      state.lastAlertSentPeriod = periodStart;
-      state.lastAlertMarkets = alertMarkets;
+      state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
       saveState();
       await send(message);
       console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_single_market_range_change_alert_sent', version: VERSION,
+        level: 'info', event: `period_${minutes}m_single_market_range_change_alert_sent`, version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         alertMarkets, BTC: result.BTC, ETH: result.ETH,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info',
-        event: 'period_5m_single_market_range_change_alert_suppressed_duplicate_period',
-        version: VERSION,
-        periodStart: new Date(periodStart * 1000).toISOString(),
-        alertMarkets,
+        level: 'info', event: `period_${minutes}m_single_market_range_change_alert_suppressed_duplicate_period`,
+        version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(), alertMarkets,
       }));
     }
   } else {
     console.log(JSON.stringify({
-      level: 'info', event: 'period_5m_single_market_range_change_not_met', version: VERSION,
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      alertMarkets,
+      level: 'info', event: `period_${minutes}m_single_market_range_change_not_met`, version: VERSION,
+      periodStart: new Date(periodStart * 1000).toISOString(), alertMarkets,
     }));
   }
   saveState();
 }
 
 async function poll() {
-  const now = Math.floor(Date.now() / 1000);
-  let currentStart = periodStartFor(now);
-
-  // Finalize the previous 5-minute window immediately when the boundary is
-  // detected, before making fresh HTTP requests for the new period.
-  if (state.initialized && currentStart !== Number(state.currentPeriod)) {
-    const previousStart = Number(state.currentPeriod);
-    const previous = state.windows[String(previousStart)];
-    if (previousStart === currentStart - PERIOD_SECONDS && previous && !previous.alerted) {
-      await finishPeriod(previousStart, previous);
+  const advancePeriods = async observedNowSeconds => {
+    for (const periodSeconds of PERIOD_SECONDS_LIST) {
+      const currentStart = periodStartFor(observedNowSeconds, periodSeconds);
+      const durationKey = String(periodSeconds);
+      const windows = state.periodWindows[durationKey] ||= {};
+      const previousCurrentStart = Number(state.currentPeriods[durationKey]);
+      if (!Number.isFinite(previousCurrentStart)) {
+        windows[String(currentStart)] ||= {
+          periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: true,
+        };
+        state.currentPeriods[durationKey] = currentStart;
+        continue;
+      }
+      if (currentStart !== previousCurrentStart) {
+        const previous = windows[String(previousCurrentStart)];
+        if (previousCurrentStart === currentStart - periodSeconds && previous && !previous.alerted) {
+          await finishPeriod(periodSeconds, previousCurrentStart, previous);
+        }
+        windows[String(currentStart)] ||= {
+          periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false,
+        };
+        state.currentPeriods[durationKey] = currentStart;
+      }
     }
-    state.currentPeriod = currentStart;
-    state.windows[String(currentStart)] = {
-      periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false,
-    };
-    saveState();
-  }
+  };
+
+  await advancePeriods(Math.floor(Date.now() / 1000));
 
   const snapshots = {};
   const errors = {};
@@ -447,80 +464,46 @@ async function poll() {
     }
   }
 
-  // The HTTP requests may straddle a 5-minute boundary. Reconcile the
-  // period again after fetching so post-boundary prices are never written into
-  // the period that just ended.
-  const observedStart = periodStartFor(Math.floor(Date.now() / 1000));
-  if (observedStart !== currentStart) {
-    const previousStart = currentStart;
-    const previous = state.windows[String(previousStart)];
-    if (state.initialized && observedStart === previousStart + PERIOD_SECONDS && previous && !previous.alerted) {
-      await finishPeriod(previousStart, previous);
-    }
-    currentStart = observedStart;
-    state.currentPeriod = currentStart;
-    state.windows[String(currentStart)] ||= {
-      periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false,
-    };
-    saveState();
-  }
+  // Reconcile after HTTP requests in case they crossed either period boundary.
+  await advancePeriods(Math.floor(Date.now() / 1000));
 
-  if (!state.initialized) {
-    state.initialized = true;
-    state.currentPeriod = currentStart;
-    state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: true };
-    for (const market of ['BTC', 'ETH']) {
-      if (snapshots[market]) {
-        state.windows[String(currentStart)][market] = {
-          firstPrice: snapshots[market].price,
-          lastPrice: snapshots[market].price,
-          firstAtMs: snapshots[market].asOfMs,
-          lastAtMs: snapshots[market].asOfMs,
-          samples: 1,
-        };
-        state.priceHistory[market].push({ ts: snapshots[market].asOfMs, price: snapshots[market].price });
-      }
-    }
-    saveState();
-    console.log(JSON.stringify({ level: 'info', event: 'price_movement_baseline_set', version: VERSION, periodStart: new Date(currentStart * 1000).toISOString(), prices: Object.fromEntries(Object.entries(snapshots).map(([m, s]) => [m, s.price])) }));
-    if (Object.keys(errors).length) throw new Error(Object.values(errors).join('; '));
-    return;
-  }
-
-  const active = state.windows[String(currentStart)] || (state.windows[String(currentStart)] = { periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false });
   for (const market of ['BTC', 'ETH']) {
     const snapshot = snapshots[market];
     if (!snapshot) continue;
     const history = state.priceHistory[market] ||= [];
     history.push({ ts: snapshot.asOfMs, price: snapshot.price });
-    const item = active[market];
-    if (!item) {
-      active[market] = {
-        firstPrice: snapshot.price,
-        lastPrice: snapshot.price,
-        firstAtMs: snapshot.asOfMs,
-        lastAtMs: snapshot.asOfMs,
-        samples: 1,
-        buckets: snapshot.buckets,
-        firstBuckets: snapshot.buckets,
-      };
-    } else {
-      item.lastPrice = snapshot.price;
-      item.buckets = snapshot.buckets;
-      item.lastAtMs = snapshot.asOfMs;
-      item.samples = Number(item.samples || 0) + 1;
+    for (const periodSeconds of PERIOD_SECONDS_LIST) {
+      const currentStart = Number(state.currentPeriods[String(periodSeconds)]);
+      const active = state.periodWindows[String(periodSeconds)][String(currentStart)];
+      const item = active[market];
+      if (!item) {
+        active[market] = {
+          firstPrice: snapshot.price, lastPrice: snapshot.price,
+          firstAtMs: snapshot.asOfMs, lastAtMs: snapshot.asOfMs, samples: 1,
+        };
+      } else {
+        item.lastPrice = snapshot.price;
+        item.lastAtMs = snapshot.asOfMs;
+        item.samples = Number(item.samples || 0) + 1;
+      }
     }
   }
 
-  // Keep both exact adjacent 5-minute periods in memory for range comparison.
-  const historyCutoffMs = Date.now() - 11 * 60_000;
+  // Keep enough observations for two adjacent 15-minute periods.
+  const historyCutoffMs = Date.now() - 31 * 60_000;
   for (const market of ['BTC', 'ETH']) {
     state.priceHistory[market] = (state.priceHistory[market] || []).filter(point => point.ts >= historyCutoffMs);
   }
-
-  for (const key of Object.keys(state.windows)) {
-    if (Number(key) < currentStart - 2 * PERIOD_SECONDS) delete state.windows[key];
+  for (const periodSeconds of PERIOD_SECONDS_LIST) {
+    const currentStart = Number(state.currentPeriods[String(periodSeconds)]);
+    const windows = state.periodWindows[String(periodSeconds)];
+    for (const key of Object.keys(windows)) {
+      if (Number(key) < currentStart - 2 * periodSeconds) delete windows[key];
+    }
   }
+  state.initialized = true;
+  state.currentPeriod = state.currentPeriods['300'];
+  state.windows = state.periodWindows['300'];
   saveState();
 
   if (Object.keys(errors).length) throw new Error(Object.values(errors).join('; '));
@@ -528,9 +511,9 @@ async function poll() {
 
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
-  source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'send an alert only when exactly one of BTC or ETH changes range width versus the immediately preceding completed 5-minute period; compare widths rounded to 8 decimals to avoid floating-point noise; arrow up for wider, down for narrower; ignore periods where both or neither change',
-  markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
+  source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
+  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; send only when exactly one of BTC or ETH changes range width versus the immediately preceding completed period of the same duration; compare widths rounded to 8 decimals; arrow up for wider, down for narrower; ignore periods where both or neither change',
+  markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
 let stopping = false;
