@@ -324,9 +324,24 @@ async function finishPeriod(periodStart, window) {
     };
   }
 
-  const alertMarkets = ['BTC', 'ETH'].filter(market =>
+  const boundaryMatches = ['BTC', 'ETH'].filter(market =>
     result[market]?.matchesPreviousRangeBoundary
   );
+  let alertMarkets = boundaryMatches;
+
+  // A double alert is allowed only when BOTH current ranges are narrower
+  // than their respective previous-period ranges. Do not downgrade a
+  // rejected double match into a single alert.
+  let doubleAlertRangeCondition = null;
+  if (boundaryMatches.length === 2) {
+    doubleAlertRangeCondition = ['BTC', 'ETH'].every(market =>
+      Number.isFinite(result[market]?.range) &&
+      Number.isFinite(result[market]?.previousMin) &&
+      Number.isFinite(result[market]?.previousMax) &&
+      result[market].range < result[market].previousMax - result[market].previousMin
+    );
+    if (!doubleAlertRangeCondition) alertMarkets = [];
+  }
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
