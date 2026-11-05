@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-single-market-range-change-arrows-v11';
+const VERSION = 'papertrade-5m-single-market-range-change-arrows-v12';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -313,15 +313,13 @@ async function finishPeriod(periodStart, window) {
     const previousPrices = previousSamples.map(point => point.price);
     const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
     const previousMax = previousPrices.length ? Math.max(...previousPrices) : null;
-    const matchesPreviousRangeBoundary = Number.isFinite(close) && close > 0 &&
-      previousPrices.length > 0 && (close === previousMin || close === previousMax);
+
 
     result[market] = {
       close: Number.isFinite(close) && close > 0 ? close : null,
       min, max,
-      range: prices.length ? max - min : null,
+      range: prices.length ? Number((max - min).toFixed(8)) : null,
       previousMin, previousMax,
-      matchesPreviousRangeBoundary,
       samples: samples.length,
       previousSamples: previousSamples.length,
     };
@@ -332,7 +330,7 @@ async function finishPeriod(periodStart, window) {
     if (!Number.isFinite(item?.range) ||
         !Number.isFinite(item?.previousMin) ||
         !Number.isFinite(item?.previousMax)) return false;
-    return item.range !== item.previousMax - item.previousMin;
+    return item.range !== Number((item.previousMax - item.previousMin).toFixed(8));
   }) : [];
 
   // Ignore periods where both markets change; alert only for one changed market.
@@ -347,7 +345,7 @@ async function finishPeriod(periodStart, window) {
   window.alertMarkets = alertMarkets;
 
   console.log(JSON.stringify({
-    level: 'info', event: 'period_5m_one_market_inside_one_outside_previous_range_evaluated', version: VERSION,
+    level: 'info', event: 'period_5m_single_market_range_change_evaluated', version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     previousPeriodStart: new Date(previousPeriodStartMs).toISOString(),
     previousPeriodEnd: new Date(rollingStartMs).toISOString(),
@@ -357,7 +355,7 @@ async function finishPeriod(periodStart, window) {
     BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
-  // Alert each market whose close exactly equals the previous period's Last low or high.
+  // Alert exactly one market when its range width changes versus the previous completed period.
   if (alertMarkets.length > 0) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriod) === periodStart;
 
@@ -385,14 +383,14 @@ ${marketLinks.join('\n\n')}`;
       saveState();
       await send(message);
       console.log(JSON.stringify({
-        level: 'info', event: 'period_5m_previous_last_boundary_match_alert_sent', version: VERSION,
+        level: 'info', event: 'period_5m_single_market_range_change_alert_sent', version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         alertMarkets, BTC: result.BTC, ETH: result.ETH,
       }));
     } else {
       console.log(JSON.stringify({
         level: 'info',
-        event: 'period_5m_previous_last_boundary_match_alert_suppressed_duplicate_period',
+        event: 'period_5m_single_market_range_change_alert_suppressed_duplicate_period',
         version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         alertMarkets,
@@ -400,7 +398,7 @@ ${marketLinks.join('\n\n')}`;
     }
   } else {
     console.log(JSON.stringify({
-      level: 'info', event: 'period_5m_previous_last_boundary_match_not_met', version: VERSION,
+      level: 'info', event: 'period_5m_single_market_range_change_not_met', version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(),
       alertMarkets,
     }));
@@ -531,7 +529,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'send an alert only when exactly one of BTC or ETH changes range width versus the immediately preceding completed 5-minute period; arrow up for wider, down for narrower; ignore periods where both or neither change',
+  statePath: STATE_PATH, alert: 'send an alert only when exactly one of BTC or ETH changes range width versus the immediately preceding completed 5-minute period; compare widths rounded to 8 decimals to avoid floating-point noise; arrow up for wider, down for narrower; ignore periods where both or neither change',
   markets: ['BTC', 'ETH'], link: 'Polymarket up/down 5-minute market for the same UTC period',
 }));
 
