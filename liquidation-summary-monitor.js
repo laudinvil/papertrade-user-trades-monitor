@@ -301,7 +301,7 @@ function getMarketMovement(market, window, periodStart) {
   const message = `<b>${market} ${label}</b>
 Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})
 \u200B
-<a href="${marketLink(market, periodStart + PERIOD_SECONDS)}">Polymarket ${market} 5m</a>`
+<a href="${marketLink(market, periodStart + PERIOD_SECONDS_LIST[0], PERIOD_SECONDS_LIST[0])}">Polymarket ${market} 5m</a>`
   return { direction, pct, message, first, last };
 }
 
@@ -535,10 +535,10 @@ async function loop() {
     // Take a final sample shortly before the boundary, then wake at the exact
     // next 5-minute boundary so the previous window is finalized immediately.
     const now = Date.now();
-    if (state.initialized && periodStartFor(Math.floor(now / 1000)) !== Number(state.currentPeriod)) {
+    if (state.initialized && periodStartFor(Math.floor(now / 1000), PERIOD_SECONDS_LIST[0]) !== Number(state.currentPeriod)) {
       continue;
     }
-    const nextBoundaryMs = (Math.floor(now / (PERIOD_SECONDS * 1000)) + 1) * PERIOD_SECONDS * 1000;
+    const nextBoundaryMs = (Math.floor(now / (PERIOD_SECONDS_LIST[0] * 1000)) + 1) * PERIOD_SECONDS_LIST[0] * 1000;
     const preBoundaryMs = nextBoundaryMs - 1_000;
     const targetMs = (preBoundaryMs > now && preBoundaryMs - now < POLL_MS)
       ? preBoundaryMs
