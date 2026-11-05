@@ -324,15 +324,15 @@ async function finishPeriod(periodStart, window) {
     };
   }
 
-  const bothRangesWider = ['BTC', 'ETH'].every(market =>
+  const bothRangesNarrower = ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market]?.range) &&
     Number.isFinite(result[market]?.previousMin) &&
     Number.isFinite(result[market]?.previousMax) &&
-    result[market].range > result[market].previousMax - result[market].previousMin
+    result[market].range < result[market].previousMax - result[market].previousMin
   );
 
-  // Only double alerts are allowed: both BTC and ETH ranges must widen.
-  const alertMarkets = bothRangesWider ? ['BTC', 'ETH'] : [];
+  // Only double alerts are allowed: both BTC and ETH ranges must narrow.
+  const alertMarkets = bothRangesNarrower ? ['BTC', 'ETH'] : [];
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
