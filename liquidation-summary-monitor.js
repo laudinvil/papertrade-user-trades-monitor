@@ -324,9 +324,6 @@ async function finishPeriod(periodStart, window) {
     };
   }
 
-  const boundaryMatches = ['BTC', 'ETH'].filter(market =>
-    result[market]?.matchesPreviousRangeBoundary
-  );
   const bothRangesWider = ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market]?.range) &&
     Number.isFinite(result[market]?.previousMin) &&
@@ -334,13 +331,8 @@ async function finishPeriod(periodStart, window) {
     result[market].range > result[market].previousMax - result[market].previousMin
   );
 
-  // Double alerts depend only on both ranges widening versus the previous
-  // period. Boundary matches remain the trigger for single-market alerts.
-  const alertMarkets = bothRangesWider
-    ? ['BTC', 'ETH']
-    : boundaryMatches.length === 1
-      ? boundaryMatches
-      : [];
+  // Only double alerts are allowed: both BTC and ETH ranges must widen.
+  const alertMarkets = bothRangesWider ? ['BTC', 'ETH'] : [];
   window.alerted = true;
   window.BTC30m = result.BTC;
   window.ETH30m = result.ETH;
