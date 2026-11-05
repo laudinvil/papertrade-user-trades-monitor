@@ -327,16 +327,16 @@ async function finishPeriod(periodStart, window) {
   const boundaryMatches = ['BTC', 'ETH'].filter(market =>
     result[market]?.matchesPreviousRangeBoundary
   );
-  const bothRangesNarrower = ['BTC', 'ETH'].every(market =>
+  const bothRangesWider = ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market]?.range) &&
     Number.isFinite(result[market]?.previousMin) &&
     Number.isFinite(result[market]?.previousMax) &&
-    result[market].range < result[market].previousMax - result[market].previousMin
+    result[market].range > result[market].previousMax - result[market].previousMin
   );
 
-  // Double alerts depend only on both ranges narrowing versus the previous
+  // Double alerts depend only on both ranges widening versus the previous
   // period. Boundary matches remain the trigger for single-market alerts.
-  const alertMarkets = bothRangesNarrower
+  const alertMarkets = bothRangesWider
     ? ['BTC', 'ETH']
     : boundaryMatches.length === 1
       ? boundaryMatches
