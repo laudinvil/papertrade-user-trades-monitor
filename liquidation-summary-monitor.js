@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-both-ranges-contract-dual-alerts-v23';
+const VERSION = 'papertrade-15m-both-ranges-contract-dual-alerts-2-quiet-periods-v24';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -384,8 +384,13 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   }));
 
   if (alertMarkets.length > 0) {
-    const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
-    if (!alreadySentForPeriod) {
+    const lastAlertPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]);
+    const alreadySentForPeriod = lastAlertPeriod === periodStart;
+    const quietPeriodsSinceLastAlert = Number.isFinite(lastAlertPeriod)
+      ? Math.floor((periodStart - lastAlertPeriod) / periodSeconds) - 1
+      : Infinity;
+    const cooldownSatisfied = quietPeriodsSinceLastAlert >= 2;
+    if (!alreadySentForPeriod && cooldownSatisfied) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
         await marketLink(market, periodStart + periodSeconds, periodSeconds),
@@ -414,8 +419,16 @@ ${marketLinks.join('\n\n')}`;
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_single_market_range_change_alert_suppressed_duplicate_period`,
-        version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(), alertMarkets,
+        level: 'info',
+        event: alreadySentForPeriod
+          ? `period_${minutes}m_single_market_range_change_alert_suppressed_duplicate_period`
+          : `period_${minutes}m_single_market_range_change_alert_suppressed_cooldown`,
+        version: VERSION,
+        periodStart: new Date(periodStart * 1000).toISOString(),
+        lastAlertPeriod: Number.isFinite(lastAlertPeriod) ? new Date(lastAlertPeriod * 1000).toISOString() : null,
+        quietPeriodsSinceLastAlert: Number.isFinite(quietPeriodsSinceLastAlert) ? quietPeriodsSinceLastAlert : null,
+        requiredQuietPeriods: 2,
+        alertMarkets,
       }));
     }
   } else {
@@ -527,7 +540,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; send a dual BTC+ETH alert only when both ranges contract versus their immediately preceding completed 15-minute periods; ignore all other cases; compare widths rounded to 8 decimals; arrows down for both; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; send a dual BTC+ETH alert only when both ranges contract versus their immediately preceding completed 15-minute periods; require at least two complete silent periods between sent alerts; ignore all other cases; compare widths rounded to 8 decimals; arrows down for both; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
