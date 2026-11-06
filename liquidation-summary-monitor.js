@@ -398,7 +398,7 @@ Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)
       });
       const marketLinks = alertMarkets.map(market => {
         const arrow = rangeDirections[market] === 'up' ? '⬆️' : '⬇️';
-        return `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`;
+        return `<a href="${linkByMarket[market]}">Polymarket ${market}${minutes === 15 ? "" : ` ${minutes}m`}</a> ${arrow}`;
       });
       const message = `<b>${alertMarkets.join(' + ')}</b>
 ${sections.join('\n\n')}
