@@ -83,7 +83,7 @@ function describeFetchError(error) {
 }
 const periodStartFor = (seconds, periodSeconds) => Math.floor(seconds / periodSeconds) * periodSeconds;
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-const priceText = value => Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const priceText = value => String(Math.round(Number(value)));
 const percentText = value => `${value > 0 ? '+' : ''}${value.toFixed(3)}%`;
 
 function loadState() {
