@@ -440,7 +440,7 @@ ${marketLinks.join('\n\n')}`;
       console.log(JSON.stringify({
         level: 'info', event: `period_${minutes}m_dual_range_streak_alert_suppressed_duplicate_period`,
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-        alertMarkets, streakDirection: streakState.direction, streakLength: streakState.length,
+        alertMarkets, streakStates,
       }));
     }
   } else {
