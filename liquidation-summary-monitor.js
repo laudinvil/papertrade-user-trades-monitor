@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-opposite-range-change-alerts-v16';
+const VERSION = 'papertrade-5m-15m-single-expanded-range-alerts-v17';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -339,21 +339,22 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     };
   }
 
-  const rangeDirections = {};
+  const validRangeMarkets = [];
+  const expandedMarkets = [];
   if (previousPeriodComplete) {
     for (const market of ['BTC', 'ETH']) {
       const item = result[market];
       if (!Number.isFinite(item?.range) ||
           !Number.isFinite(item?.previousMin) ||
           !Number.isFinite(item?.previousMax)) continue;
+      validRangeMarkets.push(market);
       const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
-      if (item.range > previousRange) rangeDirections[market] = 'up';
-      else if (item.range < previousRange) rangeDirections[market] = 'down';
+      if (item.range > previousRange) expandedMarkets.push(market);
     }
   }
-  const alertMarkets = Object.keys(rangeDirections).length === 2 &&
-    rangeDirections.BTC !== rangeDirections.ETH
-    ? ['BTC', 'ETH']
+  // Send only a single-market alert; suppress periods where both ranges expanded.
+  const alertMarkets = validRangeMarkets.length === 2 && expandedMarkets.length === 1
+    ? expandedMarkets
     : [];
 
   window.alerted = true;
@@ -387,7 +388,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
       const marketLinks = alertMarkets.map(market => {
-        const arrow = rangeDirections[market] === 'up' ? '⬆️' : '⬇️';
+        const arrow = '⬆️';
         return `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`;
       });
       const message = `<b>${alertMarkets.join(' + ')}</b>
