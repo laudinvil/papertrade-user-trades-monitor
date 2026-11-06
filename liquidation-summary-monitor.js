@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-single-expanded-range-alerts-v17';
+const VERSION = 'papertrade-5m-15m-both-markets-expanded-alerts-v18';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -352,9 +352,9 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       if (item.range > previousRange) expandedMarkets.push(market);
     }
   }
-  // Send only a single-market alert; suppress periods where both ranges expanded.
-  const alertMarkets = validRangeMarkets.length === 2 && expandedMarkets.length === 1
-    ? expandedMarkets
+  // Alert only when both BTC and ETH ranges expanded in the same period.
+  const alertMarkets = validRangeMarkets.length === 2 && expandedMarkets.length === 2
+    ? ['BTC', 'ETH']
     : [];
 
   window.alerted = true;
