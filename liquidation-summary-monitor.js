@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-single-market-range-change-arrows-v15';
+const VERSION = 'papertrade-5m-15m-opposite-range-change-alerts-v16';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -339,18 +339,22 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     };
   }
 
-  const changedMarkets = previousPeriodComplete ? ['BTC', 'ETH'].filter(market => {
-    const item = result[market];
-    if (!Number.isFinite(item?.range) ||
-        !Number.isFinite(item?.previousMin) ||
-        !Number.isFinite(item?.previousMax)) return false;
-    return item.range !== Number((item.previousMax - item.previousMin).toFixed(8));
-  }) : [];
-  const alertMarkets = changedMarkets.length === 1 ? changedMarkets : [];
-  const selected = alertMarkets.length === 1 ? result[alertMarkets[0]] : null;
-  const alertDirection = selected
-    ? selected.range > Number((selected.previousMax - selected.previousMin).toFixed(8)) ? 'up' : 'down'
-    : null;
+  const rangeDirections = {};
+  if (previousPeriodComplete) {
+    for (const market of ['BTC', 'ETH']) {
+      const item = result[market];
+      if (!Number.isFinite(item?.range) ||
+          !Number.isFinite(item?.previousMin) ||
+          !Number.isFinite(item?.previousMax)) continue;
+      const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
+      if (item.range > previousRange) rangeDirections[market] = 'up';
+      else if (item.range < previousRange) rangeDirections[market] = 'down';
+    }
+  }
+  const alertMarkets = Object.keys(rangeDirections).length === 2 &&
+    rangeDirections.BTC !== rangeDirections.ETH
+    ? ['BTC', 'ETH']
+    : [];
 
   window.alerted = true;
   window.BTC = result.BTC;
@@ -382,10 +386,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
         return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.previousMax - item.previousMin)})
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
-      const arrow = alertDirection === 'up' ? '⬆️' : '⬇️';
-      const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`
-      );
+      const marketLinks = alertMarkets.map(market => {
+        const arrow = rangeDirections[market] === 'up' ? '⬆️' : '⬇️';
+        return `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`;
+      });
       const message = `<b>${alertMarkets.join(' + ')}</b>
 ${sections.join('\n\n')}
 
@@ -513,7 +517,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; send only when exactly one of BTC or ETH changes range width versus the immediately preceding completed period of the same duration; compare widths rounded to 8 decimals; arrow up for wider, down for narrower; ignore periods where both or neither change',
+  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; send only when both BTC and ETH change range width in opposite directions versus the immediately preceding completed period of the same duration; compare widths rounded to 8 decimals; arrow up for wider, down for narrower; ignore periods where both move in the same direction or either is unchanged',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
