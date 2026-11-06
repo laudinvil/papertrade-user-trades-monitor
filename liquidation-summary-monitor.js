@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-opposite-range-change-dual-alerts-v22';
+const VERSION = 'papertrade-15m-both-ranges-contract-dual-alerts-v23';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -359,10 +359,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       }
     }
   }
-  // 15m only: alert with both markets when one range expands and the other contracts.
+  // 15m only: send a dual alert only when both BTC and ETH ranges contract.
   const alertMarkets = validRangeMarkets.length === 2 &&
-    changedMarkets.length === 2 &&
-    rangeDirections.BTC !== rangeDirections.ETH
+    rangeDirections.BTC === 'down' &&
+    rangeDirections.ETH === 'down'
     ? ['BTC', 'ETH']
     : [];
 
@@ -527,7 +527,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; send a dual BTC+ETH alert only when one range expands and the other contracts versus the immediately preceding completed 15-minute period; ignore single-market changes, same-direction changes, and unchanged ranges; compare widths rounded to 8 decimals; arrow up for wider and down for narrower; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; send a dual BTC+ETH alert only when both ranges contract versus their immediately preceding completed 15-minute periods; ignore all other cases; compare widths rounded to 8 decimals; arrows down for both; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
