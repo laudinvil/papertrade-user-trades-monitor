@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-expansion-15m-single-range-change-alerts-v20';
+const VERSION = 'papertrade-5m-15m-single-range-change-alerts-v21';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -363,7 +363,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   }
   // 5m: alert only for one expanding market. 15m: alert for one market
   // whose range changed in either direction. Suppress simultaneous BTC+ETH changes.
-  const selectedMarkets = periodSeconds === 900 ? changedMarkets : expandedMarkets;
+  const selectedMarkets = changedMarkets;
   const alertMarkets = validRangeMarkets.length === 2 && selectedMarkets.length === 1
     ? selectedMarkets
     : [];
@@ -529,7 +529,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; 5m sends only a single-market expansion alert; 15m sends only a single-market range-change alert for either expansion or contraction; suppress periods where both BTC and ETH change; compare widths rounded to 8 decimals; arrow up for wider and down for narrower; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; both periods send an alert when exactly one of BTC or ETH changes range width versus the immediately preceding completed period, whether wider or narrower; suppress periods where both BTC and ETH change or neither changes; compare widths rounded to 8 decimals; arrow up for wider and down for narrower; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
