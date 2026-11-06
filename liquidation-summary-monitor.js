@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-single-expanded-range-alerts-v17';
+const VERSION = 'papertrade-5m-expansion-15m-single-range-change-alerts-v18';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -341,6 +341,8 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 
   const validRangeMarkets = [];
   const expandedMarkets = [];
+  const changedMarkets = [];
+  const rangeDirections = {};
   if (previousPeriodComplete) {
     for (const market of ['BTC', 'ETH']) {
       const item = result[market];
@@ -349,12 +351,21 @@ async function finishPeriod(periodSeconds, periodStart, window) {
           !Number.isFinite(item?.previousMax)) continue;
       validRangeMarkets.push(market);
       const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
-      if (item.range > previousRange) expandedMarkets.push(market);
+      if (item.range > previousRange) {
+        expandedMarkets.push(market);
+        changedMarkets.push(market);
+        rangeDirections[market] = 'up';
+      } else if (item.range < previousRange) {
+        changedMarkets.push(market);
+        rangeDirections[market] = 'down';
+      }
     }
   }
-  // Send only a single-market alert; suppress periods where both ranges expanded.
-  const alertMarkets = validRangeMarkets.length === 2 && expandedMarkets.length === 1
-    ? expandedMarkets
+  // 5m: alert only for one expanding market. 15m: alert for one market
+  // whose range changed in either direction. Suppress simultaneous BTC+ETH changes.
+  const selectedMarkets = periodSeconds === 900 ? changedMarkets : expandedMarkets;
+  const alertMarkets = validRangeMarkets.length === 2 && selectedMarkets.length === 1
+    ? selectedMarkets
     : [];
 
   window.alerted = true;
@@ -388,7 +399,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
       const marketLinks = alertMarkets.map(market => {
-        const arrow = '⬆️';
+        const arrow = rangeDirections[market] === 'up' ? '⬆️' : '⬇️';
         return `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`;
       });
       const message = `<b>${alertMarkets.join(' + ')}</b>
@@ -518,7 +529,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; send only when both BTC and ETH change range width in opposite directions versus the immediately preceding completed period of the same duration; compare widths rounded to 8 decimals; arrow up for wider, down for narrower; ignore periods where both move in the same direction or either is unchanged',
+  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; 5m sends only a single-market expansion alert; 15m sends only a single-market range-change alert for either expansion or contraction; suppress periods where both BTC and ETH change; compare widths rounded to 8 decimals; arrow up for wider and down for narrower',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
