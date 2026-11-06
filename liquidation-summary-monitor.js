@@ -5,14 +5,14 @@ import { lookup as dnsLookup } from 'node:dns';
 import { request as httpsRequest } from 'node:https';
 
 const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
-const PERIOD_SECONDS_LIST = [300, 900];
+const PERIOD_SECONDS_LIST = [900];
 const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 5_000));
 const PAPERTRADE_REQUEST_TIMEOUT_MS = 20_000;
 const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-single-range-change-alerts-v21';
+const VERSION = 'papertrade-15m-opposite-range-change-dual-alerts-v22';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -340,7 +340,6 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   }
 
   const validRangeMarkets = [];
-  const expandedMarkets = [];
   const changedMarkets = [];
   const rangeDirections = {};
   if (previousPeriodComplete) {
@@ -352,7 +351,6 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       validRangeMarkets.push(market);
       const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
       if (item.range > previousRange) {
-        expandedMarkets.push(market);
         changedMarkets.push(market);
         rangeDirections[market] = 'up';
       } else if (item.range < previousRange) {
@@ -361,11 +359,11 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       }
     }
   }
-  // 5m: alert only for one expanding market. 15m: alert for one market
-  // whose range changed in either direction. Suppress simultaneous BTC+ETH changes.
-  const selectedMarkets = changedMarkets;
-  const alertMarkets = validRangeMarkets.length === 2 && selectedMarkets.length === 1
-    ? selectedMarkets
+  // 15m only: alert with both markets when one range expands and the other contracts.
+  const alertMarkets = validRangeMarkets.length === 2 &&
+    changedMarkets.length === 2 &&
+    rangeDirections.BTC !== rangeDirections.ETH
+    ? ['BTC', 'ETH']
     : [];
 
   window.alerted = true;
@@ -529,7 +527,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: 'run independent 5-minute and 15-minute comparisons; both periods send an alert when exactly one of BTC or ETH changes range width versus the immediately preceding completed period, whether wider or narrower; suppress periods where both BTC and ETH change or neither changes; compare widths rounded to 8 decimals; arrow up for wider and down for narrower; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; send a dual BTC+ETH alert only when one range expands and the other contracts versus the immediately preceding completed 15-minute period; ignore single-market changes, same-direction changes, and unchanged ranges; compare widths rounded to 8 decimals; arrow up for wider and down for narrower; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
