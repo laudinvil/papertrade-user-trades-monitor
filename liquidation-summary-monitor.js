@@ -552,7 +552,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; single-market or dual BTC+ETH alerts when each alerted market independently expands or contracts for at least 2 consecutive completed periods versus the immediately preceding period; send again on every further streak period; reset each market streak on unchanged, missing, invalid, or interrupted periods; no quiet-period cooldown; compare widths rounded to 8 decimals; arrows show each market's streak direction; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; single-market or dual BTC+ETH alerts when each alerted market independently expands or contracts for at least 2 consecutive completed periods versus the immediately preceding period; send again on every further streak period; reset each market streak on unchanged, missing, invalid, or interrupted periods; no quiet-period cooldown; compare widths rounded to 8 decimals; arrows show each market direction; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
