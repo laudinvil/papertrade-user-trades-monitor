@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-dual-same-direction-range-streak-v25';
+const VERSION = 'papertrade-15m-single-and-dual-independent-range-streaks-v26';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -360,34 +360,35 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       }
     }
   }
-  // 15m only: both BTC and ETH must expand together or contract together
-  // for consecutive completed periods. A flat/missing/mixed period breaks the streak.
-  const streakState = state.rangeStreaks[String(periodSeconds)] ||= {
-    direction: null, length: 0, lastPeriodStart: null,
-  };
-  const dualDirection = validRangeMarkets.length === 2 &&
-    rangeDirections.BTC === rangeDirections.ETH &&
-    (rangeDirections.BTC === 'up' || rangeDirections.BTC === 'down')
-    ? rangeDirections.BTC
-    : null;
-  if (!previousPeriodComplete || !dualDirection) {
-    streakState.direction = null;
-    streakState.length = 0;
-    streakState.lastPeriodStart = periodStart;
-  } else if (
-    streakState.direction === dualDirection &&
-    Number(streakState.lastPeriodStart) === periodStart - periodSeconds
-  ) {
-    streakState.length += 1;
-    streakState.lastPeriodStart = periodStart;
-  } else {
-    streakState.direction = dualDirection;
-    streakState.length = 1;
-    streakState.lastPeriodStart = periodStart;
+  // Track BTC and ETH streaks independently. A market qualifies after 2+
+  // consecutive completed periods with the same range-width direction.
+  // Flat, missing, invalid, or interrupted periods reset that market's streak.
+  const streakStates = state.rangeStreaks[String(periodSeconds)] ||= {};
+  const alertMarkets = [];
+  for (const market of ['BTC', 'ETH']) {
+    const streak = streakStates[market] ||= {
+      direction: null, length: 0, lastPeriodStart: null,
+    };
+    const direction = rangeDirections[market] || null;
+    const consecutive = Number(streak.lastPeriodStart) === periodStart - periodSeconds;
+
+    if (!previousPeriodComplete || !direction) {
+      streak.direction = null;
+      streak.length = 0;
+      streak.lastPeriodStart = periodStart;
+    } else if (consecutive && streak.direction === direction) {
+      streak.length += 1;
+      streak.lastPeriodStart = periodStart;
+    } else {
+      streak.direction = direction;
+      streak.length = 1;
+      streak.lastPeriodStart = periodStart;
+    }
+
+    if (streak.length >= 2 && streak.direction === direction && direction) {
+      alertMarkets.push(market);
+    }
   }
-  const alertMarkets = dualDirection && streakState.length >= 2
-    ? ['BTC', 'ETH']
-    : [];
 
   window.alerted = true;
   window.BTC = result.BTC;
@@ -403,7 +404,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
     previousPeriodComplete,
-    BTC: result.BTC, ETH: result.ETH, rangeDirections, streakDirection: streakState.direction, streakLength: streakState.length, alertMarkets,
+    BTC: result.BTC, ETH: result.ETH, rangeDirections, streakStates, alertMarkets,
   }));
 
   if (alertMarkets.length > 0) {
@@ -420,7 +421,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
       const marketLinks = alertMarkets.map(market => {
-        const arrow = streakState.direction === 'up' ? '⬆️' : '⬇️';
+        const arrow = streakStates[market].direction === 'up' ? '⬆️' : '⬇️';
         return `<a href="${linkByMarket[market]}">Polymarket ${market}${minutes === 15 ? "" : ` ${minutes}m`}</a> ${arrow}`;
       });
       const message = `<b>${alertMarkets.join(' + ')}</b>
@@ -551,7 +552,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; dual BTC+ETH alerts when both ranges expand together or contract together for at least 2 consecutive completed periods versus the immediately preceding period; send again on every further streak period; reset streak on mixed, unchanged, missing, or interrupted periods; no quiet-period cooldown; compare widths rounded to 8 decimals; arrows show streak direction; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; single-market or dual BTC+ETH alerts when each alerted market independently expands or contracts for at least 2 consecutive completed periods versus the immediately preceding period; send again on every further streak period; reset each market streak on unchanged, missing, invalid, or interrupted periods; no quiet-period cooldown; compare widths rounded to 8 decimals; arrows show each market's streak direction; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
