@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-range-change-and-previous-boundary-match-v14';
+const VERSION = 'papertrade-5m-15m-single-market-range-change-arrows-v15';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -111,7 +111,6 @@ state.priceHistory ||= { BTC: [], ETH: [] };
 state.periodWindows ||= {};
 state.currentPeriods ||= {};
 state.lastAlertSentPeriods ||= {};
-state.lastBoundaryMatchAlertSentPeriods ||= {};
 // Migrate the existing 5-minute state without resetting its history or deduplication.
 state.periodWindows['300'] ||= state.windows || {};
 if (state.currentPeriods['300'] === undefined && state.currentPeriod !== undefined) {
@@ -409,57 +408,6 @@ ${marketLinks.join('\n\n')}`;
     console.log(JSON.stringify({
       level: 'info', event: `period_${minutes}m_single_market_range_change_not_met`, version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(), alertMarkets,
-    }));
-  }
-
-  // Independent additional rule: alert when exactly one market closes at
-  // either boundary of the immediately preceding completed period's range.
-  const boundaryMatchMarkets = previousPeriodComplete ? ['BTC', 'ETH'].filter(market => {
-    const item = result[market];
-    return Number.isFinite(item?.close) &&
-      Number.isFinite(item?.previousMin) &&
-      Number.isFinite(item?.previousMax) &&
-      (item.close === item.previousMin || item.close === item.previousMax);
-  }) : [];
-  const boundaryMatchMarket = boundaryMatchMarkets.length === 1 ? boundaryMatchMarkets[0] : null;
-  console.log(JSON.stringify({
-    level: 'info', event: `period_${minutes}m_previous_range_boundary_match_evaluated`, version: VERSION,
-    periodStart: new Date(periodStart * 1000).toISOString(),
-    previousPeriodStart: new Date(previousPeriodStartMs).toISOString(),
-    previousPeriodComplete, boundaryMatchMarkets,
-    BTC: result.BTC, ETH: result.ETH,
-  }));
-
-  if (boundaryMatchMarket) {
-    const alreadySent = Number(state.lastBoundaryMatchAlertSentPeriods[String(periodSeconds)]) === periodStart;
-    if (!alreadySent) {
-      const item = result[boundaryMatchMarket];
-      const link = await marketLink(boundaryMatchMarket, periodStart + periodSeconds, periodSeconds);
-      const message = `<b>${boundaryMatchMarket}</b>
-Закрытие ${boundaryMatchMarket}: ${priceText(item.close)} (${priceText(item.previousMax - item.previousMin)})
-Last ${boundaryMatchMarket}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}
-
-<a href="${link}">Polymarket ${boundaryMatchMarket} ${minutes}m</a>`;
-      state.lastBoundaryMatchAlertSentPeriods[String(periodSeconds)] = periodStart;
-      saveState();
-      await send(message);
-      console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_previous_range_boundary_match_alert_sent`, version: VERSION,
-        periodStart: new Date(periodStart * 1000).toISOString(),
-        alertMarket: boundaryMatchMarket, BTC: result.BTC, ETH: result.ETH,
-      }));
-    } else {
-      console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_previous_range_boundary_match_alert_suppressed_duplicate_period`,
-        version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-        alertMarket: boundaryMatchMarket,
-      }));
-    }
-  } else if (boundaryMatchMarkets.length > 1) {
-    console.log(JSON.stringify({
-      level: 'info', event: `period_${minutes}m_previous_range_boundary_match_ignored_both_markets`,
-      version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-      boundaryMatchMarkets,
     }));
   }
 
