@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-single-and-dual-independent-range-streaks-v26';
+const VERSION = 'papertrade-15m-single-and-dual-independent-range-streaks-first-alert-only-v27';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -385,7 +385,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       streak.lastPeriodStart = periodStart;
     }
 
-    if (streak.length >= 2 && streak.direction === direction && direction) {
+    if (streak.length === 2 && streak.direction === direction && direction) {
       alertMarkets.push(market);
     }
   }
@@ -552,7 +552,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; single-market or dual BTC+ETH alerts when each alerted market independently expands or contracts for at least 2 consecutive completed periods versus the immediately preceding period; send again on every further streak period; reset each market streak on unchanged, missing, invalid, or interrupted periods; no quiet-period cooldown; compare widths rounded to 8 decimals; arrows show each market direction; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; single-market or dual BTC+ETH alerts when each alerted market independently expands or contracts for at least 2 consecutive completed periods versus the immediately preceding period; send only on the first period reaching a 2-period streak; ignore further periods until the streak resets; reset each market streak on unchanged, missing, invalid, or interrupted periods; no quiet-period cooldown; compare widths rounded to 8 decimals; arrows show each market direction; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
