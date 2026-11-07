@@ -559,7 +559,10 @@ async function loop() {
     // Take a final sample shortly before the boundary, then wake at the exact
     // next 5-minute boundary so the previous window is finalized immediately.
     const now = Date.now();
-    if (state.initialized && periodStartFor(Math.floor(now / 1000), PERIOD_SECONDS_LIST[0]) !== Number(state.currentPeriod)) {
+    const activePeriodSeconds = PERIOD_SECONDS_LIST[0];
+    const activePeriodStart = Number(state.currentPeriods[String(activePeriodSeconds)]);
+    if (state.initialized &&
+        periodStartFor(Math.floor(now / 1000), activePeriodSeconds) !== activePeriodStart) {
       continue;
     }
     const nextBoundaryMs = (Math.floor(now / (PERIOD_SECONDS_LIST[0] * 1000)) + 1) * PERIOD_SECONDS_LIST[0] * 1000;
