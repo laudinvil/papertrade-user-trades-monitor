@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-independent-range-ratio-1.7x-ratio-no-word-v42';
+const VERSION = 'papertrade-15m-independent-range-ratio-1.8x-ratio-no-word-v43';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -351,10 +351,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
           !Number.isFinite(item?.previousMax)) continue;
       const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
       rangeComparisons[market] = { currentRange: item.range, previousRange };
-      if (previousRange > 0 && item.range >= previousRange * 1.7) {
+      if (previousRange > 0 && item.range >= previousRange * 1.8) {
         rangeDirections[market] = 'up';
         alertMarkets.push(market);
-      } else if (previousRange > 0 && item.range <= previousRange / 1.7) {
+      } else if (previousRange > 0 && item.range <= previousRange / 1.8) {
         rangeDirections[market] = 'down';
         alertMarkets.push(market);
       }
@@ -529,7 +529,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert when current range width is at least 1.7x or at most approximately 0.5882x the immediately previous completed period width; arrows show expansion or contraction; no flip, streak, cooldown, or cross-market conditions; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert when current range width is at least 1.8x or at most approximately 0.5882x the immediately previous completed period width; arrows show expansion or contraction; no flip, streak, cooldown, or cross-market conditions; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
