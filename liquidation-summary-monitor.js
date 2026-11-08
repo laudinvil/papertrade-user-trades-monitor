@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-double-same-direction-ratio-sum-4-v48';
+const VERSION = 'papertrade-15m-double-same-direction-ratio-sum-5-v49';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -374,7 +374,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       : previousRange / item.range;
   };
   const combinedRatio = ratioFor('BTC') + ratioFor('ETH');
-  if (!sameDirectionDouble || !Number.isFinite(combinedRatio) || combinedRatio < 4) {
+  if (!sameDirectionDouble || !Number.isFinite(combinedRatio) || combinedRatio < 5) {
     alertMarkets.length = 0;
   }
 
@@ -546,7 +546,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert on any expansion or contraction of the current range width versus the immediately previous completed period width; arrows are inverted: only double alerts when BTC and ETH both expand or both contract and the sum of their displayed coefficients is at least 4; expansion points down and contraction points up; no flip, streak, or cooldown; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert on any expansion or contraction of the current range width versus the immediately previous completed period width; arrows are inverted: only double alerts when BTC and ETH both expand or both contract and the sum of their displayed coefficients is at least 5; expansion points down and contraction points up; no flip, streak, or cooldown; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
