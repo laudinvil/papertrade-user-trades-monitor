@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-independent-range-direction-flips-v34-alert-second-only';
+const VERSION = 'papertrade-15m-independent-range-direction-flips-v35-reset-on-repeat';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -374,15 +374,16 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       } else {
         ignoredDirectionFlipMarkets.push(market);
       }
-    }
-    if (direction) {
       state.previousRangeDirections[market] = direction;
-    } else {
-      // A flat or unavailable comparison resets this market sequence independently.
-      delete state.previousRangeDirections[market];
+    } else if (direction && previousDirection && direction === previousDirection) {
+      // A repeated direction resets this market's flip sequence independently.
       delete state.rangeDirectionFlipCount[market];
       delete state.rangeDirectionFlipAlerted[market];
+      state.previousRangeDirections[market] = direction;
+    } else if (direction) {
+      state.previousRangeDirections[market] = direction;
     }
+    // A flat or unavailable comparison does not reset the sequence.
   }
 
   window.alerted = true;
@@ -547,7 +548,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert only on the second direction flip in each market sequence; ignore the first flip and all later flips until that market sequence resets; BTC and ETH are independent; flat or unavailable comparisons reset only that market sequence; no thresholds; compare widths rounded to 8 decimals; arrows show each alerted market direction; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert only on the second direction flip in each market sequence; ignore the first flip and all later flips until that market repeats the same direction, which resets its sequence; flat or unavailable comparisons do not reset it; BTC and ETH are independent; no thresholds; compare widths rounded to 8 decimals; arrows show each alerted market direction; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
