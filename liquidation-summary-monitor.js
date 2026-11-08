@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-independent-range-ratio-1.7x-v39';
+const VERSION = 'papertrade-15m-independent-range-ratio-1.7x-no-last-v40';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -388,8 +388,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
         const item = result[market];
-        return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.range)})
-Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
+        return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.range)})`;
       });
       const marketLinks = alertMarkets.map(market => {
         const arrow = rangeDirections[market] === 'up' ? '⬆️' : '⬇️';
