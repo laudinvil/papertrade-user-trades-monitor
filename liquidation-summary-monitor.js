@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-independent-range-direction-flips-v35-reset-on-repeat';
+const VERSION = 'papertrade-15m-independent-range-ratio-2x-v36';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -341,6 +341,8 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   }
 
   const rangeDirections = {};
+  const alertMarkets = [];
+  const rangeComparisons = {};
   if (previousPeriodComplete) {
     for (const market of ['BTC', 'ETH']) {
       const item = result[market];
@@ -348,42 +350,15 @@ async function finishPeriod(periodSeconds, periodStart, window) {
           !Number.isFinite(item?.previousMin) ||
           !Number.isFinite(item?.previousMax)) continue;
       const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
-      if (item.range > previousRange) {
+      rangeComparisons[market] = { currentRange: item.range, previousRange };
+      if (previousRange > 0 && item.range >= previousRange * 2) {
         rangeDirections[market] = 'up';
-      } else if (item.range < previousRange) {
-        rangeDirections[market] = 'down';
-      }
-    }
-  }
-
-  // Track each market's own range-width direction across adjacent completed periods.
-  // Alert that market only when its direction flips (up -> down or down -> up).
-  state.previousRangeDirections ||= {};
-  state.rangeDirectionFlipCount ||= {};
-  state.rangeDirectionFlipAlerted ||= {};
-  const alertMarkets = [];
-  const ignoredDirectionFlipMarkets = [];
-  for (const market of ['BTC', 'ETH']) {
-    const direction = rangeDirections[market];
-    const previousDirection = state.previousRangeDirections[market];
-    if (direction && previousDirection && direction !== previousDirection) {
-      state.rangeDirectionFlipCount[market] = Number(state.rangeDirectionFlipCount[market] || 0) + 1;
-      if (state.rangeDirectionFlipCount[market] === 2 && state.rangeDirectionFlipAlerted[market] !== true) {
         alertMarkets.push(market);
-        state.rangeDirectionFlipAlerted[market] = true;
-      } else {
-        ignoredDirectionFlipMarkets.push(market);
+      } else if (previousRange > 0 && item.range <= previousRange / 2) {
+        rangeDirections[market] = 'down';
+        alertMarkets.push(market);
       }
-      state.previousRangeDirections[market] = direction;
-    } else if (direction && previousDirection && direction === previousDirection) {
-      // A repeated direction resets this market's flip sequence independently.
-      delete state.rangeDirectionFlipCount[market];
-      delete state.rangeDirectionFlipAlerted[market];
-      state.previousRangeDirections[market] = direction;
-    } else if (direction) {
-      state.previousRangeDirections[market] = direction;
     }
-    // A flat or unavailable comparison does not reset the sequence.
   }
 
   window.alerted = true;
@@ -393,14 +368,14 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 
   const minutes = periodSeconds / 60;
   console.log(JSON.stringify({
-    level: 'info', event: `period_${minutes}m_independent_range_direction_flips_evaluated`, version: VERSION,
+    level: 'info', event: `period_${minutes}m_range_ratio_evaluated`, version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     previousPeriodStart: new Date(previousPeriodStartMs).toISOString(),
     previousPeriodEnd: new Date(rollingStartMs).toISOString(),
     windowStart: new Date(rollingStartMs).toISOString(),
     windowEnd: new Date(closeAtMs).toISOString(),
     previousPeriodComplete,
-    BTC: result.BTC, ETH: result.ETH, rangeDirections, alertMarkets, ignoredDirectionFlipMarkets,
+    BTC: result.BTC, ETH: result.ETH, rangeComparisons, rangeDirections, alertMarkets,
   }));
 
   if (alertMarkets.length > 0) {
@@ -428,20 +403,20 @@ ${marketLinks.join('\n\n')}`;
       saveState();
       await send(message);
       console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_independent_range_direction_flips_alert_sent`, version: VERSION,
+        level: 'info', event: `period_${minutes}m_range_ratio_alert_sent`, version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         alertMarkets, BTC: result.BTC, ETH: result.ETH,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_independent_range_direction_flips_alert_suppressed_duplicate_period`,
+        level: 'info', event: `period_${minutes}m_range_ratio_alert_suppressed_duplicate_period`,
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-        alertMarkets, ignoredDirectionFlipMarkets, rangeDirections,
+        alertMarkets, rangeComparisons, rangeDirections,
       }));
     }
   } else {
     console.log(JSON.stringify({
-      level: 'info', event: `period_${minutes}m_independent_range_direction_flips_not_met`, version: VERSION,
+      level: 'info', event: `period_${minutes}m_range_ratio_not_met`, version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(), alertMarkets,
     }));
   }
@@ -548,7 +523,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert only on the second direction flip in each market sequence; ignore the first flip and all later flips until that market repeats the same direction, which resets its sequence; flat or unavailable comparisons do not reset it; BTC and ETH are independent; no thresholds; compare widths rounded to 8 decimals; arrows show each alerted market direction; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert when current range width is at least 2x or at most 0.5x the immediately previous completed period width; arrows show expansion or contraction; no flip, streak, cooldown, or cross-market conditions; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
