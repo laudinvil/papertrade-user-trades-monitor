@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-independent-range-change-no-threshold-no-arrows-v50';
+const VERSION = 'papertrade-5m-independent-range-change-no-threshold-no-arrows-v51';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -449,8 +449,13 @@ async function poll() {
       }
       if (currentStart !== previousCurrentStart) {
         const previous = windows[String(previousCurrentStart)];
-        if (previousCurrentStart === currentStart - periodSeconds && previous && !previous.alerted) {
-          await finishPeriod(periodSeconds, previousCurrentStart, previous);
+        if (previousCurrentStart === currentStart - periodSeconds && previous) {
+          // The period has now crossed its boundary and is complete, even if it
+          // was initially marked partial when the monitor first started.
+          previous.partial = false;
+          if (!previous.alerted) {
+            await finishPeriod(periodSeconds, previousCurrentStart, previous);
+          }
         }
         windows[String(currentStart)] ||= {
           periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false,
