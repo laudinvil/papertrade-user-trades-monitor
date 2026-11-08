@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-15m-independent-range-ratio-4x-ratio-no-word-v44';
+const VERSION = 'papertrade-15m-independent-range-change-no-ratio-threshold-v45';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -351,10 +351,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
           !Number.isFinite(item?.previousMax)) continue;
       const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
       rangeComparisons[market] = { currentRange: item.range, previousRange };
-      if (previousRange > 0 && item.range >= previousRange * 4) {
+      if (previousRange > 0 && item.range > previousRange) {
         rangeDirections[market] = 'up';
         alertMarkets.push(market);
-      } else if (previousRange > 0 && item.range <= previousRange / 4) {
+      } else if (previousRange > 0 && item.range < previousRange) {
         rangeDirections[market] = 'down';
         alertMarkets.push(market);
       }
@@ -368,7 +368,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 
   const minutes = periodSeconds / 60;
   console.log(JSON.stringify({
-    level: 'info', event: `period_${minutes}m_range_ratio_evaluated`, version: VERSION,
+    level: 'info', event: `period_${minutes}m_range_change_evaluated`, version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
     previousPeriodStart: new Date(previousPeriodStartMs).toISOString(),
     previousPeriodEnd: new Date(rollingStartMs).toISOString(),
@@ -409,20 +409,20 @@ ${marketLinks.join('\n\n')}`;
       saveState();
       await send(message);
       console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_range_ratio_alert_sent`, version: VERSION,
+        level: 'info', event: `period_${minutes}m_range_change_alert_sent`, version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
         alertMarkets, BTC: result.BTC, ETH: result.ETH,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_range_ratio_alert_suppressed_duplicate_period`,
+        level: 'info', event: `period_${minutes}m_range_change_alert_suppressed_duplicate_period`,
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
         alertMarkets, rangeComparisons, rangeDirections,
       }));
     }
   } else {
     console.log(JSON.stringify({
-      level: 'info', event: `period_${minutes}m_range_ratio_not_met`, version: VERSION,
+      level: 'info', event: `period_${minutes}m_range_change_not_met`, version: VERSION,
       periodStart: new Date(periodStart * 1000).toISOString(), alertMarkets,
     }));
   }
@@ -529,7 +529,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert when current range width is at least 4x or at most 0.25x the immediately previous completed period width; arrows show expansion or contraction; no flip, streak, cooldown, or cross-market conditions; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '15-minute monitoring only; BTC and ETH are evaluated independently; alert on any expansion or contraction of the current range width versus the immediately previous completed period width; arrows show expansion or contraction; no flip, streak, cooldown, coefficient thresholds, or cross-market conditions; alert values are rounded to integers without separators',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
