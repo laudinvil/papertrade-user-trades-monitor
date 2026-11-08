@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-signed-change-btc-eth-v52';
+const VERSION = 'papertrade-5m-open-close-signed-change-eth-one-decimal-v53';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -357,7 +357,8 @@ async function finishPeriod(periodSeconds, periodStart, window) {
           : item.change < 0
             ? item.change.toFixed(2).replace('.', ',')
             : '0,00';
-        return `Закрытие ${market}: ${priceText(item.close)} (${changeText})`;
+        const closeText = market === "ETH" ? Number(item.close).toFixed(1).replace(".", ",") : priceText(item.close);
+        return `Закрытие ${market}: ${closeText} (${changeText})`;
       });
       const marketLinks = alertMarkets.map(market =>
         `<a href="${linkByMarket[market]}">Polymarket ${market} 5m</a>`);
