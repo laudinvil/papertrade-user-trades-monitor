@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-opposite-signals-btc-arrows-eth-negative-limit-v56';
+const VERSION = 'papertrade-5m-open-close-opposite-signals-btc-arrows-eth-negative-limit-no-noise-v57';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -386,12 +386,6 @@ ${marketLinks.join('\n\n')}`;
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
       }));
     }
-  } else {
-    console.log(JSON.stringify({
-      level: 'warn', event: `period_${minutes}m_open_close_change_missing_market_data`, version: VERSION,
-      periodStart: new Date(periodStart * 1000).toISOString(),
-      availableMarkets: alertMarkets,
-    }));
   }
 
   saveState();
