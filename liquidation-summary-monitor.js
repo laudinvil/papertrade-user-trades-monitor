@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-independent-range-change-no-threshold-no-arrows-v51';
+const VERSION = 'papertrade-5m-open-close-signed-change-btc-eth-v52';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -309,61 +309,25 @@ function getMarketMovement(market, window, periodStart) {
 async function finishPeriod(periodSeconds, periodStart, window) {
   if (!window || window.alerted || window.partial === true) return;
 
-  const periodWindows = state.periodWindows[String(periodSeconds)] || {};
   const closeAtMs = (periodStart + periodSeconds) * 1000;
-  const rollingStartMs = periodStart * 1000;
-  const previousPeriodStartMs = (periodStart - periodSeconds) * 1000;
-  const previousPeriodWindow = periodWindows[String(periodStart - periodSeconds)];
-  const previousPeriodComplete = Boolean(previousPeriodWindow && previousPeriodWindow.partial !== true);
   const result = {};
 
   for (const market of ['BTC', 'ETH']) {
+    const open = Number(window[market]?.firstPrice);
     const close = Number(window[market]?.lastPrice);
-    const history = state.priceHistory?.[market] || [];
-    const samples = history.filter(point => point.ts >= rollingStartMs && point.ts < closeAtMs && Number.isFinite(point.price));
-    const prices = samples.map(point => point.price);
-    const min = prices.length ? Math.min(...prices) : null;
-    const max = prices.length ? Math.max(...prices) : null;
-    const previousSamples = history.filter(point => point.ts >= previousPeriodStartMs &&
-      point.ts < rollingStartMs && Number.isFinite(point.price));
-    const previousPrices = previousSamples.map(point => point.price);
-    const previousMin = previousPrices.length ? Math.min(...previousPrices) : null;
-    const previousMax = previousPrices.length ? Math.max(...previousPrices) : null;
-
+    const valid = Number.isFinite(open) && open > 0 && Number.isFinite(close) && close > 0;
     result[market] = {
-      close: Number.isFinite(close) && close > 0 ? close : null,
-      min, max,
-      range: prices.length ? Number((max - min).toFixed(8)) : null,
-      previousMin, previousMax,
-      samples: samples.length,
-      previousSamples: previousSamples.length,
+      open: valid ? open : null,
+      close: valid ? close : null,
+      change: valid ? Number((close - open).toFixed(8)) : null,
+      samples: Number(window[market]?.samples || 0),
     };
   }
 
-  const rangeDirections = {};
-  const alertMarkets = [];
-  const rangeComparisons = {};
-  if (previousPeriodComplete) {
-    for (const market of ['BTC', 'ETH']) {
-      const item = result[market];
-      if (!Number.isFinite(item?.range) ||
-          !Number.isFinite(item?.previousMin) ||
-          !Number.isFinite(item?.previousMax)) continue;
-      const previousRange = Number((item.previousMax - item.previousMin).toFixed(8));
-      rangeComparisons[market] = { currentRange: item.range, previousRange };
-      if (previousRange > 0 && item.range > previousRange) {
-        rangeDirections[market] = 'up';
-        alertMarkets.push(market);
-      } else if (previousRange > 0 && item.range < previousRange) {
-        rangeDirections[market] = 'down';
-        alertMarkets.push(market);
-      }
-    }
-  }
-
-  // BTC and ETH are evaluated independently. Any range expansion or contraction
-  // versus the immediately previous completed 5-minute period triggers an alert.
-  // Coefficients are informational only; there are no thresholds or direction arrows.
+  // Send one alert for every completed 5-minute period, containing both markets.
+  // The signed value is the closing price minus the opening price within this period.
+  const alertMarkets = ['BTC', 'ETH'].filter(market =>
+    Number.isFinite(result[market].open) && Number.isFinite(result[market].close));
 
   window.alerted = true;
   window.BTC = result.BTC;
@@ -372,17 +336,13 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 
   const minutes = periodSeconds / 60;
   console.log(JSON.stringify({
-    level: 'info', event: `period_${minutes}m_range_change_evaluated`, version: VERSION,
+    level: 'info', event: `period_${minutes}m_open_close_change_evaluated`, version: VERSION,
     periodStart: new Date(periodStart * 1000).toISOString(),
-    previousPeriodStart: new Date(previousPeriodStartMs).toISOString(),
-    previousPeriodEnd: new Date(rollingStartMs).toISOString(),
-    windowStart: new Date(rollingStartMs).toISOString(),
-    windowEnd: new Date(closeAtMs).toISOString(),
-    previousPeriodComplete,
-    BTC: result.BTC, ETH: result.ETH, rangeComparisons, rangeDirections, alertMarkets,
+    periodEnd: new Date(closeAtMs).toISOString(),
+    BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
-  if (alertMarkets.length > 0) {
+  if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
       const links = await Promise.all(alertMarkets.map(async market => [
@@ -392,19 +352,16 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
         const item = result[market];
-        const previousRange = rangeComparisons[market].previousRange;
-        const ratio = rangeDirections[market] === 'up'
-          ? item.range / previousRange
-          : previousRange / item.range;
-        const ratioText = Number.isFinite(ratio)
-          ? `${ratio.toFixed(2).replace('.', ',')}`
-          : 'бесконечно';
-        return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.range)}) — ${ratioText}`;
+        const changeText = item.change > 0
+          ? `+${item.change.toFixed(2).replace('.', ',')}`
+          : item.change < 0
+            ? item.change.toFixed(2).replace('.', ',')
+            : '0,00';
+        return `Закрытие ${market}: ${priceText(item.close)} (${changeText})`;
       });
-      const marketLinks = alertMarkets.map(market => {
-        return `<a href="${linkByMarket[market]}">Polymarket ${market}${minutes === 15 ? "" : ` ${minutes}m`}</a>`;
-      });
-      const message = `<b>${alertMarkets.join(' + ')}</b>
+      const marketLinks = alertMarkets.map(market =>
+        `<a href="${linkByMarket[market]}">Polymarket ${market} 5m</a>`);
+      const message = `<b>BTC + ETH</b>
 ${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
@@ -412,21 +369,21 @@ ${marketLinks.join('\n\n')}`;
       saveState();
       await send(message);
       console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_range_change_alert_sent`, version: VERSION,
+        level: 'info', event: `period_${minutes}m_open_close_change_alert_sent`, version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
-        alertMarkets, BTC: result.BTC, ETH: result.ETH,
+        BTC: result.BTC, ETH: result.ETH,
       }));
     } else {
       console.log(JSON.stringify({
-        level: 'info', event: `period_${minutes}m_range_change_alert_suppressed_duplicate_period`,
+        level: 'info', event: `period_${minutes}m_open_close_change_alert_suppressed_duplicate_period`,
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-        alertMarkets, rangeComparisons, rangeDirections,
       }));
     }
   } else {
     console.log(JSON.stringify({
-      level: 'info', event: `period_${minutes}m_range_change_not_met`, version: VERSION,
-      periodStart: new Date(periodStart * 1000).toISOString(), alertMarkets,
+      level: 'warn', event: `period_${minutes}m_open_close_change_missing_market_data`, version: VERSION,
+      periodStart: new Date(periodStart * 1000).toISOString(),
+      availableMarkets: alertMarkets,
     }));
   }
 
@@ -537,7 +494,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '5-minute monitoring only; BTC and ETH are evaluated independently; alert on any expansion or contraction of each market range versus its immediately previous completed 5-minute period; no thresholds, no arrows, no double-alert requirement; display the current range in parentheses and its change coefficient for information only; alert values are rounded to integers without separators',
+  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; no previous-period comparison, range coefficients, thresholds, or arrows',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
