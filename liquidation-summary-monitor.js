@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-signed-change-eth-one-decimal-v53';
+const VERSION = 'papertrade-5m-open-close-opposite-signals-only-v54';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -324,10 +324,15 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     };
   }
 
-  // Send one alert for every completed 5-minute period, containing both markets.
-  // The signed value is the closing price minus the opening price within this period.
-  const alertMarkets = ['BTC', 'ETH'].filter(market =>
-    Number.isFinite(result[market].open) && Number.isFinite(result[market].close));
+  // Alert only when BTC and ETH move in opposite directions within this period.
+  // Zero change does not qualify as either positive or negative.
+  const bothHaveData = ['BTC', 'ETH'].every(market =>
+    Number.isFinite(result[market].open) && Number.isFinite(result[market].close) &&
+    Number.isFinite(result[market].change));
+  const oppositeDirections = bothHaveData &&
+    ((result.BTC.change > 0 && result.ETH.change < 0) ||
+     (result.BTC.change < 0 && result.ETH.change > 0));
+  const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
   window.alerted = true;
   window.BTC = result.BTC;
@@ -495,7 +500,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; no previous-period comparison, range coefficients, thresholds, or arrows',
+  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; alert only when BTC and ETH have opposite signs (one positive, one negative); zero does not qualify; no previous-period comparison, range coefficients, thresholds, or arrows',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
