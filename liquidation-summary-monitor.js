@@ -413,7 +413,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
         const item = result[market];
-        return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.previousMax - item.previousMin)})
+        return `Закрытие ${market}: ${priceText(item.close)} (${priceText(item.range)})
 Last ${market}: ${priceText(item.previousMin)} — ${priceText(item.previousMax)}`;
       });
       const marketLinks = alertMarkets.map(market => {
