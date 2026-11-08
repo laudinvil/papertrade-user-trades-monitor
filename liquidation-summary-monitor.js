@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-opposite-signals-btc-arrows-eth-negative-limit-no-noise-v57';
+const VERSION = 'papertrade-5m-open-close-opposite-signals-btc-arrows-eth-negative-limit-skip-next-after-eth-minus-010-v58';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -350,6 +350,21 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
+      const skipNextKey = `skipNextAlertAfterEthMinus010:${periodSeconds}`;
+      if (state[skipNextKey] === true) {
+        state[skipNextKey] = false;
+        window.suppressedByEthMinus010Followup = true;
+        console.log(JSON.stringify({
+          level: 'info',
+          event: `period_${minutes}m_open_close_change_alert_skipped_after_eth_minus_010`,
+          version: VERSION,
+          periodStart: new Date(periodStart * 1000).toISOString(),
+          BTC: result.BTC, ETH: result.ETH,
+        }));
+        saveState();
+        window.alerted = true;
+        return;
+      }
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
         await marketLink(market, periodStart + periodSeconds, periodSeconds),
@@ -373,6 +388,9 @@ ${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
+      if (Number(result.ETH.change.toFixed(2)) === -0.10) {
+        state[skipNextKey] = true;
+      }
       saveState();
       await send(message);
       console.log(JSON.stringify({
@@ -495,7 +513,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; alert only when BTC and ETH have opposite signs (one positive, one negative); zero does not qualify; ignore alerts when ETH change is -1.10 or lower; no previous-period comparison, range coefficients, thresholds, or arrows',
+  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; alert only when BTC and ETH have opposite signs (one positive, one negative); zero does not qualify; ignore alerts when ETH change is -1.10 or lower; after sending an alert with ETH change rounded to -0.10, skip the next otherwise-eligible double alert once, then resume normal alerts; no previous-period comparison, range coefficients, thresholds, or arrows',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
