@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-opposite-signals-special-pairs-reversed-arrows-v68';
+const VERSION = 'papertrade-5m-open-close-opposite-signs-only-links-plus-300s-v69';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -329,35 +329,9 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   const bothHaveData = ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market].open) && Number.isFinite(result[market].close) &&
     Number.isFinite(result[market].change));
-  const exactCombinationAlert =
-    (Number(result.BTC.change?.toFixed(2)) === 22.00 &&
-     Number(result.ETH.change?.toFixed(2)) === -0.20) ||
-    (Number(result.BTC.change?.toFixed(2)) === -18.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 0.40) ||
-    (Number(result.BTC.change?.toFixed(2)) === -25.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 1.10) ||
-    (Number(result.BTC.change?.toFixed(2)) === -4.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 0.70) ||
-    (Number(result.BTC.change?.toFixed(2)) === -32.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 1.10) ||
-    (Number(result.BTC.change?.toFixed(2)) === 2.00 &&
-     Number(result.ETH.change?.toFixed(2)) === -0.40) ||
-    (Number(result.BTC.change?.toFixed(2)) === -109.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 0.50) ||
-    (Number(result.BTC.change?.toFixed(2)) === -18.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 2.90) ||
-    (Number(result.BTC.change?.toFixed(2)) === -117.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 1.10) ||
-    (Number(result.BTC.change?.toFixed(2)) === 14.00 &&
-     Number(result.ETH.change?.toFixed(2)) === -0.80) ||
-    (Number(result.BTC.change?.toFixed(2)) === 6.00 &&
-     Number(result.ETH.change?.toFixed(2)) === -0.50) ||
-    (Number(result.BTC.change?.toFixed(2)) === 10.00 &&
-     Number(result.ETH.change?.toFixed(2)) === -1.00);
   const oppositeDirections = bothHaveData &&
-    (exactCombinationAlert ||
-     (result.BTC.change > 0 && result.ETH.change < 0 && result.ETH.change > -1.10) ||
-     (result.BTC.change < 0 && result.ETH.change > 0));
+    ((result.BTC.change < 0 && result.ETH.change > 0) ||
+     (result.BTC.change > 0 && result.ETH.change < 0));
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
   window.alerted = true;
@@ -376,24 +350,9 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
-      const skipNextKey = `skipNextAlertAfterEthMinus010:${periodSeconds}`;
-      if (state[skipNextKey] === true) {
-        state[skipNextKey] = false;
-        window.suppressedByEthMinus010Followup = true;
-        console.log(JSON.stringify({
-          level: 'info',
-          event: `period_${minutes}m_open_close_change_alert_skipped_after_eth_minus_010`,
-          version: VERSION,
-          periodStart: new Date(periodStart * 1000).toISOString(),
-          BTC: result.BTC, ETH: result.ETH,
-        }));
-        saveState();
-        window.alerted = true;
-        return;
-      }
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart + periodSeconds, periodSeconds),
+        await marketLink(market, periodStart + 300, periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
@@ -406,19 +365,13 @@ async function finishPeriod(periodSeconds, periodStart, window) {
         const closeText = market === "ETH" ? Number(item.close).toFixed(1).replace(".", ",") : priceText(item.close);
         return `Закрытие ${market}: ${closeText} (${changeText})`;
       });
-      const arrow = exactCombinationAlert
-        ? (result.BTC.change > 0 ? '⬆️' : '⬇️')
-        : (result.BTC.change > 0 ? '⬇️' : '⬆️');
       const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market} 5m</a> ${arrow}`);
-      const message = `<b>${exactCombinationAlert ? '⚠️ BTC + ETH' : 'BTC + ETH'}</b>
+        `<a href="${linkByMarket[market]}">Polymarket ${market} 5m</a>`);
+      const message = `<b>BTC + ETH</b>
 ${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
-      if (Number(result.ETH.change.toFixed(2)) === -0.10) {
-        state[skipNextKey] = true;
-      }
       saveState();
       await send(message);
       console.log(JSON.stringify({
@@ -541,7 +494,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; alert only when BTC and ETH have opposite signs (one positive, one negative); zero does not qualify; ignore alerts when ETH change is -1.10 or lower; mark the exact simultaneous combinations BTC +22.00 and ETH -0.20, BTC -18.00 and ETH +0.40, and BTC -25.00 and ETH +1.10, BTC -4.00 and ETH +0.70, BTC -32.00 and ETH +1.10, BTC +2.00 and ETH -0.40, and BTC -109.00 and ETH +0.50, and BTC -18.00 and ETH +2.90, and BTC -117.00 and ETH +1.10 as attention alerts with both Polymarket arrows reversed; after sending an alert with ETH change rounded to -0.10, skip the next otherwise-eligible double alert once, then resume normal alerts; no previous-period comparison, range coefficients, thresholds, or arrows',
+  statePath: STATE_PATH, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (BTC negative and ETH positive, or BTC positive and ETH negative); zero does not qualify; no thresholds, special combinations, follow-up suppression, or arrows; Polymarket market links target the period starting 300 seconds after the completed period start',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
