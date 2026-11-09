@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-opposite-signs-only-links-plus-300s-v69';
+const VERSION = 'papertrade-5m-open-close-opposite-signs-only-links-plus-600s-v70';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -352,7 +352,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     if (!alreadySentForPeriod) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart + 300, periodSeconds),
+        await marketLink(market, periodStart + 600, periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
@@ -494,7 +494,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (BTC negative and ETH positive, or BTC positive and ETH negative); zero does not qualify; no thresholds, special combinations, follow-up suppression, or arrows; Polymarket market links target the period starting 300 seconds after the completed period start',
+  statePath: STATE_PATH, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (BTC negative and ETH positive, or BTC positive and ETH negative); zero does not qualify; no thresholds, special combinations, follow-up suppression, or arrows; Polymarket market links target the period starting 600 seconds after the completed period start',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
