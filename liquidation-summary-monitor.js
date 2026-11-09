@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-opposite-signals-special-pairs-reversed-arrows-v62';
+const VERSION = 'papertrade-5m-open-close-opposite-signals-special-pairs-reversed-arrows-v63';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -335,7 +335,15 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     (Number(result.BTC.change?.toFixed(2)) === -18.00 &&
      Number(result.ETH.change?.toFixed(2)) === 0.40) ||
     (Number(result.BTC.change?.toFixed(2)) === -25.00 &&
-     Number(result.ETH.change?.toFixed(2)) === 1.10);
+     Number(result.ETH.change?.toFixed(2)) === 1.10) ||
+    (Number(result.BTC.change?.toFixed(2)) === -4.00 &&
+     Number(result.ETH.change?.toFixed(2)) === 0.70) ||
+    (Number(result.BTC.change?.toFixed(2)) === -32.00 &&
+     Number(result.ETH.change?.toFixed(2)) === 1.10) ||
+    (Number(result.BTC.change?.toFixed(2)) === 2.00 &&
+     Number(result.ETH.change?.toFixed(2)) === -0.40) ||
+    (Number(result.BTC.change?.toFixed(2)) === -109.00 &&
+     Number(result.ETH.change?.toFixed(2)) === 0.50);
   const oppositeDirections = bothHaveData &&
     (exactCombinationAlert ||
      (result.BTC.change > 0 && result.ETH.change < 0 && result.ETH.change > -1.10) ||
@@ -523,7 +531,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; alert only when BTC and ETH have opposite signs (one positive, one negative); zero does not qualify; ignore alerts when ETH change is -1.10 or lower; mark the exact simultaneous combinations BTC +22.00 and ETH -0.20, BTC -18.00 and ETH +0.40, and BTC -25.00 and ETH +1.10 as attention alerts with both Polymarket arrows reversed; after sending an alert with ETH change rounded to -0.10, skip the next otherwise-eligible double alert once, then resume normal alerts; no previous-period comparison, range coefficients, thresholds, or arrows',
+  statePath: STATE_PATH, alert: '5-minute monitoring only; send one alert after every completed period with both BTC and ETH; show each closing price and the signed difference between the period closing price and opening price in parentheses; alert only when BTC and ETH have opposite signs (one positive, one negative); zero does not qualify; ignore alerts when ETH change is -1.10 or lower; mark the exact simultaneous combinations BTC +22.00 and ETH -0.20, BTC -18.00 and ETH +0.40, and BTC -25.00 and ETH +1.10, BTC -4.00 and ETH +0.70, BTC -32.00 and ETH +1.10, BTC +2.00 and ETH -0.40, and BTC -109.00 and ETH +0.50 as attention alerts with both Polymarket arrows reversed; after sending an alert with ETH change rounded to -0.10, skip the next otherwise-eligible double alert once, then resume normal alerts; no previous-period comparison, range coefficients, thresholds, or arrows',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
