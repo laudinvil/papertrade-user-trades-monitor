@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-above6-ignore-exact-plus6-btc-minus6-eth-minus010-v77';
+const VERSION = 'papertrade-5m-open-close-btc-above13-ignore-exact-plus6-btc-minus6-eth-minus010-v78';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -334,7 +334,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     Number(result.BTC.change.toFixed(2)) !== 6.00 &&
     Number(result.ETH.change.toFixed(2)) !== -0.10 &&
     result.ETH.change <= 0 &&
-    result.BTC.change > 6;
+    result.BTC.change >= 13;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
   window.alerted = true;
