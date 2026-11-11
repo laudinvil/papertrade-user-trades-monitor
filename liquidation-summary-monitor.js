@@ -9,6 +9,7 @@ const PERIOD_SECONDS_LIST = [300];
 const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 5_000));
 const PAPERTRADE_REQUEST_TIMEOUT_MS = 20_000;
 const PAPERTRADE_REQUEST_ATTEMPTS = 4;
+const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
@@ -437,20 +438,39 @@ async function poll() {
         state.currentPeriods[durationKey] = currentStart;
         continue;
       }
+
       if (currentStart !== previousCurrentStart) {
-        const previous = windows[String(previousCurrentStart)];
-        if (previousCurrentStart === currentStart - periodSeconds && previous) {
-          // The period has now crossed its boundary and is complete, even if it
-          // was initially marked partial when the monitor first started.
-          previous.partial = false;
-          if (!previous.alerted) {
-            await finishPeriod(periodSeconds, previousCurrentStart, previous);
-          }
-        }
         windows[String(currentStart)] ||= {
           periodStart: currentStart, BTC: null, ETH: null, alerted: false, partial: false,
         };
         state.currentPeriods[durationKey] = currentStart;
+      }
+
+      // Finalize completed periods only after the grace window and only once
+      // both BTC and ETH have valid observations. If either feed is missing,
+      // keep the period pending and retry on subsequent polling cycles.
+      for (const [key, completed] of Object.entries(windows)) {
+        const completedStart = Number(key);
+        if (!Number.isFinite(completedStart) || completedStart >= currentStart ||
+            completed.alerted || completed.partial === true) continue;
+        const closeAtMs = (completedStart + periodSeconds) * 1000;
+        if (Date.now() < closeAtMs + PERIOD_FINALIZATION_GRACE_MS) continue;
+        const hasBothMarkets = ['BTC', 'ETH'].every(market => {
+          const item = completed[market];
+          return Number.isFinite(Number(item?.firstPrice)) && Number(item?.firstPrice) > 0 &&
+            Number.isFinite(Number(item?.lastPrice)) && Number(item?.lastPrice) > 0;
+        });
+        if (!hasBothMarkets) {
+          console.warn(JSON.stringify({
+            level: 'warn', event: 'period_waiting_for_both_market_data',
+            version: VERSION, periodStart: new Date(completedStart * 1000).toISOString(),
+            graceMs: PERIOD_FINALIZATION_GRACE_MS,
+            hasBTC: Boolean(completed.BTC), hasETH: Boolean(completed.ETH),
+          }));
+          continue;
+        }
+        completed.partial = false;
+        await finishPeriod(periodSeconds, completedStart, completed);
       }
     }
   };
@@ -488,17 +508,27 @@ async function poll() {
     const history = state.priceHistory[market] ||= [];
     history.push({ ts: snapshot.asOfMs, price: snapshot.price });
     for (const periodSeconds of PERIOD_SECONDS_LIST) {
-      const currentStart = Number(state.currentPeriods[String(periodSeconds)]);
-      const active = state.periodWindows[String(periodSeconds)][String(currentStart)];
-      const item = active[market];
+      // Attribute a delayed HTTP response to the period represented by its
+      // source timestamp, not automatically to the period active at receipt.
+      const snapshotPeriodStart = periodStartFor(Math.floor(snapshot.asOfMs / 1000), periodSeconds);
+      const windows = state.periodWindows[String(periodSeconds)];
+      const targetWindow = windows[String(snapshotPeriodStart)];
+      if (!targetWindow || targetWindow.alerted) continue;
+      const item = targetWindow[market];
       if (!item) {
-        active[market] = {
+        targetWindow[market] = {
           firstPrice: snapshot.price, lastPrice: snapshot.price,
           firstAtMs: snapshot.asOfMs, lastAtMs: snapshot.asOfMs, samples: 1,
         };
       } else {
-        item.lastPrice = snapshot.price;
-        item.lastAtMs = snapshot.asOfMs;
+        if (snapshot.asOfMs < Number(item.firstAtMs || Infinity)) {
+          item.firstPrice = snapshot.price;
+          item.firstAtMs = snapshot.asOfMs;
+        }
+        if (snapshot.asOfMs >= Number(item.lastAtMs || 0)) {
+          item.lastPrice = snapshot.price;
+          item.lastAtMs = snapshot.asOfMs;
+        }
         item.samples = Number(item.samples || 0) + 1;
       }
     }
@@ -527,7 +557,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (only when BTC change is greater than +6.00 and ETH change is negative; exact BTC +6.00 and any positive ETH change are ignored; BTC positive minimum +6.00 only when ETH is negative; append downward arrows after both market links in every alert; ignore double alerts when BTC change rounded to two decimals is exactly -6.00 or ETH change rounded to two decimals is exactly -0.10; ignore all alerts with positive ETH change; no special combinations or follow-up suppression; Polymarket market links target the period starting 600 seconds after the completed period start',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (only when BTC change is greater than +6.00 and ETH change is negative; exact BTC +6.00 and any positive ETH change are ignored; BTC positive minimum +6.00 only when ETH is negative; append downward arrows after both market links in every alert; ignore double alerts when BTC change rounded to two decimals is exactly -6.00 or ETH change rounded to two decimals is exactly -0.10; ignore all alerts with positive ETH change; no special combinations or follow-up suppression; Polymarket market links target the period starting 600 seconds after the completed period start',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
