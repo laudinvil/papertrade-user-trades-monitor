@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-v84';
+const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-arrows-v85';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -394,8 +394,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
         const closeText = market === "ETH" ? Number(item.close).toFixed(1).replace(".", ",") : priceText(item.close);
         return `Закрытие ${market}: ${closeText} (${changeText})`;
       });
+      const useUpArrows = negativeBtcPositiveEthRule;
+      const arrow = useUpArrows ? '⬆️' : '⬇️';
       const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market} 5m</a> ⬇️`);
+        `<a href="${linkByMarket[market]}">Polymarket ${market} 5m</a> ${arrow}`);
       const message = `<b>BTC + ETH</b>
 ${sections.join('\n\n')}
 
