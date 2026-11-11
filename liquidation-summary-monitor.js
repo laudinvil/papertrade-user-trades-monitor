@@ -360,14 +360,15 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
       const nowMs = Date.now();
-      if (nowMs - Number(state.lastAlertOpportunityAtMs) >= ALERT_QUIET_RESET_MS) {
+      const quietMinutes = Math.floor((nowMs - Number(state.lastAlertOpportunityAtMs)) / 60_000);
+      if (quietMinutes >= 500) {
         state.lastAlertOpportunityAtMs = nowMs;
         state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
         saveState();
         console.log(JSON.stringify({
           level: 'info', event: `period_${minutes}m_open_close_change_first_alert_after_500m_ignored`,
           version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-          quietMinutes: Math.floor((nowMs - Number(state.lastAlertOpportunityAtMs)) / 60_000),
+          quietMinutes,
           BTC: result.BTC, ETH: result.ETH,
         }));
       } else {
