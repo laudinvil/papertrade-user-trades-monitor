@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-arrows-grace15s-v86';
+const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-arrows-immediate-ready-grace15s-v87';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -446,22 +446,22 @@ async function poll() {
         state.currentPeriods[durationKey] = currentStart;
       }
 
-      // Finalize completed periods only after the grace window and only once
-      // both BTC and ETH have valid observations. If either feed is missing,
-      // keep the period pending and retry on subsequent polling cycles.
+      // Finalize immediately once both markets have valid observations.
+      // The 15-second grace is used only when BTC or ETH data is missing.
+      // Keep an incomplete period pending and retry on subsequent polls.
       if (!finalizeCompleted) continue;
       for (const [key, completed] of Object.entries(windows)) {
         const completedStart = Number(key);
         if (!Number.isFinite(completedStart) || completedStart >= currentStart ||
             completed.alerted || completed.partial === true) continue;
         const closeAtMs = (completedStart + periodSeconds) * 1000;
-        if (Date.now() < closeAtMs + PERIOD_FINALIZATION_GRACE_MS) continue;
         const hasBothMarkets = ['BTC', 'ETH'].every(market => {
           const item = completed[market];
           return Number.isFinite(Number(item?.firstPrice)) && Number(item?.firstPrice) > 0 &&
             Number.isFinite(Number(item?.lastPrice)) && Number(item?.lastPrice) > 0;
         });
         if (!hasBothMarkets) {
+          if (Date.now() < closeAtMs + PERIOD_FINALIZATION_GRACE_MS) continue;
           console.warn(JSON.stringify({
             level: 'warn', event: 'period_waiting_for_both_market_data',
             version: VERSION, periodStart: new Date(completedStart * 1000).toISOString(),
