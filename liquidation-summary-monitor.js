@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-above16-allow-positive-eth-ignore-minus230-v82';
+const VERSION = 'papertrade-5m-open-close-btc-above16-plus-negative-btc-positive-eth-v83';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -334,13 +334,20 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   const bothHaveData = ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market].open) && Number.isFinite(result[market].close) &&
     Number.isFinite(result[market].change));
-  const oppositeDirections = bothHaveData &&
+  const previousPositiveBtcRule = bothHaveData &&
     Number(result.BTC.change.toFixed(2)) !== -6.00 &&
     Number(result.BTC.change.toFixed(2)) !== 6.00 &&
     Number(result.ETH.change.toFixed(2)) !== -0.10 &&
     result.ETH.change !== 0 &&
     Number(result.ETH.change.toFixed(2)) > -2.30 &&
     result.BTC.change >= 16;
+  const negativeBtcPositiveEthRule = bothHaveData &&
+    Number(result.BTC.change.toFixed(2)) !== -6.00 &&
+    Number(result.BTC.change.toFixed(2)) !== 6.00 &&
+    Number(result.ETH.change.toFixed(2)) !== -0.10 &&
+    result.BTC.change < 0 &&
+    result.ETH.change > 0;
+  const oppositeDirections = previousPositiveBtcRule || negativeBtcPositiveEthRule;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
   window.alerted = true;
