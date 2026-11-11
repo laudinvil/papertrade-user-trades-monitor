@@ -425,7 +425,7 @@ ${marketLinks.join('\n\n')}`;
 }
 
 async function poll() {
-  const advancePeriods = async observedNowSeconds => {
+  const advancePeriods = async (observedNowSeconds, finalizeCompleted = true) => {
     for (const periodSeconds of PERIOD_SECONDS_LIST) {
       const currentStart = periodStartFor(observedNowSeconds, periodSeconds);
       const durationKey = String(periodSeconds);
@@ -449,6 +449,7 @@ async function poll() {
       // Finalize completed periods only after the grace window and only once
       // both BTC and ETH have valid observations. If either feed is missing,
       // keep the period pending and retry on subsequent polling cycles.
+      if (!finalizeCompleted) continue;
       for (const [key, completed] of Object.entries(windows)) {
         const completedStart = Number(key);
         if (!Number.isFinite(completedStart) || completedStart >= currentStart ||
@@ -499,8 +500,9 @@ async function poll() {
     }
   }
 
-  // Reconcile after HTTP requests in case they crossed either period boundary.
-  await advancePeriods(Math.floor(Date.now() / 1000));
+  // Create any newly active period after the HTTP request, but defer
+  // finalization until delayed response snapshots have been assigned.
+  await advancePeriods(Math.floor(Date.now() / 1000), false);
 
   for (const market of ['BTC', 'ETH']) {
     const snapshot = snapshots[market];
@@ -533,6 +535,10 @@ async function poll() {
       }
     }
   }
+
+  // Now that late snapshots have been assigned by source timestamp, finalize
+  // any completed period whose 15-second grace window has elapsed.
+  await advancePeriods(Math.floor(Date.now() / 1000), true);
 
   // Keep enough observations for two adjacent 15-minute periods.
   const historyCutoffMs = Date.now() - 31 * 60_000;
