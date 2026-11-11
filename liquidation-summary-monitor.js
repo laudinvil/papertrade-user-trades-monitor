@@ -12,7 +12,7 @@ const PAPERTRADE_REQUEST_ATTEMPTS = 4;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-above16-ignore-eth-minus230-and-lower-v80';
+const VERSION = 'papertrade-5m-open-close-btc-above16-ignore-eth-minus230-first-after-500m-v81';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -112,6 +112,11 @@ state.periodWindows ||= {};
 state.currentPeriods ||= {};
 state.lastAlertSentPeriods ||= {};
 state.rangeStreaks ||= {};
+const previousAlertTimes = Object.values(state.lastAlertSentPeriods).map(Number).filter(Number.isFinite);
+state.lastAlertOpportunityAtMs ||= previousAlertTimes.length
+  ? Math.max(...previousAlertTimes) * 1000
+  : Date.now();
+const ALERT_QUIET_RESET_MS = 500 * 60_000;
 // Migrate the existing 5-minute state without resetting its history or deduplication.
 state.periodWindows['300'] ||= state.windows || {};
 if (state.currentPeriods['300'] === undefined && state.currentPeriod !== undefined) {
@@ -354,6 +359,18 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
+      const nowMs = Date.now();
+      if (nowMs - Number(state.lastAlertOpportunityAtMs) >= ALERT_QUIET_RESET_MS) {
+        state.lastAlertOpportunityAtMs = nowMs;
+        state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
+        saveState();
+        console.log(JSON.stringify({
+          level: 'info', event: `period_${minutes}m_open_close_change_first_alert_after_500m_ignored`,
+          version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
+          quietMinutes: Math.floor((nowMs - Number(state.lastAlertOpportunityAtMs)) / 60_000),
+          BTC: result.BTC, ETH: result.ETH,
+        }));
+      } else {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
         await marketLink(market, periodStart + 600, periodSeconds),
@@ -376,6 +393,7 @@ ${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
+      state.lastAlertOpportunityAtMs = Date.now();
       saveState();
       await send(message);
       console.log(JSON.stringify({
@@ -383,6 +401,7 @@ ${marketLinks.join('\n\n')}`;
         periodStart: new Date(periodStart * 1000).toISOString(),
         BTC: result.BTC, ETH: result.ETH,
       }));
+      }
     } else {
       console.log(JSON.stringify({
         level: 'info', event: `period_${minutes}m_open_close_change_alert_suppressed_duplicate_period`,
