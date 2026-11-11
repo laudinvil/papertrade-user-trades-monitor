@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-arrows-immediate-ready-grace15s-v87';
+const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-500m-only-positive-btc-negative-eth-v88';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -117,6 +117,10 @@ const previousAlertTimes = Object.values(state.lastAlertSentPeriods).map(Number)
 state.lastAlertOpportunityAtMs ||= previousAlertTimes.length
   ? Math.max(...previousAlertTimes) * 1000
   : Date.now();
+// The 500-minute quiet rule belongs only to the positive-BTC / negative-ETH alert branch.
+// Keep its historical timer, but do not let negative-BTC / positive-ETH alerts affect it.
+state.positiveBtcNegativeEthLastAlertOpportunityAtMs ||=
+  state.lastAlertOpportunityAtMs;
 const ALERT_QUIET_RESET_MS = 500 * 60_000;
 // Migrate the existing 5-minute state without resetting its history or deduplication.
 state.periodWindows['300'] ||= state.windows || {};
@@ -368,15 +372,18 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
       const nowMs = Date.now();
-      const quietMinutes = Math.floor((nowMs - Number(state.lastAlertOpportunityAtMs)) / 60_000);
-      if (quietMinutes >= 500) {
-        state.lastAlertOpportunityAtMs = nowMs;
+      const uses500MinuteRule = previousPositiveBtcRule;
+      const quietMinutes = uses500MinuteRule
+        ? Math.floor((nowMs - Number(state.positiveBtcNegativeEthLastAlertOpportunityAtMs)) / 60_000)
+        : 0;
+      if (uses500MinuteRule && quietMinutes >= 500) {
+        state.positiveBtcNegativeEthLastAlertOpportunityAtMs = nowMs;
         state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
         saveState();
         console.log(JSON.stringify({
           level: 'info', event: `period_${minutes}m_open_close_change_first_alert_after_500m_ignored`,
           version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-          quietMinutes,
+          quietMinutes, rule: 'positive_btc_negative_eth_only',
           BTC: result.BTC, ETH: result.ETH,
         }));
       } else {
@@ -404,7 +411,9 @@ ${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
-      state.lastAlertOpportunityAtMs = Date.now();
+      if (uses500MinuteRule) {
+        state.positiveBtcNegativeEthLastAlertOpportunityAtMs = Date.now();
+      }
       saveState();
       await send(message);
       console.log(JSON.stringify({
@@ -563,7 +572,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (only when BTC change is greater than +6.00 and ETH change is negative; exact BTC +6.00 and any positive ETH change are ignored; BTC positive minimum +6.00 only when ETH is negative; append downward arrows after both market links in every alert; ignore double alerts when BTC change rounded to two decimals is exactly -6.00 or ETH change rounded to two decimals is exactly -0.10; ignore all alerts with positive ETH change; no special combinations or follow-up suppression; Polymarket market links target the period starting 600 seconds after the completed period start',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (only when BTC change is greater than +6.00 and ETH change is negative; exact BTC +6.00 and any positive ETH change are ignored; BTC positive minimum +6.00 only when ETH is negative; append downward arrows after both market links in every alert; ignore double alerts when BTC change rounded to two decimals is exactly -6.00 or ETH change rounded to two decimals is exactly -0.10; apply the 500-minute first-alert suppression only to positive-BTC/negative-ETH alerts; negative-BTC/positive-ETH alerts bypass that timer; Polymarket market links target the period starting 600 seconds after the completed period start',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
