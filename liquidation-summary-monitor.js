@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-btc-minus13-to-minus88-500m-only-positive-btc-negative-eth-v92';
+const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-btc-minus13-to-minus88-500m-only-positive-btc-negative-eth-v93';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -82,6 +82,51 @@ function describeFetchError(error) {
   }
   return JSON.stringify(chain);
 }
+async function fetchGetWithRetry(url, options, label, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (response.ok || ![429, 500, 502, 503, 504].includes(response.status) || attempt === attempts - 1) {
+        return response;
+      }
+      const retryAfter = Number(response.headers.get('retry-after'));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(5_000, retryAfter * 1000)
+        : [500, 1_500, 3_000][attempt] || 3_000;
+      const warningKey = `external_get_retry:${label}:${response.status}`;
+      const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+      if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+        console.warn(JSON.stringify({
+          level: 'warn', event: 'external_get_request_retry',
+          target: label, status: response.status, attempt: attempt + 1, maxAttempts: attempts, waitMs,
+        }));
+        lastTransientWarningAt.set(warningKey, Date.now());
+      }
+      await sleep(waitMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) break;
+      const waitMs = [500, 1_500, 3_000][attempt] || 3_000;
+      const warningKey = `external_get_retry:${label}:network`;
+      const lastWarningAt = lastTransientWarningAt.get(warningKey) || 0;
+      if (Date.now() - lastWarningAt >= LOG_THROTTLE_MS) {
+        console.warn(JSON.stringify({
+          level: 'warn', event: 'external_get_request_retry',
+          target: label, attempt: attempt + 1, maxAttempts: attempts, waitMs,
+          message: describeFetchError(error),
+        }));
+        lastTransientWarningAt.set(warningKey, Date.now());
+      }
+      await sleep(waitMs);
+    }
+  }
+  throw new Error(`${label} request failed after ${attempts} attempts: ${lastError ? describeFetchError(lastError) : 'retryable HTTP response'}`);
+}
+
 const periodStartFor = (seconds, periodSeconds) => Math.floor(seconds / periodSeconds) * periodSeconds;
 const esc = value => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const priceText = value => String(Math.round(Number(value)));
@@ -252,12 +297,17 @@ async function fetchPapertradePrices() {
 }
 
 async function send(message) {
-  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: CHAT_ID, text: message, parse_mode: 'HTML', disable_web_page_preview: true }),
-    signal: AbortSignal.timeout(12_000),
-  });
+  let response;
+  try {
+    response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: CHAT_ID, text: message, parse_mode: 'HTML', disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch (error) {
+    throw new Error(`Telegram send request failed: ${describeFetchError(error)}`);
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body.ok !== true) throw new Error(`Telegram HTTP ${response.status}: ${body.description || 'send failed'}`);
 }
@@ -278,10 +328,9 @@ async function marketLink(market, periodStart, periodSeconds) {
     url.searchParams.set('limit', '500');
     url.searchParams.set('order', 'endDate');
     url.searchParams.set('ascending', 'true');
-    const response = await fetch(url, {
+    const response = await fetchGetWithRetry(url, {
       headers: { accept: 'application/json', 'user-agent': 'papertrade-polymarket-event-link-resolver' },
-      signal: AbortSignal.timeout(8_000),
-    });
+    }, `Polymarket Gamma events ${market} ${minutes}m`);
     if (!response.ok) throw new Error(`Gamma events ${market} ${minutes}m HTTP ${response.status}`);
     const body = await response.json();
     if (!Array.isArray(body)) throw new Error(`Gamma events ${market} ${minutes}m: unexpected response shape`);
@@ -357,7 +406,6 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   const oppositeDirections = previousPositiveBtcRule || negativeBtcPositiveEthRule;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
-  window.alerted = true;
   window.BTC = result.BTC;
   window.ETH = result.ETH;
   window.alertMarkets = alertMarkets;
@@ -370,6 +418,11 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     BTC: result.BTC, ETH: result.ETH, alertMarkets,
   }));
 
+  if (alertMarkets.length !== 2) {
+    window.alerted = true;
+    saveState();
+  }
+
   if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
@@ -379,6 +432,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
         ? Math.floor((nowMs - Number(state.positiveBtcNegativeEthLastAlertOpportunityAtMs)) / 60_000)
         : 0;
       if (uses500MinuteRule && quietMinutes >= 500) {
+        window.alerted = true;
         state.positiveBtcNegativeEthLastAlertOpportunityAtMs = nowMs;
         state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
         saveState();
@@ -412,6 +466,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 ${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
+      window.alerted = true;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
       if (uses500MinuteRule) {
         state.positiveBtcNegativeEthLastAlertOpportunityAtMs = Date.now();
@@ -425,6 +480,8 @@ ${marketLinks.join('\n\n')}`;
       }));
       }
     } else {
+      window.alerted = true;
+      saveState();
       console.log(JSON.stringify({
         level: 'info', event: `period_${minutes}m_open_close_change_alert_suppressed_duplicate_period`,
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
