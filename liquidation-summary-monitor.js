@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-only-alternating-special-btc-minus2-to-zero-v103';
+const VERSION = 'papertrade-5m-only-two-up-two-down-special-v104';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -416,8 +416,9 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       ? 'down'
       : negativeBtcPositiveEthRule ? 'up' : 'down';
     const previous5mAlertDirection = state.lastAlertDirection5m || null;
+    const previous5mAlertDirectionCount = Number(state.lastAlertDirection5mCount || (previous5mAlertDirection ? 1 : 0));
     const blockedByAlternation = periodSeconds === 300 &&
-      previous5mAlertDirection !== null && alertDirection === previous5mAlertDirection;
+      previous5mAlertDirection === alertDirection && previous5mAlertDirectionCount >= 2;
     if (!alreadySentForPeriod && !blockedByAlternation) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
@@ -444,7 +445,12 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 ${marketLinks.join('\n\n')}`;
       window.alerted = true;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
-      if (periodSeconds === 300) state.lastAlertDirection5m = alertDirection;
+      if (periodSeconds === 300) {
+        state.lastAlertDirection5mCount = previous5mAlertDirection === alertDirection
+          ? previous5mAlertDirectionCount + 1
+          : 1;
+        state.lastAlertDirection5m = alertDirection;
+      }
       saveState();
       await send(message);
       console.log(JSON.stringify({
@@ -461,7 +467,7 @@ ${marketLinks.join('\n\n')}`;
           ? `period_${minutes}m_open_close_change_alert_suppressed_alternation`
           : `period_${minutes}m_open_close_change_alert_suppressed_duplicate_period`,
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-        ...(blockedByAlternation ? { alertDirection, previous5mAlertDirection } : {}),
+        ...(blockedByAlternation ? { alertDirection, previous5mAlertDirection, previous5mAlertDirectionCount } : {}),
       }));
     }
   }
@@ -607,7 +613,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Alert on opposite non-zero BTC/ETH changes and alternate alert directions strictly (up, down, up, down). Special alert when BTC change is from -2 up to but not including 0 and ETH is positive: show a warning icon and downward arrows; it participates in the same alternation sequence. Other negative BTC / positive ETH alerts use upward arrows.',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Alert on opposite non-zero BTC/ETH changes and alternate in two-alert blocks: two up-arrow alerts, then two down-arrow alerts, repeating. Special alert when BTC change is from -2 up to but not including 0 and ETH is positive: show a warning icon and downward arrows; it participates in the same alternation sequence. Other negative BTC / positive ETH alerts use upward arrows.',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
