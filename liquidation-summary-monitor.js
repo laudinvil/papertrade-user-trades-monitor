@@ -158,21 +158,6 @@ state.periodWindows ||= {};
 state.currentPeriods ||= {};
 state.lastAlertSentPeriods ||= {};
 state.rangeStreaks ||= {};
-const previousAlertTimes = Object.values(state.lastAlertSentPeriods).map(Number).filter(Number.isFinite);
-state.lastAlertOpportunityAtMs ||= previousAlertTimes.length
-  ? Math.max(...previousAlertTimes) * 1000
-  : Date.now();
-// The 270-minute quiet rule belongs only to the positive-BTC / negative-ETH alert branch.
-// After 270 minutes of silence, skip two qualifying downward-arrow alert opportunities.
-state.positiveBtcNegativeEthLastAlertOpportunityAtMs ||=
-  state.lastAlertOpportunityAtMs;
-state.positiveBtcNegativeEthPostQuietSkipRemaining =
-  Number.isInteger(state.positiveBtcNegativeEthPostQuietSkipRemaining)
-    ? Math.max(0, state.positiveBtcNegativeEthPostQuietSkipRemaining)
-    : 0;
-// Independent 270-minute first-alert suppression for negative-BTC / positive-ETH alerts.
-state.negativeBtcPositiveEthLastAlertOpportunityAtMs ||=
-  state.lastAlertOpportunityAtMs;
 // Migrate the existing 5-minute state without resetting its history or deduplication.
 state.periodWindows['300'] ||= state.windows || {};
 if (state.currentPeriods['300'] === undefined && state.currentPeriod !== undefined) {
