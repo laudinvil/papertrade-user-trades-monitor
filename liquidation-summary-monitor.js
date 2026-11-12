@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-only-two-sent-alerts-per-arrow-v105';
+const VERSION = 'papertrade-5m-only-two-sent-alerts-next-market-v106';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -426,7 +426,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     if (!alreadySentForPeriod && !blockedByAlternation) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart + 600, periodSeconds),
+        await marketLink(market, periodStart + periodSeconds, periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
