@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-only-no-alternation-no-arrows-next-market-plus-900-timeout45s-v109';
+const VERSION = 'papertrade-5m-basic-opposite-directions-only-no-special-alerts-v110';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -382,13 +382,8 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     result.BTC.change > 0 && result.ETH.change < 0;
   const fiveMinuteNegativeBtcPositiveEthRule = bothHaveData &&
     result.BTC.change < 0 && result.ETH.change > 0;
-  // Special 5m alert: BTC is negative but less negative than or equal to -2.
-  const fiveMinuteSpecialNegativeBtcPositiveEthRule = bothHaveData &&
-    result.BTC.change >= -2 && result.BTC.change < 0 && result.ETH.change > 0;
-  const previousPositiveBtcRule = fiveMinutePositiveBtcNegativeEthRule;
-  const negativeBtcPositiveEthRule = fiveMinuteNegativeBtcPositiveEthRule;
-  const specialNegativeBtcPositiveEthRule = fiveMinuteSpecialNegativeBtcPositiveEthRule;
-  const oppositeDirections = previousPositiveBtcRule || negativeBtcPositiveEthRule;
+  const oppositeDirections = fiveMinutePositiveBtcNegativeEthRule ||
+    fiveMinuteNegativeBtcPositiveEthRule;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
   window.BTC = result.BTC;
@@ -424,8 +419,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
             ? item.change.toFixed(2).replace('.', ',')
             : '0,00';
         const closeText = market === "ETH" ? Number(item.close).toFixed(1).replace(".", ",") : priceText(item.close);
-        const warning = specialNegativeBtcPositiveEthRule && market === 'BTC' ? '⚠️ ' : '';
-        return `${warning}${market}: ${closeText} (${changeText})`;
+        return `${market}: ${closeText} (${changeText})`;
       });
       const marketLinks = alertMarkets.map(market =>
         `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a>`);
@@ -593,7 +587,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Send every qualifying opposite non-zero BTC/ETH alert without directional arrows or alternation; Polymarket links target the market starting 900 seconds after the completed period start.',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Send alerts only when BTC and ETH have opposite non-zero changes; no special alerts, thresholds, exceptions, arrows, or alternation. Polymarket links target the market starting 900 seconds after the completed period start.',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
