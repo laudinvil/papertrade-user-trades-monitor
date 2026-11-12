@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-only-two-up-two-down-special-v104';
+const VERSION = 'papertrade-5m-only-two-sent-alerts-per-arrow-v105';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -412,11 +412,15 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 
   if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
-    const alertDirection = specialNegativeBtcPositiveEthRule
-      ? 'down'
-      : negativeBtcPositiveEthRule ? 'up' : 'down';
+    const useUpArrows = negativeBtcPositiveEthRule && !specialNegativeBtcPositiveEthRule;
+    const arrow = useUpArrows ? '⬆️' : '⬇️';
+    // Count sent Telegram messages, not the two market-link arrows inside each message.
+    const alertDirection = useUpArrows ? 'up' : 'down';
     const previous5mAlertDirection = state.lastAlertDirection5m || null;
-    const previous5mAlertDirectionCount = Number(state.lastAlertDirection5mCount || (previous5mAlertDirection ? 1 : 0));
+    const storedCount = Number(state.lastAlertDirection5mCount);
+    const previous5mAlertDirectionCount = Number.isFinite(storedCount) && storedCount > 0
+      ? storedCount
+      : previous5mAlertDirection ? 1 : 0;
     const blockedByAlternation = periodSeconds === 300 &&
       previous5mAlertDirection === alertDirection && previous5mAlertDirectionCount >= 2;
     if (!alreadySentForPeriod && !blockedByAlternation) {
@@ -436,23 +440,22 @@ async function finishPeriod(periodSeconds, periodStart, window) {
         const warning = specialNegativeBtcPositiveEthRule && market === 'BTC' ? '⚠️ ' : '';
         return `${warning}${market}: ${closeText} (${changeText})`;
       });
-      const useUpArrows = negativeBtcPositiveEthRule && !specialNegativeBtcPositiveEthRule;
-      const arrow = useUpArrows ? '⬆️' : '⬇️';
       const marketLinks = alertMarkets.map(market =>
         `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`);
       const message = `${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
+      // Update the sequence only after Telegram confirms this message was sent.
+      await send(message);
       window.alerted = true;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
       if (periodSeconds === 300) {
+        state.lastAlertDirection5m = alertDirection;
         state.lastAlertDirection5mCount = previous5mAlertDirection === alertDirection
           ? previous5mAlertDirectionCount + 1
           : 1;
-        state.lastAlertDirection5m = alertDirection;
       }
       saveState();
-      await send(message);
       console.log(JSON.stringify({
         level: 'info', event: `period_${minutes}m_open_close_change_alert_sent`, version: VERSION,
         periodStart: new Date(periodStart * 1000).toISOString(),
