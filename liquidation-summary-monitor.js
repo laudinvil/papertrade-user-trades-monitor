@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-only-two-sent-alerts-next-market-v106';
+const VERSION = 'papertrade-5m-only-strict-two-alert-direction-blocks-v107';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -421,8 +421,14 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     const previous5mAlertDirectionCount = Number.isFinite(storedCount) && storedCount > 0
       ? storedCount
       : previous5mAlertDirection ? 1 : 0;
-    const blockedByAlternation = periodSeconds === 300 &&
-      previous5mAlertDirection === alertDirection && previous5mAlertDirectionCount >= 2;
+    // Strict two-message blocks: before two messages are sent in the current
+    // direction, reject the opposite direction. After two, reject repeats and
+    // accept only the opposite direction to begin the next block.
+    const blockedByAlternation = periodSeconds === 300 && (
+      (previous5mAlertDirection && previous5mAlertDirectionCount < 2 &&
+        previous5mAlertDirection !== alertDirection) ||
+      (previous5mAlertDirection === alertDirection && previous5mAlertDirectionCount >= 2)
+    );
     if (!alreadySentForPeriod && !blockedByAlternation) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
