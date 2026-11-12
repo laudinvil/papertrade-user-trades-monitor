@@ -323,6 +323,9 @@ async function send(message) {
 const gammaEventsCache = new Map();
 
 async function marketLink(market, periodStart, periodSeconds) {
+  if (periodSeconds === 900) {
+    return `https://polymarket.com/event/${market.toLowerCase()}-updown-15m-${periodStart}`;
+  }
   const cacheKey = `${market}:${periodSeconds}`;
   const cached = gammaEventsCache.get(cacheKey);
   let events;
