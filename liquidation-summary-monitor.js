@@ -396,6 +396,8 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     Number(result.BTC.change.toFixed(2)) !== -6.00 &&
     Number(result.BTC.change.toFixed(2)) !== 6.00 &&
     Number(result.ETH.change.toFixed(2)) !== -0.10 &&
+    !(Number(result.BTC.change.toFixed(2)) === 38.00 &&
+      Number(result.ETH.change.toFixed(2)) === -0.60) &&
     result.ETH.change < 0 &&
     Number(result.ETH.change.toFixed(2)) > -2.30 &&
     result.BTC.change >= 16;
