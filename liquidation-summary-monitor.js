@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-alternating-btc-negative-min3-v101';
+const VERSION = 'papertrade-5m-alternating-special-btc-minus2-to-zero-v102';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -387,7 +387,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   const fiveMinutePositiveBtcNegativeEthRule = bothHaveData &&
     result.BTC.change > 0 && result.ETH.change < 0;
   const fiveMinuteNegativeBtcPositiveEthRule = bothHaveData &&
-    result.BTC.change <= -3 && result.ETH.change > 0;
+    result.BTC.change < 0 && result.ETH.change > 0;
+  // Special 5m alert: BTC is negative but less negative than or equal to -2.
+  const fiveMinuteSpecialNegativeBtcPositiveEthRule = bothHaveData &&
+    result.BTC.change >= -2 && result.BTC.change < 0 && result.ETH.change > 0;
   // 15m rules remain unchanged.
   const fifteenMinutePositiveBtcNegativeEthRule = bothHaveData &&
     result.BTC.change >= 20 && result.ETH.change < 0;
@@ -399,6 +402,8 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   const negativeBtcPositiveEthRule = is15MinutePeriod
     ? fifteenMinuteNegativeBtcPositiveEthRule
     : fiveMinuteNegativeBtcPositiveEthRule;
+  const specialNegativeBtcPositiveEthRule = !is15MinutePeriod &&
+    fiveMinuteSpecialNegativeBtcPositiveEthRule;
   const oppositeDirections = previousPositiveBtcRule || negativeBtcPositiveEthRule;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
@@ -421,7 +426,9 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 
   if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
-    const alertDirection = negativeBtcPositiveEthRule ? 'up' : 'down';
+    const alertDirection = specialNegativeBtcPositiveEthRule
+      ? 'down'
+      : negativeBtcPositiveEthRule ? 'up' : 'down';
     const previous5mAlertDirection = state.lastAlertDirection5m || null;
     const blockedByAlternation = periodSeconds === 300 &&
       previous5mAlertDirection !== null && alertDirection === previous5mAlertDirection;
@@ -439,9 +446,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
             ? item.change.toFixed(2).replace('.', ',')
             : '0,00';
         const closeText = market === "ETH" ? Number(item.close).toFixed(1).replace(".", ",") : priceText(item.close);
-        return `${market}: ${closeText} (${changeText})`;
+        const warning = specialNegativeBtcPositiveEthRule && market === 'BTC' ? '⚠️ ' : '';
+        return `${warning}${market}: ${closeText} (${changeText})`;
       });
-      const useUpArrows = negativeBtcPositiveEthRule;
+      const useUpArrows = negativeBtcPositiveEthRule && !specialNegativeBtcPositiveEthRule;
       const arrow = useUpArrows ? '⬆️' : '⬇️';
       const marketLinks = alertMarkets.map(market =>
         `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`);
@@ -613,7 +621,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: 'Independent 5m and 15m monitoring. For 5m, alert only on opposite non-zero BTC/ETH changes and alternate alert directions strictly (up, down, up, down); no numeric thresholds or exclusions. For 15m, preserve the existing direction rules and link behavior; use downward arrows for BTC positive / ETH negative and upward arrows for BTC negative / ETH positive; link to the market starting immediately after the completed 15m period',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: 'Independent 5m and 15m monitoring. For 5m, alert only on opposite non-zero BTC/ETH changes and alternate alert directions strictly (up, down, up, down). Special 5m alert when BTC change is from -2 up to but not including 0 and ETH is positive: show a warning icon and downward arrows; it participates in the same alternation sequence. Other negative BTC / positive ETH alerts use upward arrows. For 15m, preserve the existing direction rules and link behavior; use downward arrows for BTC positive / ETH negative and upward arrows for BTC negative / ETH positive; link to the market starting immediately after the completed 15m period',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
