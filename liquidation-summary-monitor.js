@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-btc-minus13-to-minus88-270m-down-270m-up-no-header-v96';
+const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-btc-minus13-to-minus88-270m-down-270m-up-no-header-down-arrow-skip-two-after-270m-v97';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -162,10 +162,14 @@ const previousAlertTimes = Object.values(state.lastAlertSentPeriods).map(Number)
 state.lastAlertOpportunityAtMs ||= previousAlertTimes.length
   ? Math.max(...previousAlertTimes) * 1000
   : Date.now();
-// The 500-minute quiet rule belongs only to the positive-BTC / negative-ETH alert branch.
-// Keep its historical timer, but do not let negative-BTC / positive-ETH alerts affect it.
+// The 270-minute quiet rule belongs only to the positive-BTC / negative-ETH alert branch.
+// After 270 minutes of silence, skip two qualifying downward-arrow alert opportunities.
 state.positiveBtcNegativeEthLastAlertOpportunityAtMs ||=
   state.lastAlertOpportunityAtMs;
+state.positiveBtcNegativeEthPostQuietSkipRemaining =
+  Number.isInteger(state.positiveBtcNegativeEthPostQuietSkipRemaining)
+    ? Math.max(0, state.positiveBtcNegativeEthPostQuietSkipRemaining)
+    : 0;
 // Independent 270-minute first-alert suppression for negative-BTC / positive-ETH alerts.
 state.negativeBtcPositiveEthLastAlertOpportunityAtMs ||=
   state.lastAlertOpportunityAtMs;
@@ -396,8 +400,6 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     Number(result.BTC.change.toFixed(2)) !== -6.00 &&
     Number(result.BTC.change.toFixed(2)) !== 6.00 &&
     Number(result.ETH.change.toFixed(2)) !== -0.10 &&
-    !(Number(result.BTC.change.toFixed(2)) === 38.00 &&
-      Number(result.ETH.change.toFixed(2)) === -0.60) &&
     result.ETH.change < 0 &&
     Number(result.ETH.change.toFixed(2)) > -2.30 &&
     result.BTC.change >= 16;
@@ -446,9 +448,22 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       const quietMinutes = quietRuleMs
         ? Math.floor((nowMs - Number(state[quietTimerKey])) / 60_000)
         : 0;
-      if (quietRuleMs && quietMinutes * 60_000 >= quietRuleMs) {
-        window.alerted = true;
+      const quietPeriodElapsed = quietRuleMs && quietMinutes * 60_000 >= quietRuleMs;
+      if (uses500MinuteRule && quietPeriodElapsed) {
+        state.positiveBtcNegativeEthPostQuietSkipRemaining = 2;
         state[quietTimerKey] = nowMs;
+      }
+      const skipDownArrowAlert =
+        uses500MinuteRule && state.positiveBtcNegativeEthPostQuietSkipRemaining > 0;
+      const skipUpArrowAlert = uses270MinuteRule && quietPeriodElapsed;
+      if (skipDownArrowAlert || skipUpArrowAlert) {
+        window.alerted = true;
+        if (skipDownArrowAlert) {
+          state.positiveBtcNegativeEthPostQuietSkipRemaining -= 1;
+        }
+        if (skipUpArrowAlert) {
+          state[quietTimerKey] = nowMs;
+        }
         state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
         saveState();
         const quietRuleMinutes = quietRuleMs / 60_000;
@@ -457,9 +472,14 @@ async function finishPeriod(periodSeconds, periodStart, window) {
           : 'negative_btc_positive_eth_only';
         console.log(JSON.stringify({
           level: 'info',
-          event: `period_${minutes}m_open_close_change_first_alert_after_${quietRuleMinutes}m_ignored`,
+          event: skipDownArrowAlert
+            ? `period_${minutes}m_open_close_change_post_270m_quiet_alert_ignored`
+            : `period_${minutes}m_open_close_change_first_alert_after_${quietRuleMinutes}m_ignored`,
           version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
           quietMinutes, rule: ruleName,
+          skippedAlertsRemaining: uses500MinuteRule
+            ? state.positiveBtcNegativeEthPostQuietSkipRemaining
+            : undefined,
           BTC: result.BTC, ETH: result.ETH,
         }));
       } else {
