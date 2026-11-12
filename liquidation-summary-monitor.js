@@ -5,7 +5,7 @@ import { lookup as dnsLookup } from 'node:dns';
 import { request as httpsRequest } from 'node:https';
 
 const PAPERTRADE_HEATMAP_URL = 'https://papertrade-liquidations.pages.dev/api/heatmap';
-const PERIOD_SECONDS_LIST = [300];
+const PERIOD_SECONDS_LIST = [300, 900];
 const POLL_MS = Math.max(5_000, Number(process.env.LIQUIDATION_SUMMARY_POLL_MS || 5_000));
 const PAPERTRADE_REQUEST_TIMEOUT_MS = 20_000;
 const PAPERTRADE_REQUEST_ATTEMPTS = 4;
@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-open-close-btc-positive16-eth-negative-plus-btc-negative-eth-positive-btc-minus13-to-minus88-270m-down-270m-up-no-header-down-arrow-skip-two-after-270m-v97';
+const VERSION = 'papertrade-5m-existing-plus-independent-15m-opposite-direction-no-filters-v98';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -396,14 +396,15 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   const bothHaveData = ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market].open) && Number.isFinite(result[market].close) &&
     Number.isFinite(result[market].change));
-  const previousPositiveBtcRule = bothHaveData &&
+  const is15MinutePeriod = periodSeconds === 900;
+  const fiveMinutePositiveBtcNegativeEthRule = bothHaveData &&
     Number(result.BTC.change.toFixed(2)) !== -6.00 &&
     Number(result.BTC.change.toFixed(2)) !== 6.00 &&
     Number(result.ETH.change.toFixed(2)) !== -0.10 &&
     result.ETH.change < 0 &&
     Number(result.ETH.change.toFixed(2)) > -2.30 &&
     result.BTC.change >= 16;
-  const negativeBtcPositiveEthRule = bothHaveData &&
+  const fiveMinuteNegativeBtcPositiveEthRule = bothHaveData &&
     Number(result.BTC.change.toFixed(2)) !== -6.00 &&
     Number(result.BTC.change.toFixed(2)) !== 6.00 &&
     Number(result.ETH.change.toFixed(2)) !== -0.10 &&
@@ -411,6 +412,17 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     Number(result.BTC.change.toFixed(2)) <= -13.00 &&
     Number(result.BTC.change.toFixed(2)) >= -88.00 &&
     Number(result.ETH.change.toFixed(2)) >= 0.40;
+  // 15-minute alerts use only opposite signs; no thresholds or filters.
+  const fifteenMinutePositiveBtcNegativeEthRule = bothHaveData &&
+    result.BTC.change > 0 && result.ETH.change < 0;
+  const fifteenMinuteNegativeBtcPositiveEthRule = bothHaveData &&
+    result.BTC.change < 0 && result.ETH.change > 0;
+  const previousPositiveBtcRule = is15MinutePeriod
+    ? fifteenMinutePositiveBtcNegativeEthRule
+    : fiveMinutePositiveBtcNegativeEthRule;
+  const negativeBtcPositiveEthRule = is15MinutePeriod
+    ? fifteenMinuteNegativeBtcPositiveEthRule
+    : fiveMinuteNegativeBtcPositiveEthRule;
   const oppositeDirections = previousPositiveBtcRule || negativeBtcPositiveEthRule;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
@@ -435,8 +447,8 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
     if (!alreadySentForPeriod) {
       const nowMs = Date.now();
-      const uses500MinuteRule = previousPositiveBtcRule;
-      const uses270MinuteRule = negativeBtcPositiveEthRule;
+      const uses500MinuteRule = periodSeconds === 300 && previousPositiveBtcRule;
+      const uses270MinuteRule = periodSeconds === 300 && negativeBtcPositiveEthRule;
       const quietRuleMs = uses500MinuteRule
         ? ALERT_QUIET_RESET_MS
         : uses270MinuteRule
@@ -485,7 +497,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       } else {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart + 600, periodSeconds),
+        await marketLink(market, periodStart + (periodSeconds === 900 ? periodSeconds : 600), periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
@@ -501,7 +513,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       const useUpArrows = negativeBtcPositiveEthRule;
       const arrow = useUpArrows ? '⬆️' : '⬇️';
       const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market} 5m</a> ${arrow}`);
+        `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`);
       const message = `${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
@@ -672,7 +684,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (only when BTC change is greater than +6.00 and ETH change is negative; exact BTC +6.00 and any positive ETH change are ignored; BTC positive minimum +6.00 only when ETH is negative; append downward arrows after both market links in every alert; ignore double alerts when BTC change rounded to two decimals is exactly -6.00 or ETH change rounded to two decimals is exactly -0.10; apply independent first-alert suppression timers: 270 minutes for positive-BTC/negative-ETH alerts with downward arrows and 270 minutes for negative-BTC/positive-ETH alerts with upward arrows; negative-BTC/positive-ETH alerts require BTC change from -88.00 through -13.00 inclusive and ETH change of at least +0.40; Polymarket market links target the period starting 600 seconds after the completed period start',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: 'Independent 5m and 15m monitoring. Preserve existing 5m thresholds, exclusions, arrows, cooldowns, and market-link timing. For 15m, alert only when BTC and ETH finish the same completed period with opposite signs, with no thresholds, filters, or cooldowns; use downward arrows for BTC positive / ETH negative and upward arrows for BTC negative / ETH positive; link to the market starting immediately after the completed 15m period',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
