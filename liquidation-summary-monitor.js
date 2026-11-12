@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-15m-unfiltered-alternating-directions-v100';
+const VERSION = 'papertrade-5m-15m-alternating-btc-negative-min3-v101';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -387,7 +387,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
   const fiveMinutePositiveBtcNegativeEthRule = bothHaveData &&
     result.BTC.change > 0 && result.ETH.change < 0;
   const fiveMinuteNegativeBtcPositiveEthRule = bothHaveData &&
-    result.BTC.change < 0 && result.ETH.change > 0;
+    result.BTC.change <= -3 && result.ETH.change > 0;
   // 15m rules remain unchanged.
   const fifteenMinutePositiveBtcNegativeEthRule = bothHaveData &&
     result.BTC.change >= 20 && result.ETH.change < 0;
