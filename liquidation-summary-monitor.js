@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-only-strict-two-alert-direction-blocks-v107';
+const VERSION = 'papertrade-5m-only-no-alternation-no-arrows-next-market-plus-900-v108';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -347,13 +347,11 @@ function getMarketMovement(market, window, periodStart) {
   if (!window || !Number.isFinite(first) || !Number.isFinite(last) || first <= 0 || last <= 0) return null;
 
   const pct = (last - first) / first * 100;
-  const direction = pct < 0 ? 'down' : 'up';
-  const label = direction === 'down' ? '⬆️ ВНИЗ' : '⬆️ ВВЕРХ';
-  const message = `<b>${market} ${label}</b>
-Цена: ${priceText(first)} → ${priceText(last)} (${percentText(pct)})
+  const message = `<b>${market}</b>
+Цена: ${priceText(first)} - ${priceText(last)} (${percentText(pct)})
 \u200B
-<a href="${marketLink(market, periodStart + PERIOD_SECONDS_LIST[0], PERIOD_SECONDS_LIST[0])}">Polymarket ${market} 5m</a>`
-  return { direction, pct, message, first, last };
+<a href="${marketLink(market, periodStart + 900, PERIOD_SECONDS_LIST[0])}">Polymarket ${market} 5m</a>`
+  return { pct, message, first, last };
 }
 
 async function finishPeriod(periodSeconds, periodStart, window) {
@@ -412,27 +410,10 @@ async function finishPeriod(periodSeconds, periodStart, window) {
 
   if (alertMarkets.length === 2) {
     const alreadySentForPeriod = Number(state.lastAlertSentPeriods[String(periodSeconds)]) === periodStart;
-    const useUpArrows = negativeBtcPositiveEthRule && !specialNegativeBtcPositiveEthRule;
-    const arrow = useUpArrows ? '⬆️' : '⬇️';
-    // Count sent Telegram messages, not the two market-link arrows inside each message.
-    const alertDirection = useUpArrows ? 'up' : 'down';
-    const previous5mAlertDirection = state.lastAlertDirection5m || null;
-    const storedCount = Number(state.lastAlertDirection5mCount);
-    const previous5mAlertDirectionCount = Number.isFinite(storedCount) && storedCount > 0
-      ? storedCount
-      : previous5mAlertDirection ? 1 : 0;
-    // Strict two-message blocks: before two messages are sent in the current
-    // direction, reject the opposite direction. After two, reject repeats and
-    // accept only the opposite direction to begin the next block.
-    const blockedByAlternation = periodSeconds === 300 && (
-      (previous5mAlertDirection && previous5mAlertDirectionCount < 2 &&
-        previous5mAlertDirection !== alertDirection) ||
-      (previous5mAlertDirection === alertDirection && previous5mAlertDirectionCount >= 2)
-    );
-    if (!alreadySentForPeriod && !blockedByAlternation) {
+    if (!alreadySentForPeriod) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart + periodSeconds, periodSeconds),
+        await marketLink(market, periodStart + 900, periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
@@ -447,20 +428,13 @@ async function finishPeriod(periodSeconds, periodStart, window) {
         return `${warning}${market}: ${closeText} (${changeText})`;
       });
       const marketLinks = alertMarkets.map(market =>
-        `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a> ${arrow}`);
+        `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a>`);
       const message = `${sections.join('\n\n')}
 
 ${marketLinks.join('\n\n')}`;
-      // Update the sequence only after Telegram confirms this message was sent.
       await send(message);
       window.alerted = true;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
-      if (periodSeconds === 300) {
-        state.lastAlertDirection5m = alertDirection;
-        state.lastAlertDirection5mCount = previous5mAlertDirection === alertDirection
-          ? previous5mAlertDirectionCount + 1
-          : 1;
-      }
       saveState();
       console.log(JSON.stringify({
         level: 'info', event: `period_${minutes}m_open_close_change_alert_sent`, version: VERSION,
@@ -472,11 +446,8 @@ ${marketLinks.join('\n\n')}`;
       saveState();
       console.log(JSON.stringify({
         level: 'info',
-        event: blockedByAlternation
-          ? `period_${minutes}m_open_close_change_alert_suppressed_alternation`
-          : `period_${minutes}m_open_close_change_alert_suppressed_duplicate_period`,
+        event: `period_${minutes}m_open_close_change_alert_suppressed_duplicate_period`,
         version: VERSION, periodStart: new Date(periodStart * 1000).toISOString(),
-        ...(blockedByAlternation ? { alertDirection, previous5mAlertDirection, previous5mAlertDirectionCount } : {}),
       }));
     }
   }
@@ -622,7 +593,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Alert on opposite non-zero BTC/ETH changes and alternate in two-alert blocks: two up-arrow alerts, then two down-arrow alerts, repeating. Special alert when BTC change is from -2 up to but not including 0 and ETH is positive: show a warning icon and downward arrows; it participates in the same alternation sequence. Other negative BTC / positive ETH alerts use upward arrows.',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Send every qualifying opposite non-zero BTC/ETH alert without directional arrows or alternation; Polymarket links target the market starting 900 seconds after the completed period start.',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
