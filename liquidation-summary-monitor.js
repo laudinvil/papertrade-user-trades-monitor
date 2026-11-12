@@ -406,7 +406,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     result.BTC.change < 0 &&
     Number(result.BTC.change.toFixed(2)) <= -13.00 &&
     Number(result.BTC.change.toFixed(2)) >= -88.00 &&
-    result.ETH.change > 0;
+    Number(result.ETH.change.toFixed(2)) >= 0.20;
   const oppositeDirections = previousPositiveBtcRule || negativeBtcPositiveEthRule;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
@@ -650,7 +650,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (only when BTC change is greater than +6.00 and ETH change is negative; exact BTC +6.00 and any positive ETH change are ignored; BTC positive minimum +6.00 only when ETH is negative; append downward arrows after both market links in every alert; ignore double alerts when BTC change rounded to two decimals is exactly -6.00 or ETH change rounded to two decimals is exactly -0.10; apply independent first-alert suppression timers: 270 minutes for positive-BTC/negative-ETH alerts with downward arrows and 270 minutes for negative-BTC/positive-ETH alerts with upward arrows; negative-BTC/positive-ETH alerts require BTC change from -88.00 through -13.00 inclusive; Polymarket market links target the period starting 600 seconds after the completed period start',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5-minute monitoring only; send a double alert after each completed period only when BTC and ETH changes from their respective period opening prices have opposite signs (only when BTC change is greater than +6.00 and ETH change is negative; exact BTC +6.00 and any positive ETH change are ignored; BTC positive minimum +6.00 only when ETH is negative; append downward arrows after both market links in every alert; ignore double alerts when BTC change rounded to two decimals is exactly -6.00 or ETH change rounded to two decimals is exactly -0.10; apply independent first-alert suppression timers: 270 minutes for positive-BTC/negative-ETH alerts with downward arrows and 270 minutes for negative-BTC/positive-ETH alerts with upward arrows; negative-BTC/positive-ETH alerts require BTC change from -88.00 through -13.00 inclusive and ETH change of at least +0.20; Polymarket market links target the period starting 600 seconds after the completed period start',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
