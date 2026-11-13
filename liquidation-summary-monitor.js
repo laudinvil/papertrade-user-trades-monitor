@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-basic-opposite-directions-only-no-special-alerts-v110';
+const VERSION = 'papertrade-5m-btc-negative-except-minus1-eth-positive-v111';
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -378,12 +378,9 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     Number.isFinite(result[market].open) && Number.isFinite(result[market].close) &&
     Number.isFinite(result[market].change));
   // 5m: no numeric thresholds or exclusions; only opposite non-zero signs.
-  const fiveMinutePositiveBtcNegativeEthRule = bothHaveData &&
-    result.BTC.change > 0 && result.ETH.change < 0;
   const fiveMinuteNegativeBtcPositiveEthRule = bothHaveData &&
-    result.BTC.change < 0 && result.ETH.change > 0;
-  const oppositeDirections = fiveMinutePositiveBtcNegativeEthRule ||
-    fiveMinuteNegativeBtcPositiveEthRule;
+    result.BTC.change < 0 && result.BTC.change !== -1 && result.ETH.change > 0;
+  const oppositeDirections = fiveMinuteNegativeBtcPositiveEthRule;
   const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
   window.BTC = result.BTC;
@@ -587,7 +584,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Send alerts only when BTC and ETH have opposite non-zero changes; no special alerts, thresholds, exceptions, arrows, or alternation. Polymarket links target the market starting 900 seconds after the completed period start.',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Send alerts only when BTC change is negative and not exactly -1, while ETH change is positive. Ignore all positive BTC changes and BTC change exactly -1. No special alerts, arrows, or alternation. Polymarket links target the market starting 900 seconds after the completed period start.',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
