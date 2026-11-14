@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-opposite-direction-links-plus-300s-one-arrow-each-v120';;;
+const VERSION = 'papertrade-5m-opposite-direction-links-plus-300s-individual-arrows-v121';;;;
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -421,10 +421,9 @@ async function finishPeriod(periodSeconds, periodStart, window) {
       });
       const marketLinks = alertMarkets.map(market =>
         `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a>`);
-      const directionArrow = result.BTC.change < 0 ? '⬇️' : '⬆️';
       const message = `${sections.join('\\n\\n')}
 
-${marketLinks.map(link => `${link} ${directionArrow}`).join('\\n\\n')}`;
+${marketLinks.map((link, index) => `${link} ${result[alertMarkets[index]].change < 0 ? '⬇️' : '⬆️'}`).join('\\n\\n')}`;
       await send(message);
       window.alerted = true;
       state.lastAlertSentPeriods[String(periodSeconds)] = periodStart;
