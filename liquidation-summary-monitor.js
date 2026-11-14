@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-btc-eth-same-direction-no-thresholds-v117';
+const VERSION = 'papertrade-5m-opposite-direction-links-plus-300s-v118';;
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -350,7 +350,7 @@ function getMarketMovement(market, window, periodStart) {
   const message = `<b>${market}</b>
 Цена: ${priceText(first)} - ${priceText(last)} (${percentText(pct)})
 \u200B
-<a href="${marketLink(market, periodStart + 900, PERIOD_SECONDS_LIST[0])}">Polymarket ${market} 5m</a>`
+<a href="${marketLink(market, periodStart + 1200, PERIOD_SECONDS_LIST[0])}">Polymarket ${market} 5m</a>`
   return { pct, message, first, last };
 }
 
@@ -372,17 +372,17 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     };
   }
 
-  // Alert only when BTC and ETH close in the same direction within this period.
-  // No numeric thresholds: both changes must be strictly positive or strictly negative.
+  // Alert only when BTC and ETH close in opposite directions.
+  // No numeric thresholds: one must be positive and the other negative.
   // A zero change does not qualify.
   const bothHaveData = ['BTC', 'ETH'].every(market =>
     Number.isFinite(result[market].open) && Number.isFinite(result[market].close) &&
     Number.isFinite(result[market].change));
-  const sameDirection = bothHaveData && (
-    (result.BTC.change > 0 && result.ETH.change > 0) ||
-    (result.BTC.change < 0 && result.ETH.change < 0)
+  const oppositeDirections = bothHaveData && (
+    (result.BTC.change > 0 && result.ETH.change < 0) ||
+    (result.BTC.change < 0 && result.ETH.change > 0)
   );
-  const alertMarkets = sameDirection ? ['BTC', 'ETH'] : [];
+  const alertMarkets = oppositeDirections ? ['BTC', 'ETH'] : [];
 
   window.BTC = result.BTC;
   window.ETH = result.ETH;
@@ -406,7 +406,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
     if (!alreadySentForPeriod) {
       const links = await Promise.all(alertMarkets.map(async market => [
         market,
-        await marketLink(market, periodStart + 900, periodSeconds),
+        await marketLink(market, periodStart + 1200, periodSeconds),
       ]));
       const linkByMarket = Object.fromEntries(links);
       const sections = alertMarkets.map(market => {
@@ -585,7 +585,7 @@ async function poll() {
 console.log(JSON.stringify({
   level: 'info', event: 'price_movement_monitor_started', version: VERSION,
   source: PAPERTRADE_HEATMAP_URL, priceField: 'markPrice (top-level or documented wrapper)', pollMs: POLL_MS, periodSeconds: PERIOD_SECONDS_LIST, requestTimeoutMs: PAPERTRADE_REQUEST_TIMEOUT_MS, requestAttempts: PAPERTRADE_REQUEST_ATTEMPTS,
-  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Send alerts when BTC and ETH close in the same direction: both positive or both negative. No numeric thresholds. Zero change does not qualify. No special alerts, arrows, or alternation. Polymarket links target the market starting 900 seconds after the completed period start.',
+  statePath: STATE_PATH, finalizationGraceMs: PERIOD_FINALIZATION_GRACE_MS, alert: '5m monitoring only. Send alerts when BTC and ETH close in opposite directions: one positive and one negative. No numeric thresholds. Zero change does not qualify. No special alerts, arrows, or alternation. Polymarket links target the market starting 1200 seconds after the completed period start.',
   markets: ['BTC', 'ETH'], link: 'Matching Polymarket up/down market for the same UTC period duration',
 }));
 
