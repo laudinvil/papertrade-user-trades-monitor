@@ -13,7 +13,7 @@ const PERIOD_FINALIZATION_GRACE_MS = 15_000;
 const STATE_PATH = process.env.LIQUIDATION_SUMMARY_STATE_PATH || '/data/liquidation-direction-state.json';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const VERSION = 'papertrade-5m-opposite-direction-ignore-eth-plus-010-v123';;;;;
+const VERSION = 'papertrade-5m-opposite-direction-ignore-eth-plus-010-no-parentheses-v124';;;;;
 const LOG_THROTTLE_MS = 5 * 60_000;
 const lastTransientWarningAt = new Map();
 
@@ -417,7 +417,7 @@ async function finishPeriod(periodSeconds, periodStart, window) {
             ? item.change.toFixed(2).replace('.', ',')
             : '0,00';
         const closeText = market === "ETH" ? Number(item.close).toFixed(1).replace(".", ",") : priceText(item.close);
-        return `${market}: ${closeText} (${changeText})`;
+        return `${market}: ${closeText} ${changeText}`;
       });
       const marketLinks = alertMarkets.map(market =>
         `<a href="${linkByMarket[market]}">Polymarket ${market} ${minutes}m</a>`);
